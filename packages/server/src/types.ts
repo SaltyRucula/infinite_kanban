@@ -1,0 +1,36 @@
+// Re-export all types and validation utilities from the shared module
+export type {
+  AgentInfo,
+  Priority,
+  ColumnId,
+  AgentStatus,
+  AgentType,
+  Task,
+  TaskProvenance,
+  ClarificationRequestPayload,
+  TaskClarificationRequest,
+  TaskClarificationAnswer,
+  TaskGroup,
+  TaskTemplate,
+  TaskAttachment,
+  Project,
+  ProjectTaskCounts,
+  ProjectConfig,
+  CreateProjectRequest,
+  UpdateProjectRequest,
+  AgentEvent,
+  JiraImportResult,
+  WSMessage,
+} from '../../../shared/types.js';
+
+export {
+  VALID_TRANSITIONS,
+  VALID_AGENT_STATUS_TRANSITIONS,
+  isValidPriority,
+  isValidColumnId,
+  isValidAgentStatus,
+  isValidAgentType,
+  canTransitionAgentStatus,
+  MAX_GROUP_CHILDREN,
+  MIN_GROUP_CHILDREN,
+} from '../../../shared/constants.js';
