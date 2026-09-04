@@ -9,7 +9,7 @@ AI Agent Board is a **local development tool** that orchestrates AI coding agent
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public issue
-2. Use [GitHub's private vulnerability reporting](https://github.com/DanWahlin/ai-agent-board/security/advisories/new) to submit a report
+2. Use your repository host's private vulnerability reporting (e.g. GitHub's "Security" → "Advisories" tab) to submit a report
 3. Include steps to reproduce the issue and any relevant details
 
 You should receive an initial response within 72 hours.

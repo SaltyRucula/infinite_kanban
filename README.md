@@ -12,8 +12,6 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-[![CI](https://github.com/DanWahlin/ai-agent-board/actions/workflows/ci.yml/badge.svg)](https://github.com/DanWahlin/ai-agent-board/actions/workflows/ci.yml)
-
 # AI Agent Board
 
 A drag-and-drop Kanban board that delegates coding tasks to AI agents — GitHub Copilot, Claude Code, OpenAI Codex, OpenCode, Hermes, or OpenClaw. Drop a task into "In Progress," pick an agent, and it will plan, execute, and complete the work, streaming live progress back to the board.
@@ -31,7 +29,7 @@ A drag-and-drop Kanban board that delegates coding tasks to AI agents — GitHub
 
 ### Multi-Agent Architecture
 
-The server uses a **provider pattern** (via [`@codewithdan/agent-sdk-core`](https://github.com/DanWahlin/agent-sdk-core)) to support multiple AI coding agents behind a common interface:
+The server uses a **provider pattern** (via `@codewithdan/agent-sdk-core`) to support multiple AI coding agents behind a common interface:
 
 - **`AgentProvider`** — creates sessions, reports availability
 - **`AgentSession`** — runs a task, emits events, supports abort
@@ -94,7 +92,7 @@ Works on **Linux**, **macOS**, and **Windows**.
 ### Quick Start
 
 ```bash
-git clone https://github.com/DanWahlin/ai-agent-board.git
+git clone <your-repo-url>
 cd ai-agent-board
 npm install
 
@@ -269,7 +267,7 @@ The local pre-push hook in `.githooks/pre-push` runs `npm run gate:required`. Ru
 | Frontend | React 19, Vite, Tailwind CSS 4, Framer Motion |
 | Drag & Drop | @dnd-kit |
 | Backend | Express, better-sqlite3 / PostgreSQL, ws (WebSocket) |
-| AI Agents | [@codewithdan/agent-sdk-core](https://github.com/DanWahlin/agent-sdk-core) (wraps Copilot, Claude Code, Codex, OpenCode, Hermes, and OpenClaw providers) |
+| AI Agents | `@codewithdan/agent-sdk-core` (wraps Copilot, Claude Code, Codex, OpenCode, Hermes, and OpenClaw providers) |
 | Terminal UI | @xterm/xterm |
 | Monorepo | npm workspaces |
 | Dev Environment | Direct install (Linux, macOS, Windows) |
@@ -302,7 +300,3 @@ The private env file must exist, be owned by your user, and stay private (no gro
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
-
-[MIT](LICENSE)
