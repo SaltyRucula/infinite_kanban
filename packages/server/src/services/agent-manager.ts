@@ -725,7 +725,7 @@ export class AgentManager {
       );
       console.log(`[worktree] created at ${worktreePath} from ${baseBranch}`);
       return worktreePath;
-    } catch {
+    } catch (err1: unknown) {
       try {
         execFileSync(
           'git', ['worktree', 'add', worktreePath, task.branchName],
@@ -735,7 +735,13 @@ export class AgentManager {
         return worktreePath;
       } catch (err2: unknown) {
         console.error(`[worktree] failed:`, errorMessage(err2));
-        throw new Error(`Failed to create worktree: ${errorMessage(err2)}`);
+        // Surface both attempts — the primary create-branch failure (err1) is
+        // usually the actionable one (e.g. baseBranch doesn't exist, or the
+        // repo has no commits yet), while err2 only reflects the fallback
+        // assuming a pre-existing branch that also wasn't there.
+        throw new Error(
+          `Failed to create worktree: ${errorMessage(err2)} (create-branch attempt: ${errorMessage(err1)})`,
+        );
       }
     }
   }
