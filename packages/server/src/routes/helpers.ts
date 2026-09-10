@@ -577,8 +577,11 @@ export function makeStatusCallback(repo: TaskRepository, taskId: string): (statu
       statusUpdates.completedAt = Date.now();
       statusUpdates.columnId = 'review';
     }
-    if (status === 'failed' && current.columnId === 'pending') {
-      statusUpdates.columnId = 'in-progress';
+    if (status === 'failed') {
+      statusUpdates.completedAt = Date.now();
+      if (current.columnId === 'pending') {
+        statusUpdates.columnId = 'in-progress';
+      }
     }
     const t = await repo.update(taskId, statusUpdates);
     if (t) broadcastTaskUpdate(t);
