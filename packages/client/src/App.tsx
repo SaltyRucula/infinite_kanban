@@ -24,6 +24,7 @@ import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { JiraImportDialog } from '@/components/JiraImportDialog';
 import { ProjectsPage } from '@/components/ProjectsPage';
 import type { ProjectDialogInitialValues } from '@/components/ProjectDialog';
+import { WorkerConsole } from '@/components/Console/WorkerConsole';
 
 const STATUS_WEIGHT: Record<string, number> = { executing: 0, awaiting_clarification: 1, planning: 2, failed: 3, idle: 4, complete: 5 };
 
@@ -41,7 +42,7 @@ type TaskSubmitData = {
   timeoutMinutes?: number | null;
 };
 
-function BoardPage({
+export function BoardPage({
   project,
   projects,
   theme,
@@ -637,12 +638,13 @@ export function App() {
   }
 
   return (
-    <BoardPage
+    <WorkerConsole
       project={selectedProject}
       projects={projects}
       theme={theme}
       toggleTheme={toggleTheme}
       onBackToProjects={() => navigate('/projects')}
+      onSelectProject={openProject}
       initialTaskId={route.view === 'board' ? route.taskId : undefined}
     />
   );

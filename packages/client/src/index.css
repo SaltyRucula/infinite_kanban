@@ -98,3 +98,34 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   opacity: 0.5;
 }
+
+.console-shell {
+  --console-bg: #08090c;
+  --console-surface: #0e1015;
+  --console-elevated: #14171e;
+  --console-hover: #1b1f2b;
+  --console-selected: #12232f;
+  --console-border-subtle: #202532;
+  --console-border-strong: #2c3343;
+
+  --console-primary: #00b4d8;
+  --console-primary-hover: #38bdf8;
+  --console-primary-soft: rgba(0, 180, 216, 0.12);
+  --console-primary-border: rgba(0, 180, 216, 0.3);
+
+  --console-status-success: #34d399;
+  --console-status-progress: #00b4d8;
+  --console-status-warning: #fbbf24;
+  --console-status-neutral: #94a3b8;
+  --console-status-critical: #f87171;
+
+  background-color: var(--console-bg);
+  color: #e2e8f0;
+  font-family: var(--font-sans);
+}
+
+.console-shell ::-webkit-scrollbar-thumb {
+  background: var(--console-border-strong);
+  opacity: 0.6;
+}
+
