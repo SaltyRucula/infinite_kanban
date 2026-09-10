@@ -65,10 +65,10 @@ async function request<T>(config: Config, endpoint: string, init: RequestInit = 
 }
 
 async function register(args: Args): Promise<void> {
-  const serverUrl = await prompt('server URL', args['server-url']);
+  const serverUrl = await prompt('server URL', args.serverUrl);
   const token = await prompt('registration token', args.token);
   const name = await prompt('worker name', args.name || os.hostname());
-  const rawTypes = await prompt('agent types (comma separated)', args['agent-types'] || VALID_AGENT_TYPES.join(','));
+  const rawTypes = await prompt('agent types (comma separated)', args.agentTypes || VALID_AGENT_TYPES.join(','));
   const agentTypes = rawTypes.split(',').map((value) => value.trim()).filter(isValidAgentType);
   if (agentTypes.length === 0) {
     throw new Error('agent-types must include at least one supported provider');
