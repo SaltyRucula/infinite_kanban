@@ -274,7 +274,6 @@ export class NonDestructiveOpenCodeProvider implements AgentProvider {
           parts: [{ type: 'text', text: prompt }],
           ...(isFirstPrompt && config.systemPrompt ? { system: config.systemPrompt } : {}),
         };
-        const deadlineAt = Date.now() + OPENCODE_RECOVERY_DEADLINE_MS;
 
         try {
           const result = await client.session.prompt({ path: { id: sessionId }, body: promptBody });
@@ -295,7 +294,7 @@ export class NonDestructiveOpenCodeProvider implements AgentProvider {
           if (isTransientNetworkError(err)) {
             provider.recoveryDiagnostics.set(sessionId, diag);
             try {
-              return await provider.recoverPrompt(promptBody, sessionId, config, deadlineAt);
+              return await provider.recoverPrompt(promptBody, sessionId, config);
             } finally {
               provider.recoveryDiagnostics.delete(sessionId);
             }
@@ -348,7 +347,6 @@ export class NonDestructiveOpenCodeProvider implements AgentProvider {
     promptBody: SessionPromptRequestBody,
     sessionId: string,
     config: AgentSessionConfig,
-    deadlineAt: number,
   ): Promise<AgentResult> {
     if (!this.client) {
       const fallback = this.recoveryDiagnostics.get(sessionId) ?? 'OpenCode client not initialized';
@@ -356,6 +354,12 @@ export class NonDestructiveOpenCodeProvider implements AgentProvider {
       return { status: 'failed', error: fallback };
     }
 
+    // Deadline starts here, when recovery actually begins — not when the
+    // original (pre-recovery) attempt started. Computing it earlier let a
+    // slow initial failure consume the whole recovery budget before the
+    // retry loop ran even once, producing "recovery exhausted after 0
+    // attempts" even though no retry was ever attempted.
+    const deadlineAt = Date.now() + OPENCODE_RECOVERY_DEADLINE_MS;
     const baseDiagnostic = this.recoveryDiagnostics.get(sessionId) ?? 'OpenCode transient network failure';
     let attemptsUsed = 0;
 
