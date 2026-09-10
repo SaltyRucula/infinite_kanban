@@ -2,6 +2,7 @@ export type Priority = 'low' | 'medium' | 'high' | 'critical';
 export type ColumnId = 'backlog' | 'in-progress' | 'pending' | 'review' | 'done';
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'awaiting_clarification' | 'complete' | 'failed';
 export type AgentType = 'copilot' | 'claude' | 'codex' | 'opencode' | 'hermes' | 'openclaw' | 'grok';
+export type WorkerStatus = 'online' | 'offline' | 'disabled';
 
 export interface AgentInfo {
   name: AgentType;
@@ -9,6 +10,26 @@ export interface AgentInfo {
   available: boolean;
   version?: string;
   reason?: string;
+}
+
+/**
+ * A registered remote worker: a separate machine/process running the
+ * `@ai-agent-board/worker` CLI, capable of claiming and executing tasks
+ * assigned to it. Distinct from `AgentInfo` (which lists CLI providers
+ * detected on the server's own PATH) — a worker is a real, addressable
+ * execution endpoint with its own identity, heartbeat, and lease state.
+ */
+export interface Worker {
+  id: string;
+  name: string;
+  status: WorkerStatus;
+  agentTypes: AgentType[];
+  hostname?: string;
+  version?: string;
+  maxConcurrentTasks: number;
+  registeredAt: number;
+  lastHeartbeatAt: number;
+  updatedAt: number;
 }
 
 export interface Task {
@@ -42,6 +63,12 @@ export interface Task {
   timeoutMinutes?: number | null;
   clarificationRequest?: TaskClarificationRequest | null;
   clarificationAnswer?: TaskClarificationAnswer | null;
+  /**
+   * When set, this task is executed by the named remote worker (pulled/claimed
+   * over the worker REST API) instead of the server's in-process AgentManager.
+   * Assignment is only permitted before the task is claimed/running.
+   */
+  assignedWorkerId?: string | null;
 }
 
 export interface ClarificationRequestPayload {
@@ -275,4 +302,6 @@ export type WSMessage =
   | { type: 'agent_follow_up'; payload: AgentFollowUpPayload }
   | { type: 'group_updated'; payload: TaskGroup }
   | { type: 'project_updated'; payload: Project }
-  | { type: 'project_deleted'; payload: { id: string } };
+  | { type: 'project_deleted'; payload: { id: string } }
+  | { type: 'worker_updated'; payload: Worker }
+  | { type: 'worker_removed'; payload: { id: string } };

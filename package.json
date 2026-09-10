@@ -7,6 +7,7 @@
     "packages/client",
     "packages/server",
     "packages/e2e",
+    "packages/worker",
     "shared"
   ],
   "scripts": {
@@ -16,6 +17,9 @@
     "build:shared": "npm run build -w @ai-agent-board/shared",
     "build:client": "npm run build -w @ai-agent-board/client",
     "build:server": "npm run build -w @ai-agent-board/server",
+    "worker:build": "npm run build -w @ai-agent-board/worker",
+    "worker:dev": "npm run dev -w @ai-agent-board/worker",
+    "worker:test": "npm run test -w @ai-agent-board/worker",
     "test": "npm run test:e2e:required",
     "test:e2e": "npm run test:e2e:required",
     "test:e2e:required": "npm run test:required -w @ai-agent-board/e2e",

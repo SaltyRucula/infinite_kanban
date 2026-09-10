@@ -11,6 +11,7 @@ import { getCloneRoot } from '../config.js';
 import type { TaskRepository } from '../repositories/types.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
+import type { Worker } from '../types.js';
 
 // ─── Async handler wrapper ──────────────────────────────────────────
 
@@ -388,6 +389,14 @@ export function normalizeRepoPathForCompare(repoPath: string): string {
 
 export function broadcastTaskUpdate(task: Task): void {
   broadcast({ type: 'task_updated', payload: task });
+}
+
+export function broadcastWorkerUpdate(worker: Worker): void {
+  broadcast({ type: 'worker_updated', payload: worker });
+}
+
+export function broadcastWorkerRemove(id: string): void {
+  broadcast({ type: 'worker_removed', payload: { id } });
 }
 
 export function broadcastGroupUpdate(group: TaskGroup): void {

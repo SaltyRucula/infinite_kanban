@@ -30,6 +30,11 @@ interface TaskRow {
   timeout_minutes: number | null;
   clarification_request: string | null;
   clarification_answer: string | null;
+  assigned_worker_id: string | null;
+  worker_claim_token_hash: string | null;
+  worker_claimed_at: number | null;
+  worker_lease_expires_at: number | null;
+  worker_attempt: number;
 }
 
 function parseOptionalJson<T>(value: string | null): T | undefined {
@@ -65,6 +70,7 @@ function rowToTask(row: TaskRow): Task {
     timeoutMinutes: row.timeout_minutes ?? undefined,
     clarificationRequest: parseOptionalJson(row.clarification_request),
     clarificationAnswer: parseOptionalJson(row.clarification_answer),
+    assignedWorkerId: row.assigned_worker_id ?? null,
   };
 }
 
@@ -93,9 +99,9 @@ export class SqliteTaskRepository implements TaskRepository {
       getById: db.prepare('SELECT * FROM tasks WHERE id = ?'),
       insert: db.prepare(`
         INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type, created_at, started_at, completed_at,
-          repo_path, branch_name, base_branch, use_worktree, worktree_path, archived, group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer)
+          repo_path, branch_name, base_branch, use_worktree, worktree_path, archived, group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id, worker_attempt)
         VALUES (@id, @project_id, @title, @description, @priority, @column_id, @agent_status, @agent_type, @created_at, @started_at, @completed_at,
-          @repo_path, @branch_name, @base_branch, @use_worktree, @worktree_path, @archived, @group_id, @group_order, @summary, @external_source, @external_key, @provenance, @run_requested_at, @run_claimed_at, @timeout_minutes, @clarification_request, @clarification_answer)
+          @repo_path, @branch_name, @base_branch, @use_worktree, @worktree_path, @archived, @group_id, @group_order, @summary, @external_source, @external_key, @provenance, @run_requested_at, @run_claimed_at, @timeout_minutes, @clarification_request, @clarification_answer, @assigned_worker_id, @worker_attempt)
       `),
       update: db.prepare(`
         UPDATE tasks SET
@@ -116,7 +122,8 @@ export class SqliteTaskRepository implements TaskRepository {
           summary = @summary, run_requested_at = @run_requested_at, run_claimed_at = @run_claimed_at,
           timeout_minutes = @timeout_minutes,
           clarification_request = @clarification_request,
-          clarification_answer = @clarification_answer
+          clarification_answer = @clarification_answer,
+          assigned_worker_id = @assigned_worker_id
         WHERE id = @id
       `),
       delete: db.prepare('DELETE FROM tasks WHERE id = ?'),
@@ -171,6 +178,8 @@ export class SqliteTaskRepository implements TaskRepository {
       timeout_minutes: task.timeoutMinutes ?? null,
       clarification_request: task.clarificationRequest ? JSON.stringify(task.clarificationRequest) : null,
       clarification_answer: task.clarificationAnswer ? JSON.stringify(task.clarificationAnswer) : null,
+      assigned_worker_id: task.assignedWorkerId ?? null,
+      worker_attempt: 0,
     });
     return task;
   }
@@ -185,7 +194,46 @@ export class SqliteTaskRepository implements TaskRepository {
   async requestRun(id: string, at: number) { this.db.prepare('UPDATE tasks SET run_requested_at=?, run_claimed_at=NULL WHERE id=?').run(at,id); return this.getById(id); }
   async claimRun(id: string, at: number) { const staleBefore=at-30_000; const r=this.db.prepare(`UPDATE tasks SET run_claimed_at=? WHERE id=? AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < ?) AND agent_status IN (${CLAIMABLE_AGENT_STATUS_SQL_LIST})`).run(at,id,staleBefore); return r.changes ? this.getById(id) : undefined; }
   async clearRun(id: string) { this.db.prepare('UPDATE tasks SET run_requested_at=NULL, run_claimed_at=NULL WHERE id=?').run(id); return this.getById(id); }
-  async getPendingRuns(staleBefore = Date.now()-30_000) { return (this.db.prepare("SELECT * FROM tasks WHERE run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < ?) AND agent_status IN ('idle','planning') ORDER BY run_requested_at").all(staleBefore) as TaskRow[]).map(rowToTask); }
+  async getPendingRuns(staleBefore = Date.now()-30_000) { return (this.db.prepare("SELECT * FROM tasks WHERE assigned_worker_id IS NULL AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < ?) AND agent_status IN ('idle','planning') ORDER BY run_requested_at").all(staleBefore) as TaskRow[]).map(rowToTask); }
+
+  async assignToWorker(id: string, workerId: string | null): Promise<Task | undefined> {
+    const result = this.db.prepare(`UPDATE tasks SET assigned_worker_id = ?, worker_claim_token_hash = NULL, worker_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = ? AND worker_claim_token_hash IS NULL AND agent_status IN ('idle','planning')`).run(workerId, id);
+    return result.changes ? this.getById(id) : undefined;
+  }
+
+  async getWorkerAssignments(workerId: string, now: number): Promise<Task[]> {
+    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id = ? AND run_requested_at IS NOT NULL AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < ?) ORDER BY run_requested_at`).all(workerId, now) as TaskRow[]).map(rowToTask);
+  }
+
+  async claimWorkerTask(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<Task | undefined> {
+    const result = this.db.prepare(`UPDATE tasks SET worker_claim_token_hash = ?, worker_claimed_at = ?, worker_lease_expires_at = ?, worker_attempt = worker_attempt + 1, agent_status = 'planning', started_at = COALESCE(started_at, ?) WHERE id = ? AND assigned_worker_id = ? AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < ?) AND agent_status IN ('idle','planning')`).run(claimTokenHash, now, now + leaseMs, now, id, workerId, now);
+    return result.changes ? this.getById(id) : undefined;
+  }
+
+  async renewWorkerLease(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<boolean> {
+    const result = this.db.prepare('UPDATE tasks SET worker_lease_expires_at = ? WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?').run(now + leaseMs, id, workerId, claimTokenHash, now);
+    return result.changes > 0;
+  }
+
+  async isWorkerClaimValid(id: string, workerId: string, claimTokenHash: string, now: number): Promise<boolean> {
+    const row = this.db.prepare('SELECT 1 AS valid FROM tasks WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?').get(id, workerId, claimTokenHash, now) as { valid: number } | undefined;
+    return row?.valid === 1;
+  }
+
+  async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
+    const result = this.db.prepare(`UPDATE tasks SET agent_status = ?, completed_at = ?, summary = ?, run_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`).run(status, completedAt, summary ?? (error ? error : null), id, workerId, claimTokenHash, completedAt);
+    return result.changes ? this.getById(id) : undefined;
+  }
+
+  async getExpiredWorkerTasks(now: number): Promise<Task[]> {
+    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IS NOT NULL AND worker_lease_expires_at IS NOT NULL AND worker_lease_expires_at < ? AND agent_status IN ('planning','executing')`).all(now) as TaskRow[]).map(rowToTask);
+  }
+
+  async getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]> {
+    if (workerIds.length === 0) return [];
+    const placeholders = workerIds.map(() => '?').join(',');
+    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IN (${placeholders}) AND agent_status IN ('planning','executing')`).all(...workerIds) as TaskRow[]).map(rowToTask);
+  }
 
   async update(id: string, updates: Partial<Task>): Promise<Task | undefined> {
     return this.db.transaction(() => {
@@ -212,7 +260,9 @@ export class SqliteTaskRepository implements TaskRepository {
         summary: merged.summary ?? null, run_requested_at: merged.runRequestedAt ?? null, run_claimed_at: merged.runClaimedAt ?? null,
         timeout_minutes: merged.timeoutMinutes ?? null,
         clarification_request: merged.clarificationRequest ? JSON.stringify(merged.clarificationRequest) : null,
-        clarification_answer: merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
+          clarification_answer: merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
+          assigned_worker_id: merged.assignedWorkerId ?? null,
+          worker_attempt: 0,
       });
       return merged;
     })();

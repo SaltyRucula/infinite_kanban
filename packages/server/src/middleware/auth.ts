@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 
-export type ServiceScope = 'projects:read' | 'agents:read' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import';
-const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import'];
+export type ServiceScope = 'projects:read' | 'agents:read' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register';
+const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register'];
 
 interface Credential { token?: string; sha256?: string; scopes: ServiceScope[] }
 
@@ -31,6 +31,9 @@ export function authenticateToken(token: string | undefined): { authenticated: b
 function requiredScope(req: Request): ServiceScope | undefined {
   const p=req.path, method=req.method;
   if (p === '/health') return undefined;
+  if (p.startsWith('/workers/me')) return undefined;
+  if (p === '/workers/register' && method === 'POST') return 'workers:register';
+  if (p === '/workers') return undefined;
   if (p === '/agents') return undefined;
   if (p === '/agents/refresh') return 'agents:read';
   if (p.startsWith('/projects')) return undefined;
@@ -51,6 +54,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const scope = requiredScope(req);
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+
+  if (req.path.startsWith('/workers/me')) { next(); return; }
 
   // API_KEY retains the legacy "protect every API route" behavior.
   if (hasLegacyKey) {

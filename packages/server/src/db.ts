@@ -178,6 +178,29 @@ function migrate(db: Database.Database): void {
   if (!colNames.has('timeout_minutes')) db.exec(`ALTER TABLE tasks ADD COLUMN timeout_minutes INTEGER`);
   if (!colNames.has('clarification_request')) db.exec(`ALTER TABLE tasks ADD COLUMN clarification_request TEXT`);
   if (!colNames.has('clarification_answer')) db.exec(`ALTER TABLE tasks ADD COLUMN clarification_answer TEXT`);
+  if (!colNames.has('assigned_worker_id')) db.exec(`ALTER TABLE tasks ADD COLUMN assigned_worker_id TEXT`);
+  if (!colNames.has('worker_claim_token_hash')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_claim_token_hash TEXT`);
+  if (!colNames.has('worker_claimed_at')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_claimed_at INTEGER`);
+  if (!colNames.has('worker_lease_expires_at')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_lease_expires_at INTEGER`);
+  if (!colNames.has('worker_attempt')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_attempt INTEGER NOT NULL DEFAULT 0`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'online',
+      hostname TEXT,
+      version TEXT,
+      agent_types_json TEXT NOT NULL,
+      max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
+      registered_at INTEGER NOT NULL,
+      last_heartbeat_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      disabled_at INTEGER
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_worker_assignment ON tasks(assigned_worker_id, run_requested_at)`);
   // Task groups table
   db.exec(`
     CREATE TABLE IF NOT EXISTS task_groups (
@@ -335,6 +358,11 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         timeout_minutes INTEGER,
         clarification_request TEXT,
         clarification_answer TEXT,
+        assigned_worker_id TEXT,
+        worker_claim_token_hash TEXT,
+        worker_claimed_at INTEGER,
+        worker_lease_expires_at INTEGER,
+        worker_attempt INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (group_id) REFERENCES task_groups(id) ON DELETE CASCADE
       );
@@ -344,14 +372,16 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         started_at, completed_at, repo_path, branch_name, base_branch, use_worktree,
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes
-        , clarification_request, clarification_answer
+        , clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
+          worker_claimed_at, worker_lease_expires_at, worker_attempt
       )
       SELECT
         id, title, description, priority, column_id, agent_status, created_at,
         started_at, completed_at, repo_path, branch_name, base_branch, use_worktree,
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes,
-        clarification_request, clarification_answer
+        clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
+        worker_claimed_at, worker_lease_expires_at, worker_attempt
       FROM tasks;
 
       DROP TABLE tasks;
@@ -505,6 +535,29 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addCol('timeout_minutes', 'INTEGER');
   await addCol('clarification_request', 'TEXT');
   await addCol('clarification_answer', 'TEXT');
+  await addCol('assigned_worker_id', 'TEXT');
+  await addCol('worker_claim_token_hash', 'TEXT');
+  await addCol('worker_claimed_at', 'BIGINT');
+  await addCol('worker_lease_expires_at', 'BIGINT');
+  await addCol('worker_attempt', 'INTEGER NOT NULL DEFAULT 0');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'online',
+      hostname TEXT,
+      version TEXT,
+      agent_types_json TEXT NOT NULL,
+      max_concurrent_tasks INTEGER NOT NULL DEFAULT 1,
+      registered_at BIGINT NOT NULL,
+      last_heartbeat_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      disabled_at BIGINT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_worker_assignment ON tasks(assigned_worker_id, run_requested_at)`);
   await ensurePostgresExternalIdentityIndex(pool);
 
   // Task groups table

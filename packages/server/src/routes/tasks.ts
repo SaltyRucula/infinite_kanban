@@ -178,7 +178,7 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       return;
     }
 
-    const { title, description, priority, columnId, agentStatus, agentType, repoPath, branchName, baseBranch, useWorktree, archived, timeoutMinutes } = req.body;
+    const { title, description, priority, columnId, agentStatus, agentType, repoPath, branchName, baseBranch, useWorktree, archived, timeoutMinutes, assignedWorkerId } = req.body;
 
     if (title !== undefined && (typeof title !== 'string' || !title.trim())) {
       res.status(400).json({ error: 'title must be a non-empty string' });
@@ -214,6 +214,14 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     }
     if (timeoutMinutes !== undefined && timeoutMinutes !== null && !isValidAgentTimeoutMinutes(timeoutMinutes)) {
       res.status(400).json({ error: `timeoutMinutes must be an integer between ${MIN_AGENT_TIMEOUT_MINUTES} and ${MAX_AGENT_TIMEOUT_MINUTES}` });
+      return;
+    }
+    if (assignedWorkerId !== undefined && assignedWorkerId !== null && typeof assignedWorkerId !== 'string') {
+      res.status(400).json({ error: 'assignedWorkerId must be a string or null' });
+      return;
+    }
+    if (assignedWorkerId !== undefined && (task.agentStatus === 'executing' || task.agentStatus === 'planning')) {
+      res.status(409).json({ error: 'cannot assign a claimed or running task' });
       return;
     }
     if (repoPath !== undefined && typeof repoPath !== 'string') {
@@ -270,6 +278,7 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     if (useWorktree !== undefined) updates.useWorktree = Boolean(useWorktree);
     if (archived !== undefined) updates.archived = Boolean(archived);
     if (timeoutMinutes !== undefined) updates.timeoutMinutes = timeoutMinutes;
+    if (assignedWorkerId !== undefined) updates.assignedWorkerId = assignedWorkerId;
 
     // Reset agent state when moved to in-progress
     if (columnId === 'in-progress') {

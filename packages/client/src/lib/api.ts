@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   AgentInfo,
   AgentType,
+  Worker,
   ColumnId,
   Priority,
   WSMessage,
@@ -129,6 +130,11 @@ export const api = {
     request<AgentEvent[]>(`/tasks/${id}/events`),
 
   getAgents: () => request<AgentInfo[]>('/agents'),
+
+  getWorkers: () => request<Worker[]>('/workers'),
+
+  assignWorker: (taskId: string, assignedWorkerId: string | null) =>
+    request<Task>(`/tasks/${taskId}/assign`, { method: 'POST', body: JSON.stringify({ assignedWorkerId }) }),
 
   configureTask: (id: string, config: { repoPath: string; branchName: string; baseBranch: string; useWorktree: boolean; agentType?: AgentType }) =>
     request<Task>(`/tasks/${id}/configure`, { method: 'POST', body: JSON.stringify(config) }),

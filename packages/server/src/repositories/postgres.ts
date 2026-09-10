@@ -30,6 +30,11 @@ interface TaskRow {
   timeout_minutes: number | null;
   clarification_request: string | null;
   clarification_answer: string | null;
+  assigned_worker_id: string | null;
+  worker_claim_token_hash: string | null;
+  worker_claimed_at: string | null;
+  worker_lease_expires_at: string | null;
+  worker_attempt: number;
 }
 
 function parseOptionalJson<T>(value: string | null): T | undefined {
@@ -85,6 +90,7 @@ function rowToTask(row: TaskRow): Task {
     timeoutMinutes: row.timeout_minutes ?? undefined,
     clarificationRequest: parseOptionalJson(row.clarification_request),
     clarificationAnswer: parseOptionalJson(row.clarification_answer),
+    assignedWorkerId: row.assigned_worker_id ?? null,
   };
 }
 
@@ -119,8 +125,8 @@ export class PostgresTaskRepository implements TaskRepository {
     await this.pool.query(
       `INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type,
         created_at, started_at, completed_at, repo_path, branch_name, base_branch, use_worktree, worktree_path, archived,
-        group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
+        group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
       [
         task.id,
         task.projectId,
@@ -144,6 +150,7 @@ export class PostgresTaskRepository implements TaskRepository {
         task.summary ?? null, task.externalSource ?? null, task.externalKey ?? null, task.provenance ? JSON.stringify(task.provenance) : null, task.runRequestedAt ?? null, task.runClaimedAt ?? null, task.timeoutMinutes ?? null,
         task.clarificationRequest ? JSON.stringify(task.clarificationRequest) : null,
         task.clarificationAnswer ? JSON.stringify(task.clarificationAnswer) : null,
+        task.assignedWorkerId ?? null,
       ]
     );
     return task;
@@ -157,7 +164,48 @@ export class PostgresTaskRepository implements TaskRepository {
   async requestRun(id:string,at:number) { const {rows}=await this.pool.query<TaskRow>('UPDATE tasks SET run_requested_at=$1,run_claimed_at=NULL WHERE id=$2 RETURNING *',[at,id]); return rows[0]?rowToTask(rows[0]):undefined; }
   async claimRun(id:string,at:number) { const staleBefore=at-30_000; const {rows}=await this.pool.query<TaskRow>(`UPDATE tasks SET run_claimed_at=$1 WHERE id=$2 AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < $3) AND agent_status IN (${CLAIMABLE_AGENT_STATUS_SQL_LIST}) RETURNING *`,[at,id,staleBefore]); return rows[0]?rowToTask(rows[0]):undefined; }
   async clearRun(id:string) { const {rows}=await this.pool.query<TaskRow>('UPDATE tasks SET run_requested_at=NULL,run_claimed_at=NULL WHERE id=$1 RETURNING *',[id]); return rows[0]?rowToTask(rows[0]):undefined; }
-  async getPendingRuns(staleBefore=Date.now()-30_000) { const {rows}=await this.pool.query<TaskRow>("SELECT * FROM tasks WHERE run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < $1) AND agent_status IN ('idle','planning') ORDER BY run_requested_at",[staleBefore]); return rows.map(rowToTask); }
+  async getPendingRuns(staleBefore=Date.now()-30_000) { const {rows}=await this.pool.query<TaskRow>("SELECT * FROM tasks WHERE assigned_worker_id IS NULL AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < $1) AND agent_status IN ('idle','planning') ORDER BY run_requested_at",[staleBefore]); return rows.map(rowToTask); }
+
+  async assignToWorker(id: string, workerId: string | null): Promise<Task | undefined> {
+    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET assigned_worker_id = $1, worker_claim_token_hash = NULL, worker_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = $2 AND worker_claim_token_hash IS NULL AND agent_status IN ('idle','planning') RETURNING *`, [workerId, id]);
+    return rows[0] ? rowToTask(rows[0]) : undefined;
+  }
+
+  async getWorkerAssignments(workerId: string, now: number): Promise<Task[]> {
+    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id = $1 AND run_requested_at IS NOT NULL AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < $2) ORDER BY run_requested_at`, [workerId, now]);
+    return rows.map(rowToTask);
+  }
+
+  async claimWorkerTask(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<Task | undefined> {
+    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET worker_claim_token_hash = $1, worker_claimed_at = $2, worker_lease_expires_at = $3, worker_attempt = worker_attempt + 1, agent_status = 'planning', started_at = COALESCE(started_at, $2) WHERE id = $4 AND assigned_worker_id = $5 AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < $2) AND agent_status IN ('idle','planning') RETURNING *`, [claimTokenHash, now, now + leaseMs, id, workerId]);
+    return rows[0] ? rowToTask(rows[0]) : undefined;
+  }
+
+  async renewWorkerLease(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<boolean> {
+    const result = await this.pool.query('UPDATE tasks SET worker_lease_expires_at = $1 WHERE id = $2 AND assigned_worker_id = $3 AND worker_claim_token_hash = $4 AND worker_lease_expires_at >= $5', [now + leaseMs, id, workerId, claimTokenHash, now]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async isWorkerClaimValid(id: string, workerId: string, claimTokenHash: string, now: number): Promise<boolean> {
+    const { rows } = await this.pool.query('SELECT 1 FROM tasks WHERE id = $1 AND assigned_worker_id = $2 AND worker_claim_token_hash = $3 AND worker_lease_expires_at >= $4', [id, workerId, claimTokenHash, now]);
+    return rows.length > 0;
+  }
+
+  async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
+    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET agent_status = $1, completed_at = $2, summary = $3, run_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = $4 AND assigned_worker_id = $5 AND worker_claim_token_hash = $6 AND worker_lease_expires_at >= $2 RETURNING *`, [status, completedAt, summary ?? error ?? null, id, workerId, claimTokenHash]);
+    return rows[0] ? rowToTask(rows[0]) : undefined;
+  }
+
+  async getExpiredWorkerTasks(now: number): Promise<Task[]> {
+    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id IS NOT NULL AND worker_lease_expires_at IS NOT NULL AND worker_lease_expires_at < $1 AND agent_status IN ('planning','executing')`, [now]);
+    return rows.map(rowToTask);
+  }
+
+  async getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]> {
+    if (workerIds.length === 0) return [];
+    const { rows } = await this.pool.query<TaskRow>('SELECT * FROM tasks WHERE assigned_worker_id = ANY($1) AND agent_status IN (\'planning\',\'executing\')', [workerIds]);
+    return rows.map(rowToTask);
+  }
 
   async update(id: string, updates: Partial<Task>): Promise<Task | undefined> {
     const client = await this.pool.connect();
@@ -179,8 +227,8 @@ export class PostgresTaskRepository implements TaskRepository {
           agent_status = $5, agent_type = $6, started_at = $7, completed_at = $8,
           repo_path = $9, branch_name = $10, base_branch = $11, use_worktree = $12,
           worktree_path = $13, archived = $14, summary = $15, run_requested_at=$16, run_claimed_at=$17,
-          timeout_minutes=$18, clarification_request=$19, clarification_answer=$20
-        WHERE id = $21`,
+          timeout_minutes=$18, clarification_request=$19, clarification_answer=$20, assigned_worker_id=$21
+        WHERE id = $22`,
         [
           merged.title,
           merged.description,
@@ -199,6 +247,7 @@ export class PostgresTaskRepository implements TaskRepository {
           merged.summary ?? null, merged.runRequestedAt ?? null, merged.runClaimedAt ?? null, merged.timeoutMinutes ?? null,
           merged.clarificationRequest ? JSON.stringify(merged.clarificationRequest) : null,
           merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
+          merged.assignedWorkerId ?? null,
           id,
         ]
       );

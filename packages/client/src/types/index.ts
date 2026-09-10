@@ -5,6 +5,8 @@ export type {
   AgentStatus,
   AgentType,
   AgentInfo,
+  Worker,
+  WorkerStatus,
   Project,
   ProjectTaskCounts,
   ProjectConfig,

@@ -1,9 +1,10 @@
-import type { ColumnId, Priority, AgentStatus, AgentType } from './types.js';
+import type { ColumnId, Priority, AgentStatus, AgentType, WorkerStatus } from './types.js';
 
 export const VALID_PRIORITIES: readonly Priority[] = ['low', 'medium', 'high', 'critical'] as const;
 export const VALID_COLUMNS: readonly ColumnId[] = ['backlog', 'in-progress', 'pending', 'review', 'done'] as const;
 export const VALID_AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'planning', 'executing', 'awaiting_clarification', 'complete', 'failed'] as const;
 export const VALID_AGENT_TYPES: readonly AgentType[] = ['copilot', 'claude', 'codex', 'opencode', 'hermes', 'openclaw', 'grok'] as const;
+export const VALID_WORKER_STATUSES: readonly WorkerStatus[] = ['online', 'offline', 'disabled'] as const;
 
 export const VALID_AGENT_STATUS_TRANSITIONS: Record<AgentStatus, readonly AgentStatus[]> = {
   idle: ['planning'],
@@ -39,6 +40,10 @@ export function isValidAgentType(value: unknown): value is AgentType {
   return typeof value === 'string' && (VALID_AGENT_TYPES as readonly string[]).includes(value);
 }
 
+export function isValidWorkerStatus(value: unknown): value is WorkerStatus {
+  return typeof value === 'string' && (VALID_WORKER_STATUSES as readonly string[]).includes(value);
+}
+
 export function canTransitionAgentStatus(from: AgentStatus, to: AgentStatus): boolean {
   return VALID_AGENT_STATUS_TRANSITIONS[from].includes(to);
 }
@@ -64,3 +69,18 @@ export function isValidMaxConcurrency(value: unknown, childCount: number): boole
 export const CLAIMABLE_AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'planning', 'complete', 'failed'];
 
 export const CLAIMABLE_AGENT_STATUS_SQL_LIST = CLAIMABLE_AGENT_STATUSES.map((s) => `'${s}'`).join(',');
+
+// --- Remote worker registration / lease timing ---
+// A worker sends a heartbeat every WORKER_HEARTBEAT_INTERVAL_MS; the server's
+// staleness sweep (running on the same cadence) marks a worker 'offline' once
+// WORKER_STALE_AFTER_MS has elapsed since its last heartbeat, and fails any
+// task it was executing (see startup-recovery-style handling in the server).
+export const WORKER_HEARTBEAT_INTERVAL_MS = 15_000;
+export const WORKER_STALE_AFTER_MS = 45_000;
+// How often a worker polls GET /api/workers/me/assignments for claimable work.
+export const WORKER_ASSIGNMENT_POLL_INTERVAL_MS = 5_000;
+// A claimed task's lease; renewed each heartbeat that reports the task as its
+// current task. If the lease lapses without renewal, the task is treated as
+// abandoned by that worker and failed (worker_offline), not silently retried.
+export const WORKER_TASK_LEASE_MS = 60_000;
+export const WORKER_MAX_NAME_LENGTH = 100;

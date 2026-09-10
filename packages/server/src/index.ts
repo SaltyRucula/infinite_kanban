@@ -29,6 +29,12 @@ import type { ProjectRepository } from './repositories/project-types.js';
 import { startAgentForTask } from './routes/helpers.js';
 import { isLoopbackAddress } from './network-policy.js';
 import { createDurableRunRequestedCallback, dispatchPendingRuns } from './run-dispatcher.js';
+import { SqliteWorkerRepository } from './repositories/sqlite-workers.js';
+import { PostgresWorkerRepository } from './repositories/postgres-workers.js';
+import type { WorkerRepository } from './repositories/worker-types.js';
+import { createWorkersRouter } from './routes/workers.js';
+import { broadcastTaskUpdate, broadcastWorkerUpdate } from './routes/helpers.js';
+import { WORKER_HEARTBEAT_INTERVAL_MS, WORKER_STALE_AFTER_MS } from '@ai-agent-board/shared/constants.js';
 import {
   shouldRecoverGroupChildAsFailed,
   shouldRecoverGroupChildToIdle,
@@ -60,6 +66,7 @@ let templateRepo: TemplateRepository;
 let groupRepo: TaskGroupRepository;
 let projectRepo: ProjectRepository;
 let attachmentStore: AttachmentStore;
+let workerRepo: WorkerRepository;
 let cleanupDb: () => void;
 let jiraImportScheduler: JiraImportScheduler | undefined;
 
@@ -77,6 +84,7 @@ const agentManager = new AgentManager();
     const pool = new Pool({ connectionString: DATABASE_URL });
     await initPostgresDatabase(pool);
     taskRepo = new PostgresTaskRepository(pool);
+    workerRepo = new PostgresWorkerRepository(pool);
     const { PostgresProjectRepository } = await import('./repositories/postgres-projects.js');
     projectRepo = new PostgresProjectRepository(pool);
     const { PostgresTemplateRepository } = await import('./repositories/postgres-templates.js');
@@ -91,6 +99,7 @@ const agentManager = new AgentManager();
     // SQLite fallback
     const db = initDatabase();
     taskRepo = new SqliteTaskRepository(db);
+    workerRepo = new SqliteWorkerRepository(db);
     const { SqliteProjectRepository } = await import('./repositories/sqlite-projects.js');
     projectRepo = new SqliteProjectRepository(db);
     const { SqliteTemplateRepository } = await import('./repositories/sqlite-templates.js');
@@ -140,6 +149,21 @@ const agentManager = new AgentManager();
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo));
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo));
   app.use('/api/tasks', createGitRouter(taskRepo, agentManager));
+  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo));
+  app.post('/api/tasks/:id/assign', async (req, res, next) => {
+    try {
+      const task = await taskRepo.getById(String(req.params.id));
+      if (!task) { res.status(404).json({ error: 'task not found' }); return; }
+      const workerId = req.body.workerId ?? req.body.assignedWorkerId ?? null;
+      if (workerId !== null && typeof workerId !== 'string') { res.status(400).json({ error: 'workerId must be a string or null' }); return; }
+      if (workerId !== null && !await workerRepo.getById(workerId)) { res.status(404).json({ error: 'worker not found' }); return; }
+      if (task.agentStatus === 'planning' || task.agentStatus === 'executing') { res.status(409).json({ error: 'cannot assign a running task' }); return; }
+      const updated = await taskRepo.assignToWorker(task.id, workerId);
+      if (!updated) { res.status(409).json({ error: 'task is already claimed or not eligible' }); return; }
+      broadcastTaskUpdate(updated);
+      res.json(updated);
+    } catch (err) { next(err); }
+  });
   app.use('/api/templates', createTemplateRouter(templateRepo));
   app.use('/api/groups', createGroupsRouter(groupRepo, taskRepo, agentManager, projectRepo));
   app.use('/api', createAttachmentsRouter(taskRepo, attachmentStore));
@@ -240,6 +264,25 @@ const agentManager = new AgentManager();
   }, 15_000);
   dispatchInterval.unref();
 
+  const workerSweepInterval = setInterval(async () => {
+    const now = Date.now();
+    const offline = await workerRepo.markOffline(now - WORKER_STALE_AFTER_MS, now);
+    for (const worker of offline) {
+      broadcastWorkerUpdate(worker);
+      const tasks = await taskRepo.getAssignedWorkerTasks([worker.id]);
+      for (const task of tasks) {
+        const failed = await taskRepo.update(task.id, { agentStatus: 'failed', completedAt: now, summary: 'worker_offline', runClaimedAt: undefined });
+        if (failed) broadcastTaskUpdate(failed);
+      }
+    }
+    const expired = await taskRepo.getExpiredWorkerTasks(now);
+    for (const task of expired) {
+      const failed = await taskRepo.update(task.id, { agentStatus: 'failed', completedAt: now, summary: 'worker_offline', runClaimedAt: undefined });
+      if (failed) broadcastTaskUpdate(failed);
+    }
+  }, WORKER_HEARTBEAT_INTERVAL_MS);
+  workerSweepInterval.unref();
+
   server.listen(PORT, HOST, () => {
     jiraImportScheduler?.start();
     console.log(`[server] listening on http://${HOST}:${PORT}`);
@@ -259,6 +302,7 @@ const agentManager = new AgentManager();
   function shutdown() {
     console.log('[server] shutting down...');
     clearInterval(dispatchInterval);
+    clearInterval(workerSweepInterval);
     jiraImportScheduler?.stop();
     agentManager.shutdownAll();
     const closePromise = new Promise<void>((resolve) => {

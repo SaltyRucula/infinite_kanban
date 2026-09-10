@@ -25,6 +25,9 @@ export async function dispatchPendingRuns(
   const dispatchedTasks: Task[] = [];
 
   for (const pending of pendingRuns) {
+    if (pending.assignedWorkerId) {
+      continue;
+    }
     if (deps.isTaskRunning(pending.id)) {
       continue;
     }
