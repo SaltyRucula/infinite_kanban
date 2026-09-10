@@ -162,11 +162,19 @@ export function createAgentRouter(
       }
     }
 
-    agentManager.startAgent(
-      updated,
-      makeRetryAwareStatusHandler(repo, agentManager, updated),
-      makeWorktreeCallback(repo, task.id),
-    );
+    // Worker-assigned tasks are executed by their remote worker, which claims
+    // this task itself via GET /me/assignments + POST /me/tasks/:id/claim now
+    // that run_requested_at is set (see requestRun above). Starting it here
+    // too would run it in-process on THIS server, whose AgentManager may not
+    // even have the agent's CLI installed — that's the whole reason workers
+    // exist — so only start locally when no worker is assigned.
+    if (!updated.assignedWorkerId) {
+      agentManager.startAgent(
+        updated,
+        makeRetryAwareStatusHandler(repo, agentManager, updated),
+        makeWorktreeCallback(repo, task.id),
+      );
+    }
 
     res.json(updated);
   }));
