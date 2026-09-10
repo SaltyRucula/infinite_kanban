@@ -1,0 +1,17 @@
+# Keep Docker build contexts lean and reproducible.
+**/node_modules
+node_modules
+.git
+.github
+.squad
+.copilot
+**/dist
+shared/dist
+packages/*/dist
+**/data
+data
+*.log
+.DS_Store
+packages/e2e/test-results
+packages/e2e/playwright-report
+e2e-results
