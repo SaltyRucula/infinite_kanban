@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+# AI Agent Board — server (Express API + WebSocket) image.
+# Single stage: the server imports better-sqlite3 unconditionally, so the
+# compiled native module must be present at runtime. Building and running on the
+# same base image keeps the N-API ABI compatible.
+FROM node:22-bookworm-slim
+
+# Toolchain for node-gyp native builds (better-sqlite3) + git for agent git ops.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Skip heavy/interactive postinstalls pulled in by the e2e workspace.
+# NODE_ENV is intentionally NOT set to production here: the build needs
+# devDependencies (@types/*, typescript, tsx). Runtime NODE_ENV is set by
+# docker-compose instead.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1 \
+    HUSKY=0 \
+    HOST=0.0.0.0 \
+    PORT=8080
+
+WORKDIR /app
+
+# Manifests first for cacheable dependency install (npm workspaces need every
+# workspace package.json present for `npm ci`).
+COPY package.json package-lock.json ./
+COPY shared/package.json ./shared/
+COPY packages/server/package.json ./packages/server/
+COPY packages/client/package.json ./packages/client/
+COPY packages/e2e/package.json ./packages/e2e/
+COPY packages/worker/package.json ./packages/worker/
+
+# --include=dev forces devDependencies even if NODE_ENV=production is inherited.
+RUN npm ci --include=dev --no-audit --no-fund
+
+# Application source.
+COPY . .
+
+# Build shared types then the server (tsc -> dist/).
+RUN npm run build:shared && npm run build:server
+
+EXPOSE 8080
+
+CMD ["node", "packages/server/dist/index.js"]

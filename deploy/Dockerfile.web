@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# AI Agent Board — web image. Builds the Vite client to static assets, then
+# serves them with nginx which also reverse-proxies /api and /ws to the server.
+FROM node:22-bookworm-slim AS build
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1 \
+    HUSKY=0
+
+# better-sqlite3 (a server workspace dep) compiles during the root npm ci.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY shared/package.json ./shared/
+COPY packages/server/package.json ./packages/server/
+COPY packages/client/package.json ./packages/client/
+COPY packages/e2e/package.json ./packages/e2e/
+COPY packages/worker/package.json ./packages/worker/
+
+# --include=dev forces devDependencies (typescript, vite, @types/*) for the build.
+RUN npm ci --include=dev --no-audit --no-fund
+
+COPY . .
+
+# Shared types are referenced by the client tsconfig build.
+RUN npm run build:shared && npm run build:client
+
+# ── Runtime ──────────────────────────────────────────────────────────────────
+FROM nginx:1.27-alpine
+
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/packages/client/dist /usr/share/nginx/html
+
+EXPOSE 80
