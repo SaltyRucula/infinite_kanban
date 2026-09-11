@@ -34,7 +34,6 @@ async function fetchTask(
 
 test.describe('Clarification reconnect flow', () => {
   test('reload/reconnect while awaiting clarification shows persisted prompt and resumes same session end-to-end', async ({ page, request }) => {
-    const repoPath = prepareTestRepo(`clarification-reconnect-${Date.now()}`);
     const title = `Clarification reconnect ${Date.now()}`;
 
     const created = await createTaskViaAPI(request, {
@@ -42,7 +41,7 @@ test.describe('Clarification reconnect flow', () => {
       description: 'e2e clarification reconnect flow',
       columnId: 'in-progress',
       agentType: 'opencode',
-      repoPath,
+      assignedWorkerId: 'worker-1',
       autoRun: true,
     });
     const taskId = String(created.id);

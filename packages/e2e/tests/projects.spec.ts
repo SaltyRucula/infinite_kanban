@@ -66,7 +66,6 @@ async function createTask(
   data: {
     title: string;
     projectId?: string;
-    repoPath?: string;
     columnId?: string;
     agentType?: string;
     priority?: string;
@@ -80,7 +79,6 @@ async function createTask(
     columnId: data.columnId ?? 'backlog',
   };
   if (data.projectId !== undefined) payload.projectId = data.projectId;
-  if (data.repoPath !== undefined) payload.repoPath = data.repoPath;
   if (data.agentType !== undefined) payload.agentType = data.agentType;
   if (data.priority !== undefined) payload.priority = data.priority;
   if (data.baseBranch !== undefined) payload.baseBranch = data.baseBranch;
@@ -95,7 +93,7 @@ async function createTask(
 
 async function createGroup(
   request: APIRequestContext,
-  data: { title: string; projectId?: string; repoPath?: string; columnId?: string },
+  data: { title: string; projectId?: string; columnId?: string },
 ): Promise<TaskGroup> {
   const payload: Record<string, unknown> = {
     title: data.title,
@@ -107,7 +105,6 @@ async function createGroup(
     ],
   };
   if (data.projectId !== undefined) payload.projectId = data.projectId;
-  if (data.repoPath !== undefined) payload.repoPath = data.repoPath;
 
   const res = await request.post(`${API}/api/groups`, { data: payload });
   expect(res.status()).toBe(201);
@@ -226,7 +223,6 @@ test.describe('Projects API', () => {
       projectId: project.id,
     });
     createdTaskIds.push(task.id);
-    expect(task.repoPath).toBe(repoPath);
 
     const patchTaskRes = await request.patch(`${API}/api/tasks/${task.id}`, {
       data: { repoPath: otherRepoPath },
@@ -269,7 +265,6 @@ test.describe('Projects API', () => {
       projectId: project.id,
     });
     createdGroupIds.push(group.id);
-    expect(group.repoPath).toBe(repoPath);
 
     const patchGroupRes = await request.patch(`${API}/api/groups/${group.id}`, {
       data: { repoPath: otherRepoPath },
@@ -741,7 +736,7 @@ test.describe('Projects page', () => {
     await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
 
     await openNewTaskDialog(page);
-    await expect(page.getByLabel(/Local Path/i)).toHaveValue(repoPath);
+    await expect(page.getByLabel(/Local Path/i)).toHaveCount(0);
     const taskTitle = `Project UI Task ${Date.now()}`;
     await page.getByPlaceholder('What needs to be done?').fill(taskTitle);
     await page.getByRole('button', { name: 'Create Task' }).click();
@@ -753,7 +748,6 @@ test.describe('Projects page', () => {
       for (const task of tasks) {
         if (task.title === taskTitle) {
           createdTaskIds.push(task.id);
-          expect(task.repoPath).toBe(repoPath);
           expect(task.projectId).toBe(createdProjectId);
         }
       }
@@ -859,7 +853,7 @@ test.describe('Projects page', () => {
     await expect(defaultCard.getByRole('button', { name: `Edit ${defaultProject.name}` })).toBeVisible();
   });
 
-  test('opens the seeded default project card with editable manual Local Path', async ({ page, request }) => {
+  test('opens default project card and verifies story task dialog', async ({ page, request }) => {
     const defaultRes = await request.get(`${API}/api/projects/default`);
     expect(defaultRes.status()).toBe(200);
     const defaultProject = await defaultRes.json() as Project;
@@ -872,9 +866,7 @@ test.describe('Projects page', () => {
     await waitForBoard(page);
 
     await openNewTaskDialog(page);
-    const localPath = page.getByLabel(/Local Path/i);
-    await expect(localPath).toBeEditable();
-    await expect(localPath).toHaveValue('');
+    await expect(page.getByLabel(/Local Path/i)).toHaveCount(0);
   });
 
   test('prefills the task dialog agent from the project default', async ({ page, request }) => {

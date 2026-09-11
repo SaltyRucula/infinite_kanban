@@ -16,8 +16,7 @@ import { API, deleteTaskViaAPI, prepareTestRepo, waitForBoard } from './helpers'
 // ---------------------------------------------------------------------------
 
 test.describe('Single-call task creation + autoRun', () => {
-  test('POST /api/tasks with all fields creates task with repoPath and agentType', async ({ request }) => {
-    const repoPath = prepareTestRepo('api-improvements');
+  test('POST /api/tasks with all fields creates task with agentType', async ({ request }) => {
     const res = await request.post(`${API}/api/tasks`, {
       data: {
         title: 'API test task',
@@ -25,14 +24,12 @@ test.describe('Single-call task creation + autoRun', () => {
         priority: 'high',
         columnId: 'backlog',
         agentType: 'claude',
-        repoPath,
       },
     });
     expect(res.status()).toBe(201);
     const task = await res.json();
     expect(task.title).toBe('API test task');
     expect(task.agentType).toBe('claude');
-    expect(task.repoPath).toBe(repoPath);
     expect(task.columnId).toBe('backlog');
     expect(task.agentStatus).toBe('idle');
 
@@ -80,26 +77,22 @@ test.describe('Single-call task creation + autoRun', () => {
     await deleteTaskViaAPI(request, task.id);
   });
 
-  test('POST /api/tasks with autoRun=true and columnId=in-progress starts agent', async ({ request }) => {
-    const repoPath = prepareTestRepo('api-improvements');
+  test('POST /api/tasks with autoRun=true and columnId=in-progress requests run', async ({ request }) => {
     const res = await request.post(`${API}/api/tasks`, {
       data: {
         title: 'Auto-run task',
         description: 'Should auto-start the agent',
         columnId: 'in-progress',
         agentType: 'copilot',
-        repoPath,
+        assignedWorkerId: 'worker-1',
         autoRun: true,
       },
     });
     expect(res.status()).toBe(201);
     const task = await res.json();
-    // The task should have been started — agentStatus should be planning or executing
-    expect(['planning', 'executing', 'failed']).toContain(task.agentStatus);
     expect(task.columnId).toBe('in-progress');
+    expect(task.runRequestedAt).toBeDefined();
 
-    // Cleanup: stop agent if running, then delete
-    await request.post(`${API}/api/tasks/${task.id}/stop`);
     await deleteTaskViaAPI(request, task.id);
   });
 
@@ -242,8 +235,7 @@ test.describe('Batch create endpoint', () => {
     expect(res.status()).toBe(400);
   });
 
-  test('POST /api/tasks/batch with autoRun creates and starts agents', async ({ request }) => {
-    const repoPath = prepareTestRepo('api-improvements');
+  test('POST /api/tasks/batch with autoRun creates tasks and requests run', async ({ request }) => {
     const res = await request.post(`${API}/api/tasks/batch`, {
       data: {
         tasks: [
@@ -251,7 +243,7 @@ test.describe('Batch create endpoint', () => {
             title: 'Batch autoRun',
             columnId: 'in-progress',
             agentType: 'copilot',
-            repoPath,
+            assignedWorkerId: 'worker-1',
             autoRun: true,
           },
           {
@@ -265,14 +257,10 @@ test.describe('Batch create endpoint', () => {
     const body = await res.json();
     expect(body.tasks).toHaveLength(2);
 
-    // First task should have been auto-run (planning/executing/failed)
-    expect(['planning', 'executing', 'failed']).toContain(body.tasks[0].agentStatus);
-    // Second task should be idle (not auto-run, in backlog)
+    expect(body.tasks[0].runRequestedAt).toBeDefined();
     expect(body.tasks[1].agentStatus).toBe('idle');
 
-    // Cleanup
     for (const t of body.tasks) {
-      await request.post(`${API}/api/tasks/${t.id}/stop`);
       await deleteTaskViaAPI(request, t.id);
     }
   });
@@ -285,7 +273,6 @@ test.describe('Batch create endpoint', () => {
 test.describe('agent_complete WebSocket event', () => {
   test('receives agent_complete on WS when agent is stopped', async ({ request }) => {
     test.setTimeout(60_000);
-    const repoPath = prepareTestRepo('api-improvements');
 
     // 1. Connect to WebSocket FIRST so we don't miss the event
     const ws = new WebSocket(`${API.replace(/^http/, 'ws')}/ws`);
@@ -310,7 +297,7 @@ test.describe('agent_complete WebSocket event', () => {
         description: 'Agent will be stopped to trigger agent_complete',
         columnId: 'in-progress',
         agentType: 'copilot',
-        repoPath,
+        assignedWorkerId: 'worker-1',
         autoRun: true,
       },
     });
@@ -345,7 +332,6 @@ test.describe('agent_complete WebSocket event', () => {
 test.describe('Task result summary events', () => {
   test('events include structured summary with metadata on completion', async ({ request }) => {
     test.setTimeout(60_000);
-    const repoPath = prepareTestRepo('api-improvements');
 
     // Create a task with autoRun — agent starts executing
     const createRes = await request.post(`${API}/api/tasks`, {
@@ -354,7 +340,7 @@ test.describe('Task result summary events', () => {
         description: 'Should generate summary event',
         columnId: 'in-progress',
         agentType: 'copilot',
-        repoPath,
+        assignedWorkerId: 'worker-1',
         autoRun: true,
       },
     });

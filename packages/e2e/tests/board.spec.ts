@@ -483,7 +483,7 @@ test.describe('Retry Failed Tasks', () => {
     createdTaskIds.push(task.id);
 
     await request.patch(`${API}/api/tasks/${task.id}`, {
-      data: { agentStatus: 'failed' },
+      data: { agentStatus: 'failed', assignedWorkerId: 'worker-1' },
     });
 
     const run = await request.post(`${API}/api/tasks/${task.id}/run`);
@@ -530,5 +530,55 @@ test.describe('OpenCode Session Button', () => {
     const copilotCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: 'Copilot Session Task' }) });
     await copilotCard.hover();
     await expect(copilotCard.getByRole('button', { name: 'Open OpenCode session' })).toHaveCount(0);
+  });
+});
+
+test.describe('Worker-owned task git actions', () => {
+  let createdTaskIds: string[] = [];
+
+  test.beforeEach(async ({ page }) => {
+    createdTaskIds = [];
+    await page.goto('/');
+    await waitForBoard(page);
+  });
+
+  test.afterEach(async ({ request }) => {
+    for (const id of createdTaskIds) {
+      await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
+    }
+    createdTaskIds = [];
+  });
+
+  test('hides board-host merge/PR/cleanup buttons for worker-assigned tasks while retaining branch display', async ({ page, request }) => {
+    const taskTitle = `Worker Task ${Date.now()}`;
+    const createRes = await request.post(`${API}/api/tasks`, {
+      data: {
+        title: taskTitle,
+        description: 'worker owned task',
+        columnId: 'done',
+        agentStatus: 'complete',
+        agentType: 'copilot',
+        branchName: 'task/feature-branch',
+        baseBranch: 'main',
+        useWorktree: true,
+      },
+    });
+    const task = await createRes.json();
+    createdTaskIds.push(task.id);
+
+    await request.patch(`${API}/api/tasks/${task.id}`, {
+      data: { assignedWorkerId: 'worker-1' },
+    });
+
+    await page.reload();
+    await waitForBoard(page);
+
+    await page.getByRole('heading', { name: taskTitle }).click();
+
+    await expect(page.getByText('task/feature-branch')).toBeVisible();
+
+    await expect(page.getByRole('button', { name: 'Create PR' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Merge to/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Clean up worktree' })).toHaveCount(0);
   });
 });

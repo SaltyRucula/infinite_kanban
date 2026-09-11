@@ -75,10 +75,15 @@ export async function createConfiguredTask(
 
 test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
   let testRepo: string;
+  let testProject: any;
   const createdTaskIds: string[] = [];
 
-  test.beforeEach(({}, testInfo) => {
+  test.beforeEach(async ({ request }, testInfo) => {
     testRepo = prepareTestRepo(`git-operations-${testInfo.title}`, { clean: true });
+    const pRes = await request.post(`${API}/api/projects`, {
+      data: { name: `Git Test Project ${Date.now()}`, repoPath: testRepo },
+    });
+    testProject = await pRes.json();
   });
 
   test.afterEach(async ({ request }) => {
@@ -86,6 +91,9 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
       await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
     }
     createdTaskIds.length = 0;
+    if (testProject?.id) {
+      await request.delete(`${API}/api/projects/${testProject.id}`).catch(() => {});
+    }
     cleanRepo(testRepo);
   });
 
@@ -132,13 +140,13 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
 
     // Create and configure task
     const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'PR no remote test', priority: 'medium' },
+      data: { title: 'PR no remote test', priority: 'medium', projectId: testProject.id },
     });
     const task = await createRes.json();
     createdTaskIds.push(task.id);
 
     await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { repoPath: testRepo, branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
+      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
     });
 
     // Create the branch manually so git push has something to push
@@ -164,13 +172,13 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
 
     // Create and configure task (no worktree for simplicity)
     const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Merge test', priority: 'medium' },
+      data: { title: 'Merge test', priority: 'medium', projectId: testProject.id },
     });
     const task = await createRes.json();
     createdTaskIds.push(task.id);
 
     await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { repoPath: testRepo, branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
+      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
     });
 
     // Create the branch and make changes
@@ -198,13 +206,13 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
     const branchName = `feature/conflict-${Date.now()}`;
 
     const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Conflict test', priority: 'medium' },
+      data: { title: 'Conflict test', priority: 'medium', projectId: testProject.id },
     });
     const task = await createRes.json();
     createdTaskIds.push(task.id);
 
     await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { repoPath: testRepo, branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
+      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
     });
 
     // Create branch with a change
@@ -243,13 +251,13 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
     const branchName = `feature/pr-push-${Date.now()}`;
 
     const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'PR push test', priority: 'medium' },
+      data: { title: 'PR push test', priority: 'medium', projectId: testProject.id },
     });
     const task = await createRes.json();
     createdTaskIds.push(task.id);
 
     await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { repoPath: testRepo, branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
+      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
     });
 
     // Create branch with changes

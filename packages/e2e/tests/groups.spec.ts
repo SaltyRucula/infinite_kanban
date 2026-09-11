@@ -222,12 +222,10 @@ test.describe('Task Groups API', () => {
     expect(res.status()).toBe(400);
   });
 
-  test('children inherit group-level repo and branch config', async ({ request }) => {
-    const repoPath = prepareTestRepo('groups');
+  test('children inherit group-level branch config', async ({ request }) => {
     const res = await request.post(`${API}/api/groups`, {
       data: {
         title: 'Config Inheritance Group',
-        repoPath,
         baseBranch: 'develop',
         maxConcurrency: 1,
         children: makeChildren(2),
@@ -237,10 +235,7 @@ test.describe('Task Groups API', () => {
     const body = await res.json();
     createdGroupIds.push(body.id);
 
-    // Children should inherit repo config
-    expect(body.children[0].repoPath).toBe(repoPath);
     expect(body.children[0].baseBranch).toBe('develop');
-    expect(body.children[1].repoPath).toBe(repoPath);
     expect(body.children[1].baseBranch).toBe('develop');
   });
 

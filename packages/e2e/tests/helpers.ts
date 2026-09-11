@@ -88,7 +88,10 @@ export function cleanupTestPath(targetPath: string): void {
 }
 
 export async function fillLocalPath(page: Page, repoPath = prepareTestRepo()): Promise<string> {
-  await page.getByLabel(/Local Path/i).fill(repoPath);
+  const input = page.getByLabel(/Local Path/i);
+  if (await input.isVisible().catch(() => false)) {
+    await input.fill(repoPath);
+  }
   return repoPath;
 }
 
