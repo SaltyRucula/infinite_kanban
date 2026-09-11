@@ -71,6 +71,18 @@ export interface Task {
   assignedWorkerId?: string | null;
 }
 
+export interface WorkerTaskAssignment {
+  id: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  agentType?: AgentType;
+  branchName?: string;
+  baseBranch?: string;
+  useWorktree?: boolean;
+  timeoutMinutes?: number | null;
+}
+
 export interface ClarificationRequestPayload {
   requestId: string;
   prompt: string;

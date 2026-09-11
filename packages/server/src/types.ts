@@ -6,6 +6,7 @@ export type {
   AgentStatus,
   AgentType,
   Task,
+  WorkerTaskAssignment,
   Worker,
   TaskProvenance,
   ClarificationRequestPayload,
