@@ -14,7 +14,7 @@ import type { AgentEvent, AgentType, Task, Worker } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { WorkerRegistration, WorkerRepository } from '../repositories/worker-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
-import { asyncHandler, broadcastTaskUpdate } from './helpers.js';
+import { asyncHandler, broadcastTaskUpdate, toWorkerTaskAssignment } from './helpers.js';
 
 function publicWorker(worker: Worker & { readonly tokenHash?: string }): Worker {
   const { tokenHash: _tokenHash, ...result } = worker;
@@ -115,7 +115,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
 
   router.get('/me/assignments', asyncHandler(async (_req: Request, res: Response) => {
     const worker = authenticatedWorker(res);
-    res.json({ tasks: await tasks.getWorkerAssignments(worker.id, Date.now()) });
+    res.json({ tasks: (await tasks.getWorkerAssignments(worker.id, Date.now())).map(toWorkerTaskAssignment) });
   }));
 
   router.post('/me/tasks/:taskId/claim', asyncHandler(async (req: Request, res: Response) => {
@@ -136,7 +136,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task is already claimed or not eligible' });
       return;
     }
-    res.json({ task: claimed, leaseExpiresAt: now + WORKER_TASK_LEASE_MS, claimToken: claim.raw });
+    res.json({ task: toWorkerTaskAssignment(claimed), leaseExpiresAt: now + WORKER_TASK_LEASE_MS, claimToken: claim.raw });
   }));
 
   router.post('/me/tasks/:taskId/events', asyncHandler(async (req: Request, res: Response) => {
@@ -211,7 +211,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       return;
     }
     broadcastTaskUpdate(completed);
-    res.json({ task: completed });
+    res.json({ task: toWorkerTaskAssignment(completed) });
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {
