@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
-import path from 'path';
 import { v4 as uuid } from 'uuid';
-import type { Project, TaskGroup, Task } from '../types.js';
+import type { Project, TaskGroup } from '../types.js';
 import {
   isValidPriority,
   isValidAgentType,
@@ -19,15 +18,13 @@ import type { AgentManager } from '../services/agent-manager.js';
 import {
   asyncHandler,
   paramId,
-  expandTilde,
-  isAllowedRepoPath,
   isValidGitRef,
   broadcastGroupUpdate,
   broadcastTaskUpdate,
-  makeRetryAwareStatusHandler,
-  makeWorktreeCallback,
   isRateLimited,
-  normalizeRepoPathForCompare,
+  rejectGroupPathFields,
+  toPortableTask,
+  toPortableTaskGroup,
 } from './helpers.js';
 
 export function createGroupsRouter(
@@ -48,7 +45,7 @@ export function createGroupsRouter(
     const result = await Promise.all(
       groups.map(async (g) => {
         const children = await groupRepo.getChildTasks(g.id);
-        return { ...g, children };
+        return { ...toPortableTaskGroup(g), children: children.map(toPortableTask) };
       }),
     );
     res.json(result);
@@ -60,16 +57,16 @@ export function createGroupsRouter(
     const group = await groupRepo.getById(id);
     if (!group) { res.status(404).json({ error: 'group not found' }); return; }
     const children = await groupRepo.getChildTasks(id);
-    res.json({ ...group, children });
+    res.json({ ...toPortableTaskGroup(group), children: children.map(toPortableTask) });
   }));
 
   // POST /api/groups — create group with children
   router.post('/', asyncHandler(async (req: Request, res: Response) => {
     const project = await getProjectForRequest(projectRepo, req.body.projectId);
     if (!project) { res.status(400).json({ error: 'projectId is invalid' }); return; }
-    const body = enforceProjectRepoPath(req.body, project);
-    if (typeof body === 'string') { res.status(400).json({ error: body }); return; }
-    const { title, description, priority, repoPath, baseBranch, maxConcurrency, children, autoRun } = body;
+    const pathError = rejectGroupPathFields(req.body);
+    if (pathError) { res.status(400).json({ error: pathError }); return; }
+    const { title, description, priority, baseBranch, maxConcurrency, children, autoRun } = req.body;
 
     // Validate group fields
     if (!title || typeof title !== 'string' || !title.trim()) {
@@ -88,15 +85,6 @@ export function createGroupsRouter(
       res.status(400).json({ error: 'invalid priority' }); return;
     }
 
-    // Validate repo path
-    if (repoPath !== undefined && typeof repoPath === 'string') {
-      const expanded = expandTilde(repoPath);
-      if (!path.isAbsolute(expanded)) {
-        res.status(400).json({ error: 'repoPath must be an absolute path' }); return;
-      }
-      const repoErr = isAllowedRepoPath(expanded);
-      if (repoErr) { res.status(400).json({ error: repoErr }); return; }
-    }
     if (baseBranch !== undefined && typeof baseBranch === 'string' && !isValidGitRef(baseBranch)) {
       res.status(400).json({ error: 'baseBranch contains invalid characters' }); return;
     }
@@ -118,6 +106,10 @@ export function createGroupsRouter(
     // Validate each child
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
+      if (child && typeof child === 'object') {
+        const childPathError = rejectGroupPathFields(child);
+        if (childPathError) { res.status(400).json({ error: `children[${i}]: ${childPathError}` }); return; }
+      }
       if (!child.title || typeof child.title !== 'string' || !child.title.trim()) {
         res.status(400).json({ error: `children[${i}].title is required` }); return;
       }
@@ -134,7 +126,6 @@ export function createGroupsRouter(
 
     const now = Date.now();
     const groupId = uuid();
-    const expandedRepo = typeof repoPath === 'string' ? expandTilde(repoPath) : undefined;
 
     // Project defaults fill fields the request left undefined (each overridable per group/child).
     const effectivePriority = priority !== undefined ? priority : (project.defaultPriority ?? 'medium');
@@ -147,7 +138,6 @@ export function createGroupsRouter(
       description: description?.trim() || undefined,
       priority: effectivePriority,
       columnId: autoRun ? 'in-progress' : 'backlog',
-      repoPath: expandedRepo,
       baseBranch: effectiveBaseBranch,
       maxConcurrency: concurrency,
       createdAt: now,
@@ -181,12 +171,16 @@ export function createGroupsRouter(
       if (autoRun) {
         const updated = await groupRepo.update(groupId, { startedAt: now });
         if (updated) broadcastGroupUpdate(updated);
-        await startGroupExecution(groupId, groupRepo, taskRepo, agentManager);
+        const executionError = await startGroupExecution(groupId, groupRepo, taskRepo);
+        if (executionError) {
+          res.status(409).json({ error: executionError });
+          return;
+        }
       }
 
       const finalGroup = await groupRepo.getById(groupId);
       const finalChildren = await groupRepo.getChildTasks(groupId);
-      res.status(201).json({ ...(finalGroup || result.group), children: finalChildren });
+      res.status(201).json({ ...toPortableTaskGroup(finalGroup || result.group), children: finalChildren.map(toPortableTask) });
     } catch (err: unknown) {
       res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to create group' });
     }
@@ -201,8 +195,8 @@ export function createGroupsRouter(
     if (req.body.projectId !== undefined && req.body.projectId !== groupProjectId) {
       res.status(400).json({ error: 'projectId is immutable' }); return;
     }
-    const groupProject = await projectRepo.getById(groupProjectId);
-    if (!groupProject) { res.status(400).json({ error: 'group project not found' }); return; }
+    const pathError = rejectGroupPathFields(req.body);
+    if (pathError) { res.status(400).json({ error: pathError }); return; }
 
     const updates: Partial<TaskGroup> = {};
     if (req.body.title !== undefined) {
@@ -226,21 +220,6 @@ export function createGroupsRouter(
     if (req.body.priority !== undefined) {
       if (!isValidPriority(req.body.priority)) { res.status(400).json({ error: 'invalid priority' }); return; }
       updates.priority = req.body.priority;
-    }
-    if (req.body.repoPath !== undefined) {
-      if (typeof req.body.repoPath !== 'string') {
-        res.status(400).json({ error: 'repoPath must be a string' }); return;
-      }
-      if (groupProject.repoPath && normalizeRepoPathForCompare(req.body.repoPath) !== normalizeRepoPathForCompare(groupProject.repoPath)) {
-        res.status(400).json({ error: 'repoPath is locked by the group project' }); return;
-      }
-      const expandedRepoPath = expandTilde(req.body.repoPath);
-      if (!path.isAbsolute(expandedRepoPath)) {
-        res.status(400).json({ error: 'repoPath must be an absolute path' }); return;
-      }
-      const repoErr = isAllowedRepoPath(expandedRepoPath);
-      if (repoErr) { res.status(400).json({ error: repoErr }); return; }
-      if (!groupProject.repoPath) updates.repoPath = expandedRepoPath;
     }
     if (req.body.maxConcurrency !== undefined) {
       const children = await groupRepo.getChildTasks(id);
@@ -289,7 +268,7 @@ export function createGroupsRouter(
     if (updated) {
       broadcastGroupUpdate(updated);
       const children = await groupRepo.getChildTasks(id);
-      res.json({ ...updated, children });
+       res.json({ ...toPortableTaskGroup(updated), children: children.map(toPortableTask) });
     } else {
       res.status(500).json({ error: 'Failed to update group' });
     }
@@ -327,8 +306,17 @@ export function createGroupsRouter(
     const group = await groupRepo.getById(id);
     if (!group) { res.status(404).json({ error: 'group not found' }); return; }
 
+    const pathError = rejectGroupPathFields(req.body);
+    if (pathError) { res.status(400).json({ error: pathError }); return; }
+
     if (agentManager.isGroupRunning(id)) {
       res.status(409).json({ error: 'group is already running' }); return;
+    }
+
+    const executionError = await startGroupExecution(id, groupRepo, taskRepo);
+    if (executionError) {
+      res.status(409).json({ error: executionError });
+      return;
     }
 
     const now = Date.now();
@@ -339,11 +327,9 @@ export function createGroupsRouter(
     });
     if (updated) broadcastGroupUpdate(updated);
 
-    await startGroupExecution(id, groupRepo, taskRepo, agentManager);
-
     const finalGroup = await groupRepo.getById(id);
     const children = await groupRepo.getChildTasks(id);
-    res.json({ ...(finalGroup || updated), children });
+    res.json({ ...toPortableTaskGroup(finalGroup || updated || group), children: children.map(toPortableTask) });
   }));
 
   // POST /api/groups/:id/stop — stop all running children
@@ -392,7 +378,7 @@ export function createGroupsRouter(
 
     const updated = await groupRepo.update(id, { archived: true });
     if (updated) broadcastGroupUpdate(updated);
-    res.json(updated);
+    res.json(updated ? toPortableTaskGroup(updated) : updated);
   }));
 
   // PATCH /api/groups/:id/unarchive — restore group + children to backlog
@@ -409,7 +395,7 @@ export function createGroupsRouter(
 
     const updated = await groupRepo.update(id, { archived: false, columnId: 'backlog', startedAt: undefined, completedAt: undefined });
     if (updated) broadcastGroupUpdate(updated);
-    res.json(updated);
+    res.json(updated ? toPortableTaskGroup(updated) : updated);
   }));
 
   return router;
@@ -429,8 +415,7 @@ async function startGroupExecution(
   groupId: string,
   groupRepo: TaskGroupRepository,
   taskRepo: TaskRepository,
-  agentManager: AgentManager,
-): Promise<void> {
+): Promise<string | undefined> {
   const group = await groupRepo.getById(groupId);
   if (!group) return;
 
@@ -438,53 +423,15 @@ async function startGroupExecution(
   const pendingChildren = children.filter((c) => c.agentStatus === 'idle' || c.agentStatus === 'failed');
 
   if (pendingChildren.length === 0) return;
-
-  const onChildComplete = async (_taskId: string) => {
-    // Guard: group may have been deleted while agents were running
-    const currentGroup = await groupRepo.getById(groupId);
-    if (!currentGroup) return;
-
-    const currentChildren = await groupRepo.getChildTasks(groupId);
-    const allDone = currentChildren.every(
-      (c) => c.agentStatus === 'complete' || c.agentStatus === 'failed',
-    );
-
-    if (allDone) {
-      const anyFailed = currentChildren.some((c) => c.agentStatus === 'failed');
-      if (!anyFailed) {
-        const updated = await groupRepo.update(groupId, {
-          columnId: 'review',
-          completedAt: Date.now(),
-        });
-        if (updated) broadcastGroupUpdate(updated);
-      } else {
-        const updated = await groupRepo.update(groupId, { completedAt: Date.now() });
-        if (updated) broadcastGroupUpdate(updated);
-      }
-    }
-  };
-
-  agentManager.startGroup(
-    group,
-    pendingChildren,
-    (task: Task) => makeRetryAwareStatusHandler(taskRepo, agentManager, task),
-    (task: Task) => makeWorktreeCallback(taskRepo, task.id),
-    onChildComplete,
-  );
+  if (pendingChildren.some((child) => !child.assignedWorkerId)) {
+    return 'all group children must have worker assignments';
+  }
+  for (const child of pendingChildren) {
+    await taskRepo.requestRun(child.id, Date.now());
+  }
 }
 
 async function getProjectForRequest(projectRepo: ProjectRepository, value: unknown): Promise<Project | undefined> {
   if (typeof value === 'string' && value) return projectRepo.getById(value);
   return projectRepo.getDefault();
-}
-
-function enforceProjectRepoPath(body: Record<string, any>, project: Project): Record<string, any> | string {
-  if (!project.repoPath) return { ...body, projectId: project.id };
-  if (
-    body.repoPath !== undefined
-    && (typeof body.repoPath !== 'string' || normalizeRepoPathForCompare(body.repoPath) !== normalizeRepoPathForCompare(project.repoPath))
-  ) {
-    return 'repoPath must match the selected project';
-  }
-  return { ...body, projectId: project.id, repoPath: project.repoPath };
 }
