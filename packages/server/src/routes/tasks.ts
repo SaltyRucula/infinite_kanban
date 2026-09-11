@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-import path from 'path';
 import type { Project, Task } from '../types.js';
 import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
@@ -7,9 +6,9 @@ import type { ProjectRepository } from '../repositories/project-types.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
 import {
-  asyncHandler, paramId, isAllowedRepoPath, expandTilde,
+  asyncHandler, paramId,
   validateTaskFields, buildTask, broadcastTaskUpdate,
-  failTaskWithEvent, startAgentForTask, normalizeRepoPathForCompare,
+  rejectTaskPathFields, toPortableTask,
 } from './helpers.js';
 
 export function createTaskRouter(repo: TaskRepository, agentManager: AgentManager, projectRepo: ProjectRepository): Router {
@@ -20,23 +19,23 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     const includeArchived = req.query.includeArchived === 'true';
     const project = await getProjectForRequest(projectRepo, req.query.projectId);
     if (!project) { res.status(404).json({ error: 'project not found' }); return; }
-    res.json(await repo.getAll(includeArchived, project.id));
+    res.json((await repo.getAll(includeArchived, project.id)).map(toPortableTask));
   }));
 
   // GET /api/tasks/archived
   router.get('/archived', asyncHandler(async (req: Request, res: Response) => {
     const project = await getProjectForRequest(projectRepo, req.query.projectId);
     if (!project) { res.status(404).json({ error: 'project not found' }); return; }
-    res.json(await repo.getArchivedTasks(project.id));
+    res.json((await repo.getArchivedTasks(project.id)).map(toPortableTask));
   }));
 
   // POST /api/tasks
   router.post('/', asyncHandler(async (req: Request, res: Response) => {
     const project = await getProjectForRequest(projectRepo, req.body.projectId);
     if (!project) { res.status(400).json({ error: 'projectId is invalid' }); return; }
-    const enforced = enforceProjectRepoPath(req.body, project);
-    if (typeof enforced === 'string') { res.status(400).json({ error: enforced }); return; }
-    const body = applyProjectDefaults(enforced, project);
+    const pathError = rejectTaskPathFields(req.body);
+    if (pathError) { res.status(400).json({ error: pathError }); return; }
+    const body = applyProjectDefaults({ ...req.body, projectId: project.id }, project);
 
     const validationError = validateTaskFields(body);
     if (validationError) {
@@ -48,32 +47,22 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     if (idempotencyKey && idempotencyKey.length > 200) { res.status(400).json({ error: 'Idempotency-Key is too long' }); return; }
     const task = buildTask({ ...body, externalSource: idempotencyKey ? (req.body.externalSource || 'api') : req.body.externalSource, externalKey: idempotencyKey || req.body.externalKey, provenance: sanitizeProvenance(req.body.provenance) });
     const creation = await repo.createIdempotent(task);
-    if (!creation.created) { res.status(200).set('Idempotent-Replay', 'true').json(creation.task); return; }
+    if (!creation.created) { res.status(200).set('Idempotent-Replay', 'true').json(toPortableTask(creation.task)); return; }
     broadcastTaskUpdate(task);
 
     const { autoRun } = req.body;
 
     // autoRun: true — immediately start agent if columnId is in-progress
     if (autoRun === true && task.columnId === 'in-progress') {
-      const agents = agentManager.getAvailableAgents();
-      const agentInfo = agents.find(a => a.name === task.agentType);
-      if (!agentInfo?.available) {
-        const failed = await failTaskWithEvent(
-          repo,
-          task,
-          `Agent ${agentInfo?.displayName || task.agentType || 'unknown'} is not available: ${agentInfo?.reason || 'unknown reason'}`,
-        );
-        res.status(201).json(failed || { ...task, agentStatus: 'failed' });
-        return;
+      if (task.assignedWorkerId) {
+        await repo.requestRun(task.id, Date.now());
       }
-      await repo.requestRun(task.id, Date.now());
-      await startAgentForTask(task, repo, agentManager);
       const latest = await repo.getById(task.id);
-      res.status(201).json(latest || task);
+      res.status(201).json(toPortableTask(latest || task));
       return;
     }
 
-    res.status(201).json(task);
+    res.status(201).json(toPortableTask(task));
   }));
 
   // POST /api/tasks/batch — create multiple tasks, optionally auto-run them
@@ -97,8 +86,8 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
         res.status(400).json({ error: `task[${i}]: projectId is invalid` });
         return;
       }
-      const enforced = enforceProjectRepoPath(taskDefs[i], project);
-      const body = typeof enforced === 'string' ? enforced : applyProjectDefaults(enforced, project);
+      const pathError = rejectTaskPathFields(taskDefs[i]);
+      const body = pathError ? pathError : applyProjectDefaults({ ...taskDefs[i], projectId: project.id }, project);
       const err = typeof body === 'string' ? body : validateTaskFields(body);
       if (err) {
         res.status(400).json({ error: `task[${i}]: ${err}` });
@@ -121,25 +110,15 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       const task = created[i];
       const def = taskDefs[i];
       if (def.autoRun === true && task.columnId === 'in-progress') {
-        const agents = agentManager.getAvailableAgents();
-        const agentInfo = agents.find(a => a.name === task.agentType);
-        if (!agentInfo?.available) {
-          const failed = await failTaskWithEvent(
-            repo,
-            task,
-            `Agent ${agentInfo?.displayName || task.agentType || 'unknown'} is not available: ${agentInfo?.reason || 'unknown reason'}`,
-          );
-          if (failed) created[i] = failed;
-        } else {
+        if (task.assignedWorkerId) {
           await repo.requestRun(task.id, Date.now());
-          await startAgentForTask(task, repo, agentManager);
           const latest = await repo.getById(task.id);
           if (latest) created[i] = latest;
         }
       }
     }
 
-    res.status(201).json({ tasks: created });
+     res.status(201).json({ tasks: created.map(toPortableTask) });
   }));
 
   // GET /api/tasks/:id/status — lightweight polling endpoint
@@ -178,7 +157,10 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       return;
     }
 
-    const { title, description, priority, columnId, agentStatus, agentType, repoPath, branchName, baseBranch, useWorktree, archived, timeoutMinutes, assignedWorkerId } = req.body;
+    const pathError = rejectTaskPathFields(req.body);
+    if (pathError) { res.status(400).json({ error: pathError }); return; }
+
+    const { title, description, priority, columnId, agentStatus, agentType, branchName, baseBranch, useWorktree, archived, timeoutMinutes, assignedWorkerId } = req.body;
 
     if (title !== undefined && (typeof title !== 'string' || !title.trim())) {
       res.status(400).json({ error: 'title must be a non-empty string' });
@@ -224,27 +206,6 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       res.status(409).json({ error: 'cannot assign a claimed or running task' });
       return;
     }
-    if (repoPath !== undefined && typeof repoPath !== 'string') {
-      res.status(400).json({ error: 'repoPath must be a string' });
-      return;
-    }
-    if (typeof repoPath === 'string') {
-      if (taskProject.repoPath && normalizeRepoPathForCompare(repoPath) !== normalizeRepoPathForCompare(taskProject.repoPath)) {
-        res.status(400).json({ error: 'repoPath is locked by the task project' });
-        return;
-      }
-      const expandedRepoPath = expandTilde(repoPath);
-      if (!path.isAbsolute(expandedRepoPath)) {
-        res.status(400).json({ error: 'repoPath must be an absolute path' });
-        return;
-      }
-      const repoErr = isAllowedRepoPath(expandedRepoPath);
-      if (repoErr) {
-        res.status(400).json({ error: repoErr });
-        return;
-      }
-    }
-
     // Validate column transition if columnId is changing
     if (columnId && columnId !== task.columnId) {
       if (columnId === 'pending') {
@@ -272,7 +233,6 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     if (columnId !== undefined) updates.columnId = columnId;
     if (agentStatus !== undefined) updates.agentStatus = agentStatus;
     if (agentType !== undefined) updates.agentType = agentType;
-    if (repoPath !== undefined && !taskProject.repoPath) updates.repoPath = typeof repoPath === 'string' ? expandTilde(repoPath) : repoPath;
     if (branchName !== undefined) updates.branchName = branchName || undefined;
     if (baseBranch !== undefined) updates.baseBranch = baseBranch;
     if (useWorktree !== undefined) updates.useWorktree = Boolean(useWorktree);
@@ -297,7 +257,7 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       return;
     }
     broadcastTaskUpdate(updated);
-    res.json(updated);
+    res.json(toPortableTask(updated));
   }));
 
   // DELETE /api/tasks/:id
@@ -333,7 +293,7 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       return;
     }
     broadcastTaskUpdate(updated);
-    res.json(updated);
+    res.json(toPortableTask(updated));
   }));
 
   // PATCH /api/tasks/:id/unarchive
@@ -354,7 +314,7 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       return;
     }
     broadcastTaskUpdate(updated);
-    res.json(updated);
+    res.json(toPortableTask(updated));
   }));
 
   return router;
@@ -369,17 +329,6 @@ function sanitizeProvenance(value: unknown): Record<string, unknown> | undefined
 async function getProjectForRequest(projectRepo: ProjectRepository, value: unknown): Promise<Project | undefined> {
   if (typeof value === 'string' && value) return projectRepo.getById(value);
   return projectRepo.getDefault();
-}
-
-function enforceProjectRepoPath(body: Record<string, any>, project: Project): Record<string, any> | string {
-  if (!project.repoPath) return { ...body, projectId: project.id };
-  if (
-    body.repoPath !== undefined
-    && (typeof body.repoPath !== 'string' || normalizeRepoPathForCompare(body.repoPath) !== normalizeRepoPathForCompare(project.repoPath))
-  ) {
-    return 'repoPath must match the selected project';
-  }
-  return { ...body, projectId: project.id, repoPath: project.repoPath };
 }
 
 /**

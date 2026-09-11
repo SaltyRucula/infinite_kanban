@@ -1,8 +1,7 @@
 import { Router, Request, Response } from 'express';
-import path from 'path';
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import type { Task } from '../types.js';
-import { isValidAgentType, VALID_AGENT_TYPES, CLAIMABLE_AGENT_STATUSES } from '@ai-agent-board/shared/constants.js';
+import { isValidAgentType, VALID_AGENT_TYPES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
@@ -12,8 +11,9 @@ import { resolveOpenCodeBaseUrl } from '../opencode/config.js';
 import { buildOpenCodeSessionUrl } from '../opencode/session-link.js';
 import { resolveTaskOpenCodeSession } from '../opencode/session-resolver.js';
 import {
-  asyncHandler, paramId, isAllowedRepoPath, expandTilde, isValidGitRef, normalizeRepoPathForCompare,
+  asyncHandler, paramId, isValidGitRef,
   broadcastTaskUpdate, broadcastGroupUpdate, makeRetryAwareStatusHandler, makeWorktreeCallback, isRateLimited,
+  rejectTaskPathFields, toPortableTask,
 } from './helpers.js';
 
 export function createAgentRouter(
@@ -33,7 +33,10 @@ export function createAgentRouter(
       return;
     }
 
-    const { repoPath, branchName, baseBranch, useWorktree, agentType } = req.body;
+    const pathError = rejectTaskPathFields(req.body);
+    if (pathError) { res.status(400).json({ error: pathError }); return; }
+
+    const { branchName, baseBranch, useWorktree, agentType } = req.body;
     const project = projectRepo ? await projectRepo.getById(task.projectId ?? 'default') : undefined;
     if (req.body.projectId !== undefined && req.body.projectId !== (task.projectId ?? 'default')) {
       res.status(400).json({ error: 'projectId is immutable' });
@@ -44,10 +47,6 @@ export function createAgentRouter(
       return;
     }
 
-    if (repoPath !== undefined && typeof repoPath !== 'string') {
-      res.status(400).json({ error: 'repoPath must be a string' });
-      return;
-    }
     if (branchName !== undefined && typeof branchName !== 'string') {
       res.status(400).json({ error: 'branchName must be a string' });
       return;
@@ -72,25 +71,7 @@ export function createAgentRouter(
       res.status(400).json({ error: 'baseBranch contains invalid characters' });
       return;
     }
-    if (typeof repoPath === 'string') {
-      if (project?.repoPath && normalizeRepoPathForCompare(repoPath) !== normalizeRepoPathForCompare(project.repoPath)) {
-        res.status(400).json({ error: 'repoPath is locked by the task project' });
-        return;
-      }
-      const expandedRepoPath = expandTilde(repoPath);
-      if (!path.isAbsolute(expandedRepoPath)) {
-        res.status(400).json({ error: 'repoPath must be an absolute path (e.g. ~/projects/my-app or C:\\Users\\you\\projects\\my-app)' });
-        return;
-      }
-      const repoErr = isAllowedRepoPath(expandedRepoPath);
-      if (repoErr) {
-        res.status(400).json({ error: repoErr });
-        return;
-      }
-    }
-
     const updates: Partial<Task> = {};
-    if (repoPath !== undefined && !project?.repoPath) updates.repoPath = typeof repoPath === 'string' ? expandTilde(repoPath) : repoPath;
     if (branchName !== undefined) updates.branchName = branchName || undefined;
     if (baseBranch !== undefined) updates.baseBranch = baseBranch;
     if (useWorktree !== undefined) updates.useWorktree = useWorktree;
@@ -102,7 +83,7 @@ export function createAgentRouter(
       return;
     }
     broadcastTaskUpdate(updated);
-    res.json(updated);
+    res.json(toPortableTask(updated));
   }));
 
   // POST /api/tasks/:id/run
@@ -117,6 +98,10 @@ export function createAgentRouter(
       res.status(404).json({ error: 'task not found' });
       return;
     }
+    if (!task.assignedWorkerId) {
+      res.status(409).json({ error: 'worker assignment is required' });
+      return;
+    }
     if (agentManager.isRunning(task.id)) {
       res.status(409).json({ error: 'agent already running for this task' });
       return;
@@ -125,15 +110,6 @@ export function createAgentRouter(
     // Persist intent before claiming; a crash between these operations is recovered at startup.
     agentManager.resetEvents(task.id);
     await repo.requestRun(task.id, Date.now());
-    const claimed = await repo.claimRun(task.id, Date.now());
-    if (!claimed) {
-      const current = await repo.getById(task.id);
-      const error = current && !CLAIMABLE_AGENT_STATUSES.includes(current.agentStatus)
-        ? `cannot start run while agent status is '${current.agentStatus}'`
-        : 'run already claimed by a concurrent request';
-      res.status(409).json({ error });
-      return;
-    }
 
     const updates: Partial<Task> = {
       agentStatus: 'planning',
@@ -176,7 +152,7 @@ export function createAgentRouter(
       );
     }
 
-    res.json(updated);
+    res.json(toPortableTask(updated));
   }));
 
   // POST /api/tasks/:id/stop
@@ -202,7 +178,7 @@ export function createAgentRouter(
       return;
     }
     broadcastTaskUpdate(updated);
-    res.json(updated);
+    res.json(toPortableTask(updated));
   }));
 
   // POST /api/tasks/:id/message — send a follow-up message to a running agent

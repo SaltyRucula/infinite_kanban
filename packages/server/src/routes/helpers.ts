@@ -4,7 +4,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Project, Task, TaskGroup } from '../types.js';
+import type { Project, Task, TaskGroup, WorkerTaskAssignment } from '../types.js';
 import { isValidPriority, isValidColumnId, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
 import { errorMessage } from '../utils.js';
 import { getCloneRoot } from '../config.js';
@@ -385,10 +385,49 @@ export function normalizeRepoPathForCompare(repoPath: string): string {
   return normalizeForBoundaryCheck(realOrResolve(expandTilde(repoPath)));
 }
 
+export type PortableTask = Omit<Task, 'repoPath' | 'worktreePath'>;
+export type PortableTaskGroup = Omit<TaskGroup, 'repoPath'>;
+
+export function toPortableTask(task: Task): PortableTask {
+  const { repoPath: _repoPath, worktreePath: _worktreePath, ...portable } = task;
+  return portable;
+}
+
+export function toPortableTaskGroup(group: TaskGroup): PortableTaskGroup {
+  const { repoPath: _repoPath, ...portable } = group;
+  return portable;
+}
+
+export function rejectTaskPathFields(body: Record<string, unknown>): string | null {
+  if ('repoPath' in body) return 'repoPath is not supported for tasks';
+  if ('worktreePath' in body) return 'worktreePath is not supported for tasks';
+  return null;
+}
+
+export function rejectGroupPathFields(body: Record<string, unknown>): string | null {
+  if ('repoPath' in body) return 'repoPath is not supported for groups';
+  if ('worktreePath' in body) return 'worktreePath is not supported for groups';
+  return null;
+}
+
 // ─── Broadcast helpers ──────────────────────────────────────────────
 
 export function broadcastTaskUpdate(task: Task): void {
-  broadcast({ type: 'task_updated', payload: task });
+  broadcast({ type: 'task_updated', payload: toPortableTask(task) });
+}
+
+export function toWorkerTaskAssignment(task: Task): WorkerTaskAssignment {
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    ...(task.agentType === undefined ? {} : { agentType: task.agentType }),
+    ...(task.branchName === undefined ? {} : { branchName: task.branchName }),
+    ...(task.baseBranch === undefined ? {} : { baseBranch: task.baseBranch }),
+    ...(task.useWorktree === undefined ? {} : { useWorktree: task.useWorktree }),
+    ...(task.timeoutMinutes === undefined ? {} : { timeoutMinutes: task.timeoutMinutes }),
+  };
 }
 
 export function broadcastWorkerUpdate(worker: Worker): void {
@@ -400,7 +439,7 @@ export function broadcastWorkerRemove(id: string): void {
 }
 
 export function broadcastGroupUpdate(group: TaskGroup): void {
-  broadcast({ type: 'group_updated', payload: group });
+  broadcast({ type: 'group_updated', payload: toPortableTaskGroup(group) });
 }
 
 export function broadcastProjectUpdate(project: Project): void {
@@ -479,7 +518,7 @@ export function isRateLimited(taskId: string): boolean {
 // ─── Task field validation ──────────────────────────────────────────
 
 export function validateTaskFields(body: Record<string, any>): string | null {
-  const { title, description, priority, columnId, agentType, repoPath, branchName, baseBranch, useWorktree, autoRun, timeoutMinutes } = body;
+  const { title, description, priority, columnId, agentType, branchName, baseBranch, useWorktree, autoRun, timeoutMinutes } = body;
 
   if (!title || typeof title !== 'string' || !title.trim()) {
     return 'title is required and must be a non-empty string';
@@ -501,17 +540,6 @@ export function validateTaskFields(body: Record<string, any>): string | null {
   }
   if (agentType !== undefined && !isValidAgentType(agentType)) {
     return `invalid agentType: must be one of ${VALID_AGENT_TYPES.join(', ')}`;
-  }
-  if (repoPath !== undefined && typeof repoPath !== 'string') {
-    return 'repoPath must be a string';
-  }
-  if (typeof repoPath === 'string') {
-    const expandedRepoPath = expandTilde(repoPath);
-    if (!path.isAbsolute(expandedRepoPath)) {
-      return 'repoPath must be an absolute path';
-    }
-    const repoErr = isAllowedRepoPath(expandedRepoPath);
-    if (repoErr) return repoErr;
   }
   if (branchName !== undefined && typeof branchName !== 'string') {
     return 'branchName must be a string';
@@ -540,7 +568,7 @@ export function validateTaskFields(body: Record<string, any>): string | null {
 // ─── Task builder ───────────────────────────────────────────────────
 
 export function buildTask(body: Record<string, any>): Task {
-  const { title, description, priority, columnId, agentType, repoPath, branchName, baseBranch, useWorktree, projectId, timeoutMinutes } = body;
+  const { title, description, priority, columnId, agentType, branchName, baseBranch, useWorktree, projectId, timeoutMinutes } = body;
   return {
     id: uuid(),
     projectId: typeof projectId === 'string' && projectId ? projectId : 'default',
@@ -551,7 +579,6 @@ export function buildTask(body: Record<string, any>): Task {
     agentStatus: 'idle',
     agentType: agentType || 'copilot',
     createdAt: Date.now(),
-    repoPath: typeof repoPath === 'string' ? expandTilde(repoPath) : undefined,
     branchName: branchName || undefined,
     baseBranch: baseBranch || undefined,
     useWorktree: useWorktree ?? undefined, externalSource: body.externalSource, externalKey: body.externalKey, provenance: body.provenance, runRequestedAt: body.runRequestedAt,
