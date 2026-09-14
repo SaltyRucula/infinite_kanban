@@ -2,13 +2,23 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
+import { pathToFileURL } from 'node:url';
 import { stdin as input, stdout as output } from 'node:process';
-import { v4 as uuid } from 'uuid';
-import { ClaudeProvider, CodexProvider, CopilotProvider, GrokProvider, HermesProvider, OpenClawProvider, OpenCodeProvider, type AgentProvider, type AgentEvent as CoreEvent } from '@codewithdan/agent-sdk-core';
-import type { AgentEvent, AgentType, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
-import { isValidAgentType, VALID_AGENT_TYPES, WORKER_ASSIGNMENT_POLL_INTERVAL_MS, WORKER_HEARTBEAT_INTERVAL_MS } from '@ai-agent-board/shared/constants.js';
+import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import {
+  isValidAgentType,
+  VALID_AGENT_TYPES,
+  WORKER_ASSIGNMENT_POLL_INTERVAL_MS,
+  WORKER_HEARTBEAT_INTERVAL_MS,
+} from '@ai-agent-board/shared/constants.js';
+import { claimTask, completeTaskFailure, fetchAssignments, request, requestWithLoggedFailure, sendEvent, type Config } from './api.js';
+import {
+  parseWorkspaceSettings,
+  runOpenCodeTask,
+  type RunnerProfile,
+} from './local-runner.js';
+import { runAgentSdkTask } from './sdk-runner.js';
 
-type Config = { readonly workerId: string; readonly workerToken: string; readonly serverUrl: string };
 type Args = Readonly<Record<string, string>>;
 const configPath = path.join(os.homedir(), '.agentboard-worker', 'config.json');
 const workspaceConfigPath = path.join(os.homedir(), '.agentboard-worker', 'workspace.json');
@@ -52,51 +62,24 @@ async function loadConfig(): Promise<Config> {
   return JSON.parse(await fs.readFile(configPath, 'utf8')) as Config;
 }
 
-async function loadWorkspacePath(): Promise<string> {
+function safeWorkerError(error: unknown, workspacePath: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replaceAll(workspacePath, '[local workspace]');
+}
+
+async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string; readonly runner: RunnerProfile }> {
   let raw: unknown;
   try {
     raw = JSON.parse(await fs.readFile(workspaceConfigPath, 'utf8')) as unknown;
   } catch {
     throw new Error('worker workspace configuration is missing or invalid');
   }
-  if (
-    !raw
-    || typeof raw !== 'object'
-    || Object.keys(raw).length !== 1
-    || !('workspacePath' in raw)
-    || typeof raw.workspacePath !== 'string'
-  ) {
-    throw new Error('worker workspace configuration is invalid');
-  }
-  const workspacePath = raw.workspacePath;
-  const stats = await fs.stat(workspacePath).catch(() => undefined);
+  const parsed = parseWorkspaceSettings(raw);
+  const stats = await fs.stat(parsed.workspacePath).catch(() => undefined);
   if (!stats?.isDirectory()) {
     throw new Error('worker workspace configuration must point to a directory');
   }
-  return workspacePath;
-}
-
-function safeWorkerError(error: unknown, workspacePath: string): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replaceAll(workspacePath, '[local workspace]');
-}
-
-function urlFor(serverUrl: string, endpoint: string): string {
-  return `${serverUrl.replace(/\/$/, '')}/api/workers${endpoint}`;
-}
-
-async function request<T>(config: Config, endpoint: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(urlFor(config.serverUrl, endpoint), {
-    ...init,
-    headers: {
-      authorization: `Bearer ${config.workerToken}`,
-      'content-type': 'application/json',
-      ...(init.headers ?? {}),
-    },
-  });
-  const body: unknown = await response.json();
-  if (!response.ok) throw new Error(`worker API ${response.status}: ${JSON.stringify(body)}`);
-  return body as T;
+  return parsed;
 }
 
 async function register(args: Args): Promise<void> {
@@ -134,81 +117,64 @@ async function register(args: Args): Promise<void> {
   console.log(`registered worker ${responseBody.worker.id}; credentials saved to ${configPath}`);
 }
 
-function providerFor(agentType: AgentType): AgentProvider {
-  switch (agentType) {
-    case 'copilot':
-      return new CopilotProvider();
-    case 'claude':
-      return new ClaudeProvider();
-    case 'codex':
-      return new CodexProvider();
-    case 'opencode':
-      return new OpenCodeProvider();
-    case 'hermes':
-      return new HermesProvider();
-    case 'openclaw':
-      return new OpenClawProvider();
-    case 'grok':
-      return new GrokProvider();
-    default:
-      throw new Error(`unsupported agent type: ${agentType satisfies never}`);
-  }
+
+function assertNever(value: never): never {
+  throw new Error(`unsupported runner kind: ${String(value)}`);
 }
 
-async function sendEvent(config: Config, task: WorkerTaskAssignment, claimToken: string, event: AgentEvent): Promise<void> {
-  await request(config, `/me/tasks/${task.id}/events`, {
+async function executeTask(
+  config: Config,
+  task: WorkerTaskAssignment,
+  claimToken: string,
+  workspacePath: string,
+  runner: RunnerProfile,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  const sendTaskEvent = async (event: Parameters<typeof sendEvent>[3]): Promise<void> => {
+    await sendEvent(config, task, claimToken, event);
+  };
+
+  const result = await (() => {
+    switch (runner.kind) {
+      case 'agent-sdk':
+        return runAgentSdkTask({
+          task,
+          workingDirectory: workspacePath,
+          sendEvent: sendTaskEvent,
+        });
+      case 'opencode-run':
+        return runOpenCodeTask({
+          task,
+          workspacePath,
+          runner,
+          sendEvent: sendTaskEvent,
+          abortSignal,
+        });
+      default:
+        return assertNever(runner);
+    }
+  })();
+
+  await request(config, `/me/tasks/${task.id}/complete`, {
     method: 'POST',
     headers: { 'x-worker-claim': claimToken },
-    body: JSON.stringify(event),
+    body: JSON.stringify({
+      status: result.status,
+      ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
+      ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
+    }),
   });
-}
-
-async function executeTask(config: Config, task: WorkerTaskAssignment, claimToken: string, workingDirectory: string): Promise<void> {
-  const agentType = task.agentType;
-  if (!agentType || !isValidAgentType(agentType)) {
-    throw new Error('task has no supported agentType');
-  }
-  const provider = providerFor(agentType);
-  await provider.start();
-  const session = await provider.createSession({
-    contextId: task.id,
-    workingDirectory,
-    systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
-      + `Task title: ${task.title}`,
-    onEvent: (event: CoreEvent) => {
-      const mapped: AgentEvent = {
-        id: event.id || uuid(),
-        taskId: task.id,
-        type: event.type as AgentEvent['type'],
-        content: event.content,
-        timestamp: event.timestamp,
-        ...(event.metadata ? { metadata: event.metadata as AgentEvent['metadata'] } : {}),
-      };
-      void sendEvent(config, task, claimToken, mapped).catch((error: unknown) => {
-        console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    },
-  });
-  try {
-    const result = await session.execute(`${task.title}\n\n${task.description}`);
-    await request(config, `/me/tasks/${task.id}/complete`, {
-      method: 'POST',
-      headers: { 'x-worker-claim': claimToken },
-      body: JSON.stringify({ status: result.status, error: result.error ? safeWorkerError(result.error, workingDirectory) : result.error }),
-    });
-  } finally {
-    await session.destroy();
-    await provider.stop();
-  }
 }
 
 async function run(): Promise<void> {
   const config = await loadConfig();
-  const workspacePath = await loadWorkspacePath();
+  const workspaceSettings = await loadWorkspaceSettings();
   let stopping = false;
   let current: { task: WorkerTaskAssignment; claimToken: string } | undefined;
+  let currentAbortController: AbortController | undefined;
   const stop = (): void => {
     stopping = true;
+    currentAbortController?.abort();
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
@@ -217,36 +183,47 @@ async function run(): Promise<void> {
     const heartbeatHeaders: Record<string, string> = current
       ? { 'x-worker-claim': current.claimToken }
       : {};
-    void request(config, '/me/heartbeat', {
+    void requestWithLoggedFailure('heartbeat', () => request(config, '/me/heartbeat', {
       method: 'POST',
       headers: heartbeatHeaders,
       body: JSON.stringify(heartbeatBody),
-    }).catch((error: unknown) => {
-      console.error(`[worker] heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    }));
   }, WORKER_HEARTBEAT_INTERVAL_MS);
   try {
     while (!stopping) {
       if (!current) {
-        const response = await request<{ tasks: readonly WorkerTaskAssignment[] }>(config, '/me/assignments');
-        const task = response.tasks[0];
+        const tasks = await fetchAssignments(config);
+        if (!tasks) {
+          await new Promise((resolve) => setTimeout(resolve, WORKER_ASSIGNMENT_POLL_INTERVAL_MS));
+          continue;
+        }
+        const task = tasks[0];
         if (task) {
+          const claimed = await claimTask(config, task.id);
+          if (!claimed) {
+            await new Promise((resolve) => setTimeout(resolve, WORKER_ASSIGNMENT_POLL_INTERVAL_MS));
+            continue;
+          }
+          current = { task: claimed.task, claimToken: claimed.claimToken };
+          currentAbortController = new AbortController();
           try {
-            const claimed = await request<{ task: WorkerTaskAssignment; claimToken: string }>(config, `/me/tasks/${task.id}/claim`, { method: 'POST' });
-            current = { task: claimed.task, claimToken: claimed.claimToken };
-            await executeTask(config, claimed.task, claimed.claimToken, workspacePath);
+            await executeTask(
+              config,
+              claimed.task,
+              claimed.claimToken,
+              workspaceSettings.workspacePath,
+              workspaceSettings.runner,
+              currentAbortController.signal,
+            );
           } catch (error: unknown) {
-            const message = safeWorkerError(error, workspacePath);
+            const message = safeWorkerError(error, workspaceSettings.workspacePath);
             if (current) {
-              await request(config, `/me/tasks/${current.task.id}/complete`, {
-                method: 'POST',
-                headers: { 'x-worker-claim': current.claimToken },
-                body: JSON.stringify({ status: 'failed', error: message }),
-              }).catch(() => undefined);
+              await completeTaskFailure(config, current.task.id, current.claimToken, message);
             }
             console.error(`[worker] task failed: ${message}`);
           } finally {
             current = undefined;
+            currentAbortController = undefined;
           }
         }
       }
@@ -269,7 +246,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(`[worker] ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  void main().catch((error: unknown) => {
+    console.error(`[worker] ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}
