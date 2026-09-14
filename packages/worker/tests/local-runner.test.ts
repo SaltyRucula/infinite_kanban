@@ -3,9 +3,12 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import type { Event as OpenCodeEvent } from '@opencode-ai/sdk';
 import {
   parseWorkspaceSettings,
-  runOpenCodeTask,
+  startOpenCodeServerTask,
+  type CreateOpenCodeClient,
+  type OpenCodeClientLike,
   type OpenCodeProcess,
   type OpenCodeSpawn,
 } from '../src/local-runner.js';
@@ -41,167 +44,155 @@ test('parseWorkspaceSettings defaults to agent-sdk for legacy workspace-only con
   });
 });
 
-test('parseWorkspaceSettings rejects opencode-run runner without agent', () => {
+test('parseWorkspaceSettings rejects opencode-server runner without agent', () => {
   assert.throws(
-    () => parseWorkspaceSettings({ workspacePath: '/tmp/workspace', runner: { kind: 'opencode-run' } }),
-    /runner.agent must be a non-empty string when runner.kind is opencode-run/,
+    () => parseWorkspaceSettings({ workspacePath: '/tmp/workspace', runner: { kind: 'opencode-server' } }),
+    /runner.agent must be a non-empty string when runner.kind is opencode-server/,
   );
 });
 
-test('runOpenCodeTask spawns opencode run with exact argv, shell:false, and labels in the prompt', async () => {
+type FakeClientState = {
+  readonly sessionCreates: string[];
+  readonly prompts: Array<{ sessionId: string; agent?: string; text: string }>;
+  readonly aborts: string[];
+};
+
+function emptyAsyncGenerator<T>(): AsyncGenerator<T, void, unknown> {
+  return (async function* stream(): AsyncGenerator<T, void, unknown> {
+    return;
+  })();
+}
+
+function createFakeClient(
+  state: FakeClientState,
+  stream: AsyncGenerator<OpenCodeEvent, void, unknown> = emptyAsyncGenerator<OpenCodeEvent>(),
+): OpenCodeClientLike {
+  return {
+    session: {
+      create: async ({ body }) => {
+        state.sessionCreates.push(body?.title ?? '');
+        return { data: { id: 'ses_worker_1' } };
+      },
+      prompt: async ({ path, body }) => {
+        const first = body?.parts[0];
+        const text = first?.type === 'text' ? first.text : '';
+        state.prompts.push({ sessionId: path.id, agent: body?.agent, text });
+        return { data: { info: {} } };
+      },
+      abort: async ({ path }) => {
+        state.aborts.push(path.id);
+        return { data: true };
+      },
+    },
+    event: {
+      subscribe: async () => ({ stream }),
+    },
+  };
+}
+
+test('startOpenCodeServerTask starts a task-titled session and prompts with the configured agent', async () => {
   const spawned = new FakeOpenCodeProcess();
-  let command = '';
-  let argv: readonly string[] = [];
-  let shellOption: string | boolean | undefined;
-  const order: string[] = [];
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
 
   const spawnFn: OpenCodeSpawn = (nextCommand, nextArgs, options) => {
-    order.push('spawn');
-    command = nextCommand;
-    argv = nextArgs;
-    shellOption = options.shell;
+    assert.equal(nextCommand, 'opencode');
+    assert.deepEqual(nextArgs, ['serve', '--hostname=127.0.0.1', '--port=0']);
+    assert.equal(options.shell, false);
     queueMicrotask(() => {
+      spawned.stdout.write('opencode server listening on http://127.0.0.1:4096\n');
       spawned.stdout.end();
       spawned.stderr.end();
-      spawned.emit('close', 0, null);
     });
     return spawned;
   };
 
-  const result = await runOpenCodeTask({
+  const clientFactory: CreateOpenCodeClient = (config) => {
+    assert.equal(config.baseUrl, 'http://127.0.0.1:4096');
+    assert.equal(config.directory, '/tmp/workspace');
+    return createFakeClient(state);
+  };
+
+  const live = await startOpenCodeServerTask({
     task,
     workspacePath: '/tmp/workspace',
-    runner: { kind: 'opencode-run', agent: 'sisyphus' },
-    sendEvent: async (event) => {
-      order.push(`sendEvent:${event.type}`);
-      assert.equal(event.type, 'thinking');
-      assert.equal(event.content, 'Starting local Sisyphus runner…');
-    },
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    sendEvent: async () => {},
     spawnFn,
+    createClient: clientFactory,
   });
+  const result = await live.done;
 
-  assert.deepEqual(order, ['sendEvent:thinking', 'spawn']);
-  assert.equal(command, 'opencode');
-  assert.deepEqual(argv, [
-    'run',
-    '--agent',
-    'sisyphus',
-    '--format',
-    'json',
-    '--dir',
-    '/tmp/workspace',
-    [
+  assert.equal(live.baseUrl, 'http://127.0.0.1:4096');
+  assert.equal(live.sessionId, 'ses_worker_1');
+  assert.deepEqual(state.sessionCreates, ['Implement local runner seam']);
+  assert.equal(state.prompts.length, 1);
+  assert.deepEqual(state.prompts[0], {
+    sessionId: 'ses_worker_1',
+    agent: 'sisyphus',
+    text: [
       'Task title: Implement local runner seam',
       '',
       'Task description: Wire worker to opencode run with a local profile',
       '',
       'Labels: orioninit, worker-local',
     ].join('\n'),
-  ]);
-  assert.equal(shellOption, false);
-  assert.equal(result.status, 'complete');
-});
-
-test('runOpenCodeTask continues when the immediate start event upload fails', async () => {
-  const spawned = new FakeOpenCodeProcess();
-  let spawnCount = 0;
-
-  const spawnFn: OpenCodeSpawn = () => {
-    spawnCount += 1;
-    queueMicrotask(() => {
-      spawned.stdout.end();
-      spawned.stderr.end();
-      spawned.emit('close', 0, null);
-    });
-    return spawned;
-  };
-
-  const result = await runOpenCodeTask({
-    task,
-    workspacePath: '/tmp/workspace',
-    runner: { kind: 'opencode-run', agent: 'sisyphus' },
-    sendEvent: async () => {
-      throw new Error('event upload failed');
-    },
-    spawnFn,
   });
-
-  assert.equal(spawnCount, 1);
   assert.equal(result.status, 'complete');
 });
 
-test('runOpenCodeTask maps JSONL output to worker AgentEvents safely', async () => {
-  const spawned = new FakeOpenCodeProcess();
-  const events: { type: string; content: string }[] = [];
+test('startOpenCodeServerTask streams mapped SSE events and strips local workspace paths', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+  const sse = (async function* stream(): AsyncGenerator<OpenCodeEvent, void, unknown> {
+    yield {
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          type: 'text',
+          sessionID: 'ses_worker_1',
+          messageID: 'msg-1',
+          text: 'Path /tmp/workspace/README.md',
+        },
+        delta: 'Path /tmp/workspace/README.md',
+      },
+    } as unknown as OpenCodeEvent;
+  })();
+  const events: string[] = [];
 
-  const spawnFn: OpenCodeSpawn = () => {
-    queueMicrotask(() => {
-      spawned.stdout.write('{"id":"evt-1","type":"thinking","content":"Working in /tmp/workspace"}\n');
-      spawned.stdout.write('{"type":"something-new","message":"raw json fallback"}\n');
-      spawned.stdout.write('not json\n');
-      spawned.stdout.end();
-      spawned.stderr.end();
-      spawned.emit('close', 0, null);
-    });
-    return spawned;
-  };
-
-  await runOpenCodeTask({
+  const live = await startOpenCodeServerTask({
     task,
     workspacePath: '/tmp/workspace',
-    runner: { kind: 'opencode-run', agent: 'sisyphus' },
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
     sendEvent: async (event) => {
-      if (event.content === 'Starting local Sisyphus runner…') {
-        return;
-      }
-      events.push({ type: event.type, content: event.content });
+      events.push(event.content);
     },
-    spawnFn,
+    createClient: () => createFakeClient(state, sse),
   });
+  await live.done;
 
-  assert.deepEqual(events.map((event) => event.type), ['thinking', 'output', 'output']);
-  assert.match(events[0]?.content ?? '', /\[local workspace\]/);
-  assert.match(events[2]?.content ?? '', /not json/);
+  assert.equal(events.some((value) => value.includes('[local workspace]')), true);
 });
 
-test('runOpenCodeTask handles spawned-process errors and strips workspace paths', async () => {
-  const spawned = new FakeOpenCodeProcess();
-  const spawnFn: OpenCodeSpawn = () => {
-    queueMicrotask(() => {
-      spawned.emit('error', new Error('spawn failed in /tmp/workspace'));
-    });
-    return spawned;
-  };
-
-  const result = await runOpenCodeTask({
+test('startOpenCodeServerTask forwards follow-up messages and abort to the same session', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+  const live = await startOpenCodeServerTask({
     task,
     workspacePath: '/tmp/workspace',
-    runner: { kind: 'opencode-run', agent: 'sisyphus' },
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
     sendEvent: async () => {},
-    spawnFn,
+    createClient: () => createFakeClient(state),
   });
 
-  assert.equal(result.status, 'failed');
-  assert.match(result.error ?? '', /\[local workspace\]/);
-});
+  await live.sendMessage('Need clarification details');
+  await live.abort();
+  await live.done;
 
-test('runOpenCodeTask handles cancellation by terminating child process', async () => {
-  const spawned = new FakeOpenCodeProcess();
-  const controller = new AbortController();
-  const spawnFn: OpenCodeSpawn = () => spawned;
-
-  const resultPromise = runOpenCodeTask({
-    task,
-    workspacePath: '/tmp/workspace',
-    runner: { kind: 'opencode-run', agent: 'sisyphus' },
-    sendEvent: async () => {},
-    spawnFn,
-    abortSignal: controller.signal,
+  assert.equal(state.prompts.length, 2);
+  assert.deepEqual(state.prompts[1], {
+    sessionId: 'ses_worker_1',
+    agent: 'sisyphus',
+    text: 'Need clarification details',
   });
-  controller.abort();
-
-  const result = await resultPromise;
-  assert.equal(spawned.killCalled, true);
-  assert.equal(result.status, 'failed');
-  assert.equal(result.error, 'local runner cancelled');
+  assert.deepEqual(state.aborts, ['ses_worker_1']);
 });

@@ -80,7 +80,11 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
 }
 
 export function isValidToken(token: string | undefined): boolean {
-  if (!process.env.API_KEY && credentials().length===0) return true;
   const auth = authenticateToken(token);
   return auth.authenticated && auth.legacy;
+}
+
+export function isValidWebSocketToken(token: string | undefined): boolean {
+  if (!process.env.API_KEY) return true;
+  return isValidToken(token);
 }

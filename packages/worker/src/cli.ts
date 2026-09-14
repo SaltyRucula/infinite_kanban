@@ -24,7 +24,7 @@ import {
 } from './api.js';
 import {
   parseWorkspaceSettings,
-  runOpenCodeTask,
+  startOpenCodeServerTask,
   type OpenCodeRunResult,
   type RunnerProfile,
 } from './local-runner.js';
@@ -192,6 +192,26 @@ async function executeTask(
     await sendEvent(config, task, claimToken, event);
   };
 
+  const runLiveTask = async (run: CommandAwareTaskRun): Promise<SdkRunResult | OpenCodeRunResult> => {
+    const control = new AbortController();
+    const onAbort = (): void => {
+      control.abort();
+      void run.abort();
+    };
+    if (abortSignal.aborted) onAbort();
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+    try {
+      const loop = runCommandLoop(config, task.id, claimToken, run, workspacePath, control.signal);
+      const done = await run.done;
+      control.abort();
+      await loop;
+      return done;
+    } finally {
+      abortSignal.removeEventListener('abort', onAbort);
+      control.abort();
+    }
+  };
+
   const result = await (async (): Promise<SdkRunResult | OpenCodeRunResult> => {
     switch (runner.kind) {
       case 'agent-sdk': {
@@ -203,36 +223,24 @@ async function executeTask(
         if (live.sessionId && live.baseUrl) {
           await registerTaskSession(config, task.id, claimToken, live.sessionId, live.baseUrl);
         }
-        const run: CommandAwareTaskRun = {
+        return runLiveTask({
           done: live.done,
           sendMessage: (message, attachmentIds) => live.sendMessage(message, attachmentIds),
           abort: () => live.abort(),
-        };
-        const control = new AbortController();
-        const onAbort = (): void => {
-          control.abort();
-          void live.abort();
-        };
-        if (abortSignal.aborted) onAbort();
-        abortSignal.addEventListener('abort', onAbort, { once: true });
-        try {
-          const loop = runCommandLoop(config, task.id, claimToken, run, workspacePath, control.signal);
-          const done = await live.done;
-          control.abort();
-          await loop;
-          return done;
-        } finally {
-          abortSignal.removeEventListener('abort', onAbort);
-          control.abort();
-        }
+        });
       }
-      case 'opencode-run': {
-        return runOpenCodeTask({
+      case 'opencode-server': {
+        const live = await startOpenCodeServerTask({
           task,
           workspacePath,
           runner,
           sendEvent: sendTaskEvent,
-          abortSignal,
+        });
+        await registerTaskSession(config, task.id, claimToken, live.sessionId, live.baseUrl);
+        return runLiveTask({
+          done: live.done,
+          sendMessage: (message) => live.sendMessage(message),
+          abort: () => live.abort(),
         });
       }
       default:

@@ -71,6 +71,6 @@ test('completeTaskFailure never throws when the completion API is unavailable', 
 test('parseWorkspaceSettings rejects unknown runner kinds', () => {
   assert.throws(
     () => parseWorkspaceSettings({ workspacePath: '/tmp/workspace', runner: { kind: 'shell' } }),
-    /runner.kind must be either "agent-sdk" or "opencode-run"/,
+    /runner.kind must be either "agent-sdk" or "opencode-server"/,
   );
 });

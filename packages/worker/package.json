@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@ai-agent-board/shared": "*",
-    "@codewithdan/agent-sdk-core": "^0.7.0"
+    "@codewithdan/agent-sdk-core": "^0.7.0",
+    "@opencode-ai/sdk": "^1.17.7"
     ,"uuid": "^11.0.0"
   },
   "devDependencies": {

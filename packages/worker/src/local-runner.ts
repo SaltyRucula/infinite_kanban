@@ -1,15 +1,26 @@
 import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
-import type { AgentEvent, AgentEventType, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { mapOpenCodeEvent, type AgentEvent as CoreEvent } from '@codewithdan/agent-sdk-core';
+import { createOpencodeClient } from '@opencode-ai/sdk';
+import type { Event as OpenCodeEvent } from '@opencode-ai/sdk';
+import type { AgentEvent, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 
 export type AgentSdkRunnerProfile = { readonly kind: 'agent-sdk' };
-export type OpenCodeRunnerProfile = { readonly kind: 'opencode-run'; readonly agent: string };
-export type RunnerProfile = AgentSdkRunnerProfile | OpenCodeRunnerProfile;
+export type OpenCodeServerRunnerProfile = { readonly kind: 'opencode-server'; readonly agent: string };
+export type RunnerProfile = AgentSdkRunnerProfile | OpenCodeServerRunnerProfile;
 export type WorkspaceSettings = { readonly workspacePath: string; readonly runner: RunnerProfile };
 export type OpenCodeRunResult = {
   readonly status: 'complete' | 'failed';
   readonly summary?: string;
   readonly error?: string;
+};
+
+export type LiveOpenCodeServerTask = {
+  readonly sessionId: string;
+  readonly baseUrl: string;
+  readonly done: Promise<OpenCodeRunResult>;
+  sendMessage(message: string, attachmentIds?: readonly string[]): Promise<void>;
+  abort(): Promise<void>;
 };
 
 export interface OpenCodeProcess {
@@ -28,48 +39,134 @@ export type OpenCodeSpawn = (
   options: SpawnOptionsWithoutStdio,
 ) => OpenCodeProcess;
 
-type RunOpenCodeTaskInput = {
+export interface OpenCodeClientLike {
+  readonly session: {
+    create(input: { body?: { title?: string } }): Promise<{ data?: { id: string } }>;
+    prompt(input: {
+      path: { id: string };
+      body?: { agent?: string; parts: readonly [{ type: 'text'; text: string }] };
+    }): Promise<unknown>;
+    abort(input: { path: { id: string } }): Promise<unknown>;
+  };
+  readonly event: {
+    subscribe(input?: { signal?: AbortSignal; sseMaxRetryAttempts?: number }): Promise<{
+      stream: AsyncGenerator<OpenCodeEvent, void, unknown>;
+    }>;
+  };
+}
+
+export type CreateOpenCodeClient = (input: {
+  readonly baseUrl: string;
+  readonly directory: string;
+}) => OpenCodeClientLike;
+
+type StartOpenCodeServerTaskInput = {
   readonly task: WorkerTaskAssignment;
   readonly workspacePath: string;
-  readonly runner: OpenCodeRunnerProfile;
+  readonly runner: OpenCodeServerRunnerProfile;
   readonly sendEvent: (event: AgentEvent) => Promise<void>;
   readonly spawnFn?: OpenCodeSpawn;
+  readonly createClient?: CreateOpenCodeClient;
+  readonly baseUrl?: string;
   readonly abortSignal?: AbortSignal;
 };
 
-const VALID_EVENT_TYPES: ReadonlySet<AgentEventType> = new Set([
-  'thinking',
-  'tool_call',
-  'file_read',
-  'file_write',
-  'file_edit',
-  'command',
-  'command_output',
-  'output',
-  'test_result',
-  'error',
-  'complete',
-]);
+const DEFAULT_SERVER_HOSTNAME = '127.0.0.1';
+const DEFAULT_SERVER_PORT = 0;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function asTimestamp(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : Date.now();
-}
-
-function isValidEventType(value: string): value is AgentEventType {
-  return VALID_EVENT_TYPES.has(value as AgentEventType);
-}
-
 function sanitizeLocalText(content: string, workspacePath: string): string {
   return content.replaceAll(workspacePath, '[local workspace]');
+}
+
+function sanitizeMetadata(
+  metadata: CoreEvent['metadata'] | undefined,
+  workspacePath: string,
+): AgentEvent['metadata'] | undefined {
+  type WorkerMetadata = NonNullable<AgentEvent['metadata']>;
+  const record = asRecord(metadata);
+  if (!record) return undefined;
+  const result: WorkerMetadata = {};
+  if (typeof record.file === 'string') result.file = sanitizeLocalText(record.file, workspacePath);
+  if (typeof record.fileEventType === 'string') result.fileEventType = record.fileEventType;
+  if (typeof record.language === 'string') result.language = record.language;
+  if (typeof record.command === 'string') result.command = sanitizeLocalText(record.command, workspacePath);
+  if (typeof record.diff === 'string') result.diff = sanitizeLocalText(record.diff, workspacePath);
+  if (typeof record.agentType === 'string') result.agentType = record.agentType as WorkerMetadata['agentType'];
+  if (typeof record.duration === 'number' && Number.isFinite(record.duration)) result.duration = record.duration;
+  if (typeof record.error === 'string') result.error = sanitizeLocalText(record.error, workspacePath);
+  if (record.clarification_request) {
+    result.clarification_request = record.clarification_request as WorkerMetadata['clarification_request'];
+  }
+  if (record.clarification_answer) {
+    result.clarification_answer = record.clarification_answer as WorkerMetadata['clarification_answer'];
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function mapCoreEvent(taskId: string, workspacePath: string, event: CoreEvent): AgentEvent {
+  const metadata = sanitizeMetadata(event.metadata, workspacePath);
+  return {
+    id: event.id || uuid(),
+    taskId,
+    type: event.type,
+    content: sanitizeLocalText(event.content, workspacePath),
+    timestamp: event.timestamp,
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function defaultSpawn(command: string, args: readonly string[], options: SpawnOptionsWithoutStdio): OpenCodeProcess {
+  return spawn(command, [...args], options);
+}
+
+function defaultCreateClient(input: { readonly baseUrl: string; readonly directory: string }): OpenCodeClientLike {
+  return createOpencodeClient({ baseUrl: input.baseUrl, directory: input.directory }) as unknown as OpenCodeClientLike;
+}
+
+function waitForManagedServerReady(process: OpenCodeProcess): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('timeout waiting for opencode serve to report a listening URL after 5000ms'));
+    }, 5_000);
+    let output = '';
+
+    const onOutput = (chunk: string | Buffer): void => {
+      output += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      const match = output.match(/opencode server listening on\s+(https?:\/\/[^\s]+)/);
+      if (!match) return;
+      cleanup();
+      resolve(match[1]);
+    };
+
+    const onClose = (code: number | null): void => {
+      cleanup();
+      reject(new Error(`opencode serve exited before startup with code ${code ?? 'unknown'}`));
+    };
+
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+
+    const cleanup = (): void => {
+      clearTimeout(timeoutId);
+      process.stdout.off('data', onOutput);
+      process.stderr.off('data', onOutput);
+      process.off('close', onClose);
+      process.off('error', onError);
+    };
+
+    process.stdout.on('data', onOutput);
+    process.stderr.on('data', onOutput);
+    process.on('close', onClose);
+    process.on('error', onError);
+  });
 }
 
 export function buildTaskPrompt(task: WorkerTaskAssignment): string {
@@ -83,67 +180,9 @@ export function buildTaskPrompt(task: WorkerTaskAssignment): string {
   ].join('\n');
 }
 
-function eventFromJsonLine(taskId: string, workspacePath: string, line: string): AgentEvent {
-  const parsed = asRecord(JSON.parse(line));
-  if (!parsed) throw new Error('json event must be an object');
-
-  const candidateType = asString(parsed.type);
-  const type: AgentEventType = candidateType && isValidEventType(candidateType) ? candidateType : 'output';
-  const contentSource = asString(parsed.content)
-    ?? asString(parsed.message)
-    ?? asString(parsed.text)
-    ?? JSON.stringify(parsed);
-  const content = sanitizeLocalText(contentSource, workspacePath);
-
-  return {
-    id: asString(parsed.id) ?? uuid(),
-    taskId,
-    type,
-    content,
-    timestamp: asTimestamp(parsed.timestamp),
-  };
-}
-
-function eventFromPlainLine(taskId: string, workspacePath: string, line: string): AgentEvent {
-  return {
-    id: uuid(),
-    taskId,
-    type: 'output',
-    content: sanitizeLocalText(line, workspacePath),
-    timestamp: Date.now(),
-  };
-}
-
-function createLineConsumer(onLine: (line: string) => void): {
-  readonly push: (chunk: string) => void;
-  readonly flush: () => void;
-} {
-  let buffered = '';
-  return {
-    push: (chunk: string) => {
-      buffered += chunk;
-      const lines = buffered.split(/\r?\n/u);
-      buffered = lines.pop() ?? '';
-      for (const line of lines) {
-        if (line.trim()) onLine(line);
-      }
-    },
-    flush: () => {
-      if (buffered.trim()) {
-        onLine(buffered);
-      }
-      buffered = '';
-    },
-  };
-}
-
-function defaultSpawn(command: string, args: readonly string[], options: SpawnOptionsWithoutStdio): OpenCodeProcess {
-  return spawn(command, [...args], options);
-}
-
 export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
   const record = asRecord(raw);
-  const workspacePath = asString(record?.workspacePath)?.trim();
+  const workspacePath = typeof record?.workspacePath === 'string' ? record.workspacePath.trim() : '';
   if (!workspacePath) {
     throw new Error('worker workspace configuration must include workspacePath');
   }
@@ -154,139 +193,104 @@ export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
   }
 
   const runnerRecord = asRecord(rawRunner);
-  const kind = asString(runnerRecord?.kind);
+  const kind = typeof runnerRecord?.kind === 'string' ? runnerRecord.kind : '';
   if (kind === 'agent-sdk') {
     return { workspacePath, runner: { kind: 'agent-sdk' } };
   }
-  if (kind === 'opencode-run') {
-    const agent = asString(runnerRecord?.agent)?.trim();
+  if (kind === 'opencode-server') {
+    const agent = typeof runnerRecord?.agent === 'string' ? runnerRecord.agent.trim() : '';
     if (!agent) {
-      throw new Error('runner.agent must be a non-empty string when runner.kind is opencode-run');
+      throw new Error('runner.agent must be a non-empty string when runner.kind is opencode-server');
     }
-    return { workspacePath, runner: { kind: 'opencode-run', agent } };
+    return { workspacePath, runner: { kind: 'opencode-server', agent } };
   }
-  throw new Error('runner.kind must be either "agent-sdk" or "opencode-run"');
+  throw new Error('runner.kind must be either "agent-sdk" or "opencode-server"');
 }
 
-export async function runOpenCodeTask(input: RunOpenCodeTaskInput): Promise<OpenCodeRunResult> {
+export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInput): Promise<LiveOpenCodeServerTask> {
   const spawnFn = input.spawnFn ?? defaultSpawn;
-  const runnerName = input.runner.agent.length > 0
-    ? `${input.runner.agent[0].toUpperCase()}${input.runner.agent.slice(1)}`
-    : input.runner.agent;
-  const startEvent: AgentEvent = {
-    id: uuid(),
-    taskId: input.task.id,
-    type: 'thinking',
-    content: `Starting local ${runnerName} runner…`,
-    timestamp: Date.now(),
-  };
-  void input.sendEvent(startEvent).catch((error: unknown) => {
-    console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
-  });
+  const createClient = input.createClient ?? defaultCreateClient;
 
-  const args: readonly string[] = [
-    'run',
-    '--agent',
-    input.runner.agent,
-    '--format',
-    'json',
-    '--dir',
-    input.workspacePath,
-    buildTaskPrompt(input.task),
-  ];
-  const child = spawnFn('opencode', args, { shell: false });
+  const managedServer = input.baseUrl
+    ? undefined
+    : spawnFn('opencode', ['serve', `--hostname=${DEFAULT_SERVER_HOSTNAME}`, `--port=${DEFAULT_SERVER_PORT}`], { shell: false });
+  const baseUrl = input.baseUrl ?? await waitForManagedServerReady(managedServer as OpenCodeProcess);
+  const client = createClient({ baseUrl, directory: input.workspacePath });
 
-  const stderrLines: string[] = [];
-  let emittedEvents = 0;
-  let summary = '';
-  let wasCancelled = false;
-
-  const onStdout = createLineConsumer((line) => {
-    const event = (() => {
-      try {
-        return eventFromJsonLine(input.task.id, input.workspacePath, line);
-      } catch {
-        return eventFromPlainLine(input.task.id, input.workspacePath, line);
-      }
-    })();
-    emittedEvents += 1;
-    summary = event.content;
-    void input.sendEvent(event).catch((error: unknown) => {
-      console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  });
-
-  const onStderr = createLineConsumer((line) => {
-    const safeLine = sanitizeLocalText(line, input.workspacePath);
-    stderrLines.push(safeLine);
-    if (stderrLines.length > 10) {
-      stderrLines.shift();
-    }
-  });
-
-  const cancel = (): void => {
-    wasCancelled = true;
-    child.kill('SIGTERM');
-  };
-
-  if (input.abortSignal) {
-    if (input.abortSignal.aborted) cancel();
-    input.abortSignal.addEventListener('abort', cancel, { once: true });
+  const created = await client.session.create({ body: { title: input.task.title } });
+  const sessionId = created.data?.id;
+  if (!sessionId) {
+    throw new Error('opencode session create returned no session id');
   }
 
-  return await new Promise<OpenCodeRunResult>((resolve) => {
-    const closeHandler = (code: number | null, signal: NodeJS.Signals | null): void => {
-      onStdout.flush();
-      onStderr.flush();
-      child.stdout.off('data', stdoutHandler);
-      child.stderr.off('data', stderrHandler);
-      child.off('close', closeHandler);
-      child.off('error', errorHandler);
-      if (input.abortSignal) {
-        input.abortSignal.removeEventListener('abort', cancel);
+  const streamAbortController = new AbortController();
+  let aborted = false;
+  const streamLoop = (async (): Promise<void> => {
+    try {
+      const streamResult = await client.event.subscribe({ signal: streamAbortController.signal, sseMaxRetryAttempts: 0 });
+      for await (const event of streamResult.stream) {
+        mapOpenCodeEvent(sessionId, event, input.task.id, (coreEvent: CoreEvent) => {
+          const mapped = mapCoreEvent(input.task.id, input.workspacePath, coreEvent);
+          void input.sendEvent(mapped).catch((error: unknown) => {
+            console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        });
       }
-      if (wasCancelled || signal) {
-        resolve({ status: 'failed', error: 'local runner cancelled', summary: 'Cancelled local runner task' });
-        return;
-      }
-      if (code === 0) {
-        const completeSummary = summary || `OpenCode run completed (${emittedEvents} events)`;
-        resolve({ status: 'complete', summary: completeSummary });
-        return;
-      }
-      const baseError = `opencode exited with code ${code ?? 'unknown'}`;
-      const detail = stderrLines.length > 0 ? `${baseError}: ${stderrLines.join(' | ')}` : baseError;
-      resolve({ status: 'failed', error: detail, summary: 'Local runner execution failed' });
-    };
+    } catch {
+      return;
+    }
+  })();
 
-    const errorHandler = (error: Error): void => {
-      onStdout.flush();
-      onStderr.flush();
-      child.stdout.off('data', stdoutHandler);
-      child.stderr.off('data', stderrHandler);
-      child.off('close', closeHandler);
-      child.off('error', errorHandler);
-      if (input.abortSignal) {
-        input.abortSignal.removeEventListener('abort', cancel);
-      }
-      resolve({
-        status: 'failed',
-        error: sanitizeLocalText(error.message, input.workspacePath),
-        summary: 'Local runner process error',
+  const abort = async (): Promise<void> => {
+    aborted = true;
+    streamAbortController.abort();
+    await client.session.abort({ path: { id: sessionId } });
+    managedServer?.kill('SIGTERM');
+  };
+
+  const onAbortSignal = (): void => {
+    void abort();
+  };
+  if (input.abortSignal) {
+    if (input.abortSignal.aborted) onAbortSignal();
+    input.abortSignal.addEventListener('abort', onAbortSignal, { once: true });
+  }
+
+  const done = (async (): Promise<OpenCodeRunResult> => {
+    try {
+      await client.session.prompt({
+        path: { id: sessionId },
+        body: { agent: input.runner.agent, parts: [{ type: 'text', text: buildTaskPrompt(input.task) }] },
       });
-    };
+      if (aborted) {
+        return { status: 'failed', error: 'opencode session cancelled', summary: 'Cancelled OpenCode session task' };
+      }
+      return { status: 'complete', summary: 'OpenCode server task completed' };
+    } catch (error: unknown) {
+      const message = sanitizeLocalText(error instanceof Error ? error.message : String(error), input.workspacePath);
+      return { status: 'failed', error: message, summary: 'OpenCode server task failed' };
+    } finally {
+      streamAbortController.abort();
+      managedServer?.kill('SIGTERM');
+      await streamLoop;
+      if (input.abortSignal) {
+        input.abortSignal.removeEventListener('abort', onAbortSignal);
+      }
+    }
+  })();
 
-    const stdoutHandler = (chunk: string | Buffer): void => {
-      onStdout.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
-    };
-
-    const stderrHandler = (chunk: string | Buffer): void => {
-      onStderr.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
-    };
-
-    child.stdout.on('data', stdoutHandler);
-    child.stderr.on('data', stderrHandler);
-    child.on('close', closeHandler);
-    child.on('error', errorHandler);
-  });
+  return {
+    sessionId,
+    baseUrl,
+    done,
+    sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
+      const trimmed = message.trim();
+      if (!trimmed) return;
+      await client.session.prompt({
+        path: { id: sessionId },
+        body: { agent: input.runner.agent, parts: [{ type: 'text', text: trimmed }] },
+      });
+    },
+    abort,
+  };
 }
