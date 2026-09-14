@@ -206,7 +206,7 @@ test('GET /api/tasks/:id/opencode-session returns session link without leaking w
     const body = await response.json() as { sessionId: string; url: string };
     assert.deepEqual(body, {
       sessionId: 'ses_worker_1',
-      url: 'http://127.0.0.1:4096/session/ses_worker_1',
+      url: 'http://127.0.0.1:4096',
     });
     assert.equal(JSON.stringify(body).includes('/private/'), false);
   });
