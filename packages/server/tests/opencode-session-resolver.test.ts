@@ -26,7 +26,7 @@ test('resolveTaskOpenCodeSession prefers an active worker session registration',
   assert.deepEqual(result, { sessionId: 'ses_live', baseUrl: 'http://127.0.0.1:4096' });
 });
 
-test('resolveTaskOpenCodeSession falls back to the most recently updated registration', () => {
+test('resolveTaskOpenCodeSession returns null when the live session is missing', () => {
   const result = resolveTaskOpenCodeSession(
     [
       makeSession({ sessionId: 'ses_old', baseUrl: 'http://127.0.0.1:4096', updatedAt: 10 }),
@@ -34,7 +34,7 @@ test('resolveTaskOpenCodeSession falls back to the most recently updated registr
     ],
     null,
   );
-  assert.deepEqual(result, { sessionId: 'ses_new', baseUrl: 'http://127.0.0.1:4100' });
+  assert.equal(result, null);
 });
 
 test('resolveTaskOpenCodeSession returns null when no registration exists', () => {

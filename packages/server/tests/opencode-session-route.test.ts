@@ -19,6 +19,8 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     agentStatus: 'executing',
     agentType: 'opencode',
     createdAt: 1,
+    assignedWorkerId: 'worker-1',
+    workerLeaseExpiresAt: Date.now() + 60_000,
     ...overrides,
   };
 }
@@ -56,6 +58,7 @@ function createWorkerRepo(baseUrl: string): WorkerRepository {
     async getTaskSessions(): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> {
       return [{ sessionId: 'ses_123', baseUrl, updatedAt: 1 }];
     },
+    async clearTaskSessions(): Promise<void> {},
     async enqueueTaskCommand(): Promise<void> {},
     async claimTaskCommands(): Promise<never> { throw new Error('not implemented'); },
     async clearTaskCommands(): Promise<void> {},
@@ -77,7 +80,7 @@ function createManager(sessionId: string): AgentManager {
 async function withApp(run: (baseUrl: string) => Promise<void>): Promise<void> {
   const app = express();
   app.use(express.json());
-  app.use('/api/tasks', createAgentRouter(createRepo(makeTask()), createManager('ses_live'), undefined, undefined, createWorkerRepo('http://127.0.0.1:4096/')));
+  app.use('/api/tasks', createAgentRouter(createRepo(makeTask()), createManager('ses_123'), undefined, undefined, createWorkerRepo('http://127.0.0.1:4096/')));
 
   const server = createServer(app);
   await new Promise<void>((resolve) => {

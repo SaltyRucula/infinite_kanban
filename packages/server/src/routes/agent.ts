@@ -30,6 +30,17 @@ export function createAgentRouter(
       && (task.agentStatus === 'planning' || task.agentStatus === 'executing' || task.agentStatus === 'awaiting_clarification');
   };
 
+  const hasLiveOpenCodeSession = (task: Task): boolean => {
+    return task.workerLeaseExpiresAt != null && task.workerLeaseExpiresAt >= Date.now();
+  };
+
+  const hasMatchingWorkerSession = async (workerSessions: WorkerRepository, task: Task): Promise<boolean> => {
+    const sessionId = agentManager.getSessionIdentity(task.id);
+    if (!sessionId) return false;
+    const sessions = await workerSessions.getTaskSessions(task.id);
+    return sessions.some((session) => session.sessionId === sessionId);
+  };
+
   const enqueueWorkerCommand = async (
     task: Task,
     command:
@@ -216,6 +227,7 @@ export function createAgentRouter(
         res.status(404).json({ error: 'task not found' });
         return;
       }
+      await workerRepo?.clearTaskSessions(task.id);
       broadcastTaskUpdate(updated);
       res.json(toPortableTask(updated));
       return;
@@ -357,7 +369,12 @@ export function createAgentRouter(
       res.status(503).json({ error: 'worker repository is not configured' });
       return;
     }
-    const resolved = resolveTaskOpenCodeSession(await workerRepo.getTaskSessions(task.id), agentManager.getSessionIdentity(task.id));
+    const workerSessions = workerRepo;
+    if (!hasActiveWorkerLease(task) || !hasLiveOpenCodeSession(task) || !await hasMatchingWorkerSession(workerSessions, task)) {
+      res.status(404).json({ error: 'no OpenCode session found for this task' });
+      return;
+    }
+    const resolved = resolveTaskOpenCodeSession(await workerSessions.getTaskSessions(task.id), agentManager.getSessionIdentity(task.id));
     if (!resolved) {
       res.status(404).json({ error: 'no OpenCode session found for this task' });
       return;

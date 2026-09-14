@@ -18,6 +18,7 @@ import type { Task, AgentStatus } from '@/types';
 import { getAgentDisplay } from '@/lib/agent-config';
 import { getPriorityDisplay } from '@/lib/priority-config';
 import { cn, formatDuration } from '@/lib/utils';
+import { api } from '@/lib/api';
 
 
 const agentStatusConfig: Record<
@@ -77,6 +78,35 @@ function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarc
     ? { transform: CSS.Translate.toString(transform) }
     : undefined;
 
+  const [openCodeSessionUrl, setOpenCodeSessionUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!task.id || task.agentType !== 'opencode' || task.archived) {
+      setOpenCodeSessionUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    api.getOpenCodeSessionUrl(task.id)
+      .then((res) => {
+        if (!cancelled && res?.url) {
+          setOpenCodeSessionUrl(res.url);
+        } else if (!cancelled) {
+          setOpenCodeSessionUrl(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpenCodeSessionUrl(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [task.id, task.agentType, task.agentStatus, task.archived]);
+
   const agentStatus = agentStatusConfig[task.agentStatus];
   const StatusIcon = agentStatus.icon;
   const isActive = task.agentStatus === 'executing' || task.agentStatus === 'planning';
@@ -118,17 +148,29 @@ function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarc
           onPointerDown={(e) => e.stopPropagation()}
         >
           {onOpenOpenCodeSession && task.agentType === 'opencode' && !task.archived && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenOpenCodeSession(task);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              aria-label="Open OpenCode session"
-              title="Open OpenCode session"
-            >
-              <ExternalLink className="h-3 w-3" />
-            </button>
+            openCodeSessionUrl ? (
+              <a
+                href={openCodeSessionUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label="Open OpenCode session"
+                title="Open OpenCode session"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <button
+                disabled
+                onClick={(e) => e.stopPropagation()}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/40 cursor-not-allowed opacity-50"
+                aria-label="No active OpenCode session"
+                title="No active OpenCode session registered for this task"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            )
           )}
           {onRetry && task.agentStatus === 'failed' && !task.archived && (
             <button

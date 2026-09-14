@@ -20,7 +20,7 @@ interface TaskDetailPanelProps {
   onClose: () => void;
   onRunTask: (taskId: string) => void;
   onStopTask: (taskId: string) => void;
-  onOpenOpenCode: (task: Task) => void;
+  onOpenOpenCode?: (task: Task) => void;
   onCreatePR: (taskId: string) => Promise<string | undefined>;
   onMergeLocal: (taskId: string) => Promise<string | undefined>;
   onCleanupWorktree: (taskId: string) => Promise<void>;
@@ -38,7 +38,6 @@ export function TaskDetailPanel({
   onClose,
   onRunTask,
   onStopTask,
-  onOpenOpenCode,
   onCreatePR,
   onMergeLocal,
   onCleanupWorktree,
@@ -53,6 +52,34 @@ export function TaskDetailPanel({
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [openCodeSessionUrl, setOpenCodeSessionUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!task?.id || !isOpen || task.agentType !== 'opencode') {
+      setOpenCodeSessionUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    api.getOpenCodeSessionUrl(task.id)
+      .then((res) => {
+        if (!cancelled && res?.url) {
+          setOpenCodeSessionUrl(res.url);
+        } else if (!cancelled) {
+          setOpenCodeSessionUrl(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpenCodeSessionUrl(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [task?.id, task?.agentType, task?.agentStatus, isOpen]);
 
   useEffect(() => {
     if (!task || !isOpen) {
@@ -180,13 +207,29 @@ export function TaskDetailPanel({
               Worker: {task.agentType || 'opencode'}
           </button>
 
-          <button
-            onClick={() => onOpenOpenCode(task)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-medium bg-[#14171e] text-[#e2e8f0] border border-[#2c3343] hover:bg-[#1b1f2b] transition-colors"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-purple-400" />
-            OpenCode
-          </button>
+          {openCodeSessionUrl ? (
+            <a
+              href={openCodeSessionUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-medium bg-[#14171e] text-[#e2e8f0] border border-[#2c3343] hover:bg-[#1b1f2b] transition-colors"
+              title="Open OpenCode session"
+              aria-label="Open OpenCode session"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-purple-400" />
+              OpenCode
+            </a>
+          ) : (
+            <button
+              disabled
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-medium bg-[#14171e] text-[#94a3b8] border border-[#2c3343] opacity-50 cursor-not-allowed"
+              title="No active OpenCode session registered for this task"
+              aria-label="No active OpenCode session"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-[#94a3b8]" />
+              OpenCode
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#14171e] p-3 rounded-lg border border-[#202532]">

@@ -81,7 +81,7 @@ class FakeTaskRepository implements TaskRepository {
 }
 
 class FakeWorkerRepository implements WorkerRepository {
-  readonly sessions: Array<{ taskId: string; sessionId: string; baseUrl: string; updatedAt: number }> = [];
+  sessions: Array<{ taskId: string; sessionId: string; baseUrl: string; updatedAt: number }> = [];
   readonly commands = new Map<string, QueuedWorkerCommand[]>();
 
   async register(): Promise<Worker> { return worker; }
@@ -99,6 +99,9 @@ class FakeWorkerRepository implements WorkerRepository {
     return this.sessions
       .filter((session) => session.taskId === taskId)
       .map(({ sessionId, baseUrl, updatedAt }) => ({ sessionId, baseUrl, updatedAt }));
+  }
+  async clearTaskSessions(taskId: string): Promise<void> {
+    this.sessions = this.sessions.filter((session) => session.taskId !== taskId);
   }
   async enqueueTaskCommand(taskId: string, command: QueuedWorkerCommand): Promise<void> {
     const list = this.commands.get(taskId) ?? [];

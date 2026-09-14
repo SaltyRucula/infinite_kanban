@@ -517,6 +517,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const agentDisplay = task?.agentType ? getAgentDisplay(task.agentType) : undefined;
   const [showWorktreeConfirm, setShowWorktreeConfirm] = useState(false);
   const [hasRemote, setHasRemote] = useState<boolean | null>(null);
+  const [openCodeSessionUrl, setOpenCodeSessionUrl] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const taskId = task?.id ?? null;
@@ -617,6 +618,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     setMergeError(null);
     setShowWorktreeConfirm(false);
     setHasRemote(null);
+    setOpenCodeSessionUrl(null);
     setFollowUpMessage('');
     setSending(false);
     setFollowUpImages([]);
@@ -683,12 +685,38 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     );
   }, [activeClarificationRequest?.requestId]);
 
-  // Fix #4: Sync streaming state with agentStatus (avoids stale closure on [taskId] effect)
   useEffect(() => {
     if (!taskId) return;
     const isActive = agentStatus === 'executing' || agentStatus === 'planning';
     setStreaming(isActive);
   }, [taskId, agentStatus]);
+
+  useEffect(() => {
+    if (!taskId || task?.agentType !== 'opencode') {
+      setOpenCodeSessionUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    api.getOpenCodeSessionUrl(taskId)
+      .then((res) => {
+        if (!cancelled && res?.url) {
+          setOpenCodeSessionUrl(res.url);
+        } else if (!cancelled) {
+          setOpenCodeSessionUrl(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpenCodeSessionUrl(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId, agentStatus, task?.agentType]);
 
   // Default to the Summary tab for review/done tasks (and auto-switch when a task
   // moves into review on completion), unless the user picked a tab themselves.
@@ -921,7 +949,31 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
               </div>
             </div>
             <div className="ml-3 flex items-center gap-1.5">
-              {/* Run / Stop / Retry buttons */}
+              {task.agentType === 'opencode' && (
+                openCodeSessionUrl ? (
+                  <a
+                    href={openCodeSessionUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted px-3 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+                    title="Open OpenCode session"
+                    aria-label="Open OpenCode session"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 text-purple-500 dark:text-purple-400" />
+                    <span>OpenCode Session</span>
+                  </a>
+                ) : (
+                  <button
+                    disabled
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted px-3 text-xs font-medium text-muted-foreground opacity-50 cursor-not-allowed"
+                    title="No active OpenCode session registered for this task"
+                    aria-label="No active OpenCode session"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span>OpenCode Session</span>
+                  </button>
+                )
+              )}
               {!isActive && task.agentStatus !== 'complete' && onRun && (
                 <button
                   onClick={() => onRun(task.id)}

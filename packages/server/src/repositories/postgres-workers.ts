@@ -103,6 +103,10 @@ export class PostgresWorkerRepository implements WorkerRepository {
     return rows.map(rowToTaskSession);
   }
 
+  async clearTaskSessions(taskId: string): Promise<void> {
+    await this.pool.query('DELETE FROM worker_task_sessions WHERE task_id = $1', [taskId]);
+  }
+
   async enqueueTaskCommand(taskId: string, command: WorkerTaskCommand): Promise<void> {
     await this.pool.query(
       `INSERT INTO worker_task_commands (

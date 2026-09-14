@@ -21,6 +21,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     agentType: 'opencode',
     createdAt: 1,
     assignedWorkerId: 'worker-1',
+    workerLeaseExpiresAt: Date.now() + 60_000,
     repoPath: '/private/repo',
     worktreePath: '/private/worktree',
     ...overrides,
@@ -62,7 +63,8 @@ function createRepo(initialTask: Task): {
 
 class FakeWorkerRepo implements WorkerRepository {
   readonly queued: WorkerTaskCommand[] = [];
-  readonly sessions: Array<{ sessionId: string; baseUrl: string; updatedAt: number }> = [];
+  readonly sessions: Array<{ taskId: string; sessionId: string; baseUrl: string; updatedAt: number }> = [];
+  readonly clearedTaskIds: string[] = [];
 
   async register(): Promise<Worker> { return this.worker(); }
   async heartbeat(): Promise<Worker> { return this.worker(); }
@@ -74,8 +76,18 @@ class FakeWorkerRepo implements WorkerRepository {
   }
   async list(): Promise<Worker[]> { return [this.worker()]; }
   async markOffline(): Promise<Worker[]> { return []; }
-  async registerTaskSession(): Promise<void> {}
-  async getTaskSessions(): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> { return this.sessions; }
+  async registerTaskSession(taskId: string, sessionId: string, baseUrl: string, updatedAt: number): Promise<void> {
+    this.sessions.push({ taskId, sessionId, baseUrl, updatedAt });
+  }
+  async getTaskSessions(taskId: string): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> {
+    return this.sessions
+      .filter((session) => session.taskId === taskId)
+      .map(({ sessionId, baseUrl, updatedAt }) => ({ sessionId, baseUrl, updatedAt }));
+  }
+  async clearTaskSessions(taskId: string): Promise<void> {
+    this.clearedTaskIds.push(taskId);
+    this.sessions.splice(0, this.sessions.length, ...this.sessions.filter((session) => session.taskId !== taskId));
+  }
   async enqueueTaskCommand(_taskId: string, command: WorkerTaskCommand): Promise<void> {
     this.queued.push(command);
   }
@@ -195,6 +207,7 @@ test('GET /api/tasks/:id/opencode-session returns session link without leaking w
   const { repo } = createRepo(makeTask());
   const workerRepo = new FakeWorkerRepo();
   workerRepo.sessions.push({
+    taskId: 'task-1',
     sessionId: 'ses_worker_1',
     baseUrl: 'http://127.0.0.1:4096',
     updatedAt: Date.now(),
@@ -210,4 +223,104 @@ test('GET /api/tasks/:id/opencode-session returns session link without leaking w
     });
     assert.equal(JSON.stringify(body).includes('/private/'), false);
   });
+});
+
+test('GET /api/tasks/:id/opencode-session returns 404 for a worker restart with no live matching session', async () => {
+  const { repo } = createRepo(makeTask());
+  const workerRepo = new FakeWorkerRepo();
+  workerRepo.sessions.push({
+    taskId: 'task-1',
+    sessionId: 'ses_worker_1',
+    baseUrl: 'http://127.0.0.1:4096',
+    updatedAt: Date.now(),
+  });
+
+  await withAgentApp(repo, createManager(null), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1/opencode-session`);
+    assert.equal(response.status, 404);
+  });
+});
+
+test('GET /api/tasks/:id/opencode-session returns 404 when the worker lease is expired', async () => {
+  const { repo } = createRepo(makeTask({ workerLeaseExpiresAt: Date.now() - 1 }));
+  const workerRepo = new FakeWorkerRepo();
+  workerRepo.sessions.push({
+    taskId: 'task-1',
+    sessionId: 'ses_worker_1',
+    baseUrl: 'http://127.0.0.1:4096',
+    updatedAt: Date.now(),
+  });
+
+  await withAgentApp(repo, createManager('ses_worker_1'), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1/opencode-session`);
+    assert.equal(response.status, 404);
+  });
+});
+
+test('GET /api/tasks/:id/opencode-session returns 404 when the live session does not match the registered mapping', async () => {
+  const { repo } = createRepo(makeTask());
+  const workerRepo = new FakeWorkerRepo();
+  workerRepo.sessions.push({
+    taskId: 'task-1',
+    sessionId: 'ses_other',
+    baseUrl: 'http://127.0.0.1:4096',
+    updatedAt: Date.now(),
+  });
+
+  await withAgentApp(repo, createManager('ses_worker_1'), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1/opencode-session`);
+    assert.equal(response.status, 404);
+  });
+});
+
+test('GET /api/tasks/:id/opencode-session returns 404 when the task is not in a worker-active status', async () => {
+  const { repo } = createRepo(makeTask({ agentStatus: 'idle' }));
+  const workerRepo = new FakeWorkerRepo();
+  workerRepo.sessions.push({
+    taskId: 'task-1',
+    sessionId: 'ses_worker_1',
+    baseUrl: 'http://127.0.0.1:4096',
+    updatedAt: Date.now(),
+  });
+
+  await withAgentApp(repo, createManager('ses_worker_1'), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1/opencode-session`);
+    assert.equal(response.status, 404);
+  });
+});
+
+test('GET /api/tasks/:id/opencode-session returns 404 for completed and expired worker tasks', async () => {
+  for (const agentStatus of ['complete', 'failed'] as const) {
+    const { repo } = createRepo(makeTask({ agentStatus }));
+    const workerRepo = new FakeWorkerRepo();
+    workerRepo.sessions.push({
+      taskId: 'task-1',
+      sessionId: 'ses_worker_1',
+      baseUrl: 'http://127.0.0.1:4096',
+      updatedAt: Date.now(),
+    });
+
+    await withAgentApp(repo, createManager('ses_worker_1'), workerRepo, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/tasks/task-1/opencode-session`);
+      assert.equal(response.status, 404);
+    });
+  }
+});
+
+test('POST /api/tasks/:id/stop clears worker session mappings for assigned tasks', async () => {
+  const { repo } = createRepo(makeTask({ id: 'task-stop-1', agentStatus: 'planning' }));
+  const workerRepo = new FakeWorkerRepo();
+  workerRepo.sessions.push({
+    taskId: 'task-stop-1',
+    sessionId: 'ses_worker_1',
+    baseUrl: 'http://127.0.0.1:4096',
+    updatedAt: Date.now(),
+  });
+
+  await withAgentApp(repo, createManager('ses_worker_1'), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-stop-1/stop`, { method: 'POST' });
+    assert.equal(response.status, 200);
+  });
+
+  assert.deepEqual(workerRepo.clearedTaskIds, ['task-stop-1']);
 });

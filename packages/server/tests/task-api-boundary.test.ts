@@ -155,6 +155,7 @@ function createWorkerRepo(): WorkerRepository {
     async markOffline(): Promise<Worker[]> { return []; },
     async registerTaskSession(): Promise<void> {},
     async getTaskSessions(): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> { return []; },
+    async clearTaskSessions(): Promise<void> {},
     async enqueueTaskCommand(): Promise<void> {},
     async claimTaskCommands(): Promise<readonly { id: string; type: 'message' | 'clarification' | 'cancel'; createdAt: number; message?: string; attachmentIds?: readonly string[]; requestId?: string; sessionId?: string; answer?: string }[]> { return []; },
     async clearTaskCommands(): Promise<void> {},

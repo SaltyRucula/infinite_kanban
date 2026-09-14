@@ -37,6 +37,7 @@ export interface WorkerRepository {
   markOffline(cutoff: number, at: number): Promise<Worker[]>;
   registerTaskSession(taskId: string, sessionId: string, baseUrl: string, updatedAt: number): Promise<void>;
   getTaskSessions(taskId: string): Promise<readonly RegisteredWorkerOpenCodeSession[]>;
+  clearTaskSessions(taskId: string): Promise<void>;
   enqueueTaskCommand(taskId: string, command: WorkerTaskCommand): Promise<void>;
   claimTaskCommands(taskId: string, limit: number): Promise<readonly WorkerTaskCommand[]>;
   clearTaskCommands(taskId: string): Promise<void>;

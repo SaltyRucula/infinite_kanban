@@ -13,16 +13,8 @@ export function resolveTaskOpenCodeSession(
   sessions: readonly RegisteredWorkerOpenCodeSession[],
   liveSessionId: string | null,
 ): ResolvedOpenCodeSession | null {
-  if (sessions.length === 0) return null;
+  if (!liveSessionId || sessions.length === 0) return null;
 
-  if (liveSessionId) {
-    const live = sessions.find((session) => session.sessionId === liveSessionId);
-    if (live) {
-      return { sessionId: live.sessionId, baseUrl: live.baseUrl };
-    }
-  }
-
-  const newest = sessions.reduce((latest, candidate) =>
-    candidate.updatedAt > latest.updatedAt ? candidate : latest);
-  return { sessionId: newest.sessionId, baseUrl: newest.baseUrl };
+  const live = sessions.find((session) => session.sessionId === liveSessionId);
+  return live ? { sessionId: live.sessionId, baseUrl: live.baseUrl } : null;
 }

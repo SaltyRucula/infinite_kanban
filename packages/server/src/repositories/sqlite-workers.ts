@@ -99,6 +99,10 @@ export class SqliteWorkerRepository implements WorkerRepository {
       .map(rowToTaskSession);
   }
 
+  async clearTaskSessions(taskId: string): Promise<void> {
+    this.db.prepare('DELETE FROM worker_task_sessions WHERE task_id=?').run(taskId);
+  }
+
   async enqueueTaskCommand(taskId: string, command: WorkerTaskCommand): Promise<void> {
     this.db.prepare(
       `INSERT INTO worker_task_commands (

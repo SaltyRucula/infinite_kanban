@@ -276,3 +276,64 @@ test.describe('Agent Panel Header', () => {
     await expect(page.locator('span').filter({ hasText: 'OpenCode' }).first()).toBeVisible({ timeout: 5_000 });
   });
 });
+
+test.describe('OpenCode Session Control in Task Panel', () => {
+  let createdTaskIds: string[] = [];
+
+  test.beforeEach(async ({ page }) => {
+    createdTaskIds = [];
+    await page.goto('/');
+    await waitForBoard(page);
+  });
+
+  test.afterEach(async ({ request }) => {
+    for (const id of createdTaskIds) {
+      await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
+    }
+    createdTaskIds = [];
+  });
+
+  test('disables session control when opencode-session returns 404', async ({ page }) => {
+    const title = `SessionTask404 ${Date.now()}`;
+    const taskId = await createTaskInProgress(page, title, { agentType: 'opencode' });
+    createdTaskIds.push(taskId);
+
+    await page.route(`**/api/tasks/${taskId}/opencode-session`, async (route) => {
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'no OpenCode session found for this task' }),
+      });
+    });
+
+    await page.getByText(title).first().click();
+    const sessionBtn = page.getByRole('button', { name: 'OpenCode Session' });
+    await expect(sessionBtn).toBeVisible({ timeout: 5_000 });
+    await expect(sessionBtn).toBeDisabled();
+    await expect(sessionBtn).toHaveAttribute('title', 'No active OpenCode session registered for this task');
+  });
+
+  test('enables clickable session control when opencode-session returns 200 with link', async ({ page }) => {
+    const title = `SessionTask200 ${Date.now()}`;
+    const taskId = await createTaskInProgress(page, title, { agentType: 'opencode' });
+    createdTaskIds.push(taskId);
+
+    const fakeUrl = 'http://127.0.0.1:4096/session/ses-test-123';
+    await page.route(`**/api/tasks/${taskId}/opencode-session`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          sessionId: 'ses-test-123',
+          url: fakeUrl,
+        }),
+      });
+    });
+
+    await page.getByText(title).first().click();
+    const sessionLink = page.getByRole('link', { name: 'OpenCode Session' });
+    await expect(sessionLink).toBeVisible({ timeout: 5_000 });
+    await expect(sessionLink).toHaveAttribute('href', fakeUrl);
+    await expect(sessionLink).toHaveAttribute('target', '_blank');
+  });
+});

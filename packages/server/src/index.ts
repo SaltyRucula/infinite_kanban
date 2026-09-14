@@ -209,10 +209,12 @@ const agentManager = new AgentManager();
           if (shouldRecoverGroupChildAsFailed(child.agentStatus)) {
             await taskRepo.update(child.id, { agentStatus: 'failed', completedAt: Date.now() });
             await taskRepo.clearRun(child.id);
+            await workerRepo.clearTaskSessions(child.id);
             console.warn(`[server] recovered orphaned group child ${child.id} "${child.title}" (was ${child.agentStatus})`);
           } else if (shouldRecoverGroupChildToIdle(child.agentStatus)) {
             // Planning children hadn't started — reset to idle so they can be re-queued
             await taskRepo.update(child.id, { agentStatus: 'idle', startedAt: undefined });
+            await workerRepo.clearTaskSessions(child.id);
             console.warn(`[server] reset group child ${child.id} "${child.title}" (was planning → idle)`);
           }
         }
@@ -255,6 +257,7 @@ const agentManager = new AgentManager();
       completedAt: Date.now(),
     });
     await taskRepo.clearRun(task.id);
+    await workerRepo.clearTaskSessions(task.id);
     console.warn(`[server] recovered orphaned task ${task.id} "${task.title}" (was ${task.agentStatus})`);
   }
 
@@ -272,13 +275,21 @@ const agentManager = new AgentManager();
       const tasks = await taskRepo.getAssignedWorkerTasks([worker.id]);
       for (const task of tasks) {
         const failed = await taskRepo.update(task.id, { agentStatus: 'failed', completedAt: now, summary: 'worker_offline', runClaimedAt: undefined });
-        if (failed) broadcastTaskUpdate(failed);
+        if (failed) {
+          await workerRepo.clearTaskSessions(task.id);
+          await workerRepo.clearTaskCommands(task.id);
+          broadcastTaskUpdate(failed);
+        }
       }
     }
     const expired = await taskRepo.getExpiredWorkerTasks(now);
     for (const task of expired) {
       const failed = await taskRepo.update(task.id, { agentStatus: 'failed', completedAt: now, summary: 'worker_offline', runClaimedAt: undefined });
-      if (failed) broadcastTaskUpdate(failed);
+      if (failed) {
+        await workerRepo.clearTaskSessions(task.id);
+        await workerRepo.clearTaskCommands(task.id);
+        broadcastTaskUpdate(failed);
+      }
     }
   }, WORKER_HEARTBEAT_INTERVAL_MS);
   workerSweepInterval.unref();

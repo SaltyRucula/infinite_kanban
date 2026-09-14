@@ -310,6 +310,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task claim is expired or invalid' });
       return;
     }
+    await workers.clearTaskSessions(task.id);
     await workers.clearTaskCommands(task.id);
     broadcastTaskUpdate(completed);
     res.json({ task: toWorkerTaskAssignment(completed) });
