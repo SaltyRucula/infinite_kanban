@@ -28,6 +28,7 @@ import {
   type OpenCodeRunResult,
   type RunnerProfile,
 } from './local-runner.js';
+import { OpenCodeSessionBridge } from './opencode-session-bridge.js';
 import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
 
 type Args = Readonly<Record<string, string>>;
@@ -143,6 +144,17 @@ type CommandAwareTaskRun = {
   abort(): Promise<void>;
 };
 
+function parseBridgePort(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+    throw new Error('OPENCODE_SESSION_BRIDGE_PORT must be an integer between 0 and 65535');
+  }
+  return parsed;
+}
+
 async function runCommandLoop(
   config: Config,
   taskId: string,
@@ -186,6 +198,7 @@ async function executeTask(
   claimToken: string,
   workspacePath: string,
   runner: RunnerProfile,
+  sessionBridge: OpenCodeSessionBridge,
   abortSignal: AbortSignal,
 ): Promise<void> {
   const sendTaskEvent = async (event: Parameters<typeof sendEvent>[3]): Promise<void> => {
@@ -212,56 +225,75 @@ async function executeTask(
     }
   };
 
-  const result = await (async (): Promise<SdkRunResult | OpenCodeRunResult> => {
-    switch (runner.kind) {
-      case 'agent-sdk': {
-        const live = await startAgentSdkTask({
-          task,
-          workingDirectory: workspacePath,
-          sendEvent: sendTaskEvent,
-        });
-        if (live.sessionId && live.baseUrl) {
-          await registerTaskSession(config, task.id, claimToken, live.sessionId, live.baseUrl);
+  try {
+    const result = await (async (): Promise<SdkRunResult | OpenCodeRunResult> => {
+      switch (runner.kind) {
+        case 'agent-sdk': {
+          const live = await startAgentSdkTask({
+            task,
+            workingDirectory: workspacePath,
+            sendEvent: sendTaskEvent,
+          });
+          if (live.sessionId && live.baseUrl) {
+            const bridgeUrl = sessionBridge.register({
+              taskId: task.id,
+              sessionId: live.sessionId,
+              workspacePath,
+              baseUrl: live.baseUrl,
+            });
+            await registerTaskSession(config, task.id, claimToken, live.sessionId, bridgeUrl);
+          }
+          return runLiveTask({
+            done: live.done,
+            sendMessage: (message, attachmentIds) => live.sendMessage(message, attachmentIds),
+            abort: () => live.abort(),
+          });
         }
-        return runLiveTask({
-          done: live.done,
-          sendMessage: (message, attachmentIds) => live.sendMessage(message, attachmentIds),
-          abort: () => live.abort(),
-        });
+        case 'opencode-server': {
+          const live = await startOpenCodeServerTask({
+            task,
+            workspacePath,
+            runner,
+            sendEvent: sendTaskEvent,
+          });
+          const bridgeUrl = sessionBridge.register({
+            taskId: task.id,
+            sessionId: live.sessionId,
+            workspacePath,
+            baseUrl: live.baseUrl,
+          });
+          await registerTaskSession(config, task.id, claimToken, live.sessionId, bridgeUrl);
+          return runLiveTask({
+            done: live.done,
+            sendMessage: (message) => live.sendMessage(message),
+            abort: () => live.abort(),
+          });
+        }
+        default:
+          return assertNever(runner);
       }
-      case 'opencode-server': {
-        const live = await startOpenCodeServerTask({
-          task,
-          workspacePath,
-          runner,
-          sendEvent: sendTaskEvent,
-        });
-        await registerTaskSession(config, task.id, claimToken, live.sessionId, live.baseUrl);
-        return runLiveTask({
-          done: live.done,
-          sendMessage: (message) => live.sendMessage(message),
-          abort: () => live.abort(),
-        });
-      }
-      default:
-        return assertNever(runner);
-    }
-  })();
+    })();
 
-  await request(config, `/me/tasks/${task.id}/complete`, {
-    method: 'POST',
-    headers: { 'x-worker-claim': claimToken },
-    body: JSON.stringify({
-      status: result.status,
-      ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
-      ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
-    }),
-  });
+    await request(config, `/me/tasks/${task.id}/complete`, {
+      method: 'POST',
+      headers: { 'x-worker-claim': claimToken },
+      body: JSON.stringify({
+        status: result.status,
+        ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
+        ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
+      }),
+    });
+  } finally {
+    sessionBridge.unregister(task.id);
+  }
 }
 
 async function run(): Promise<void> {
   const config = await loadConfig();
   const workspaceSettings = await loadWorkspaceSettings();
+  const sessionBridge = await OpenCodeSessionBridge.start({
+    port: parseBridgePort(process.env.OPENCODE_SESSION_BRIDGE_PORT),
+  });
   let stopping = false;
   let current: { task: WorkerTaskAssignment; claimToken: string } | undefined;
   let currentAbortController: AbortController | undefined;
@@ -306,6 +338,7 @@ async function run(): Promise<void> {
               claimed.claimToken,
               workspaceSettings.workspacePath,
               workspaceSettings.runner,
+              sessionBridge,
               currentAbortController.signal,
             );
           } catch (error: unknown) {
@@ -324,6 +357,7 @@ async function run(): Promise<void> {
     }
   } finally {
     clearInterval(heartbeat);
+    await sessionBridge.close();
   }
 }
 

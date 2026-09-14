@@ -33,7 +33,10 @@ function taskBelongs(task: Task | undefined, workerId: string): task is Task {
   return !!task && task.assignedWorkerId === workerId;
 }
 
-function normalizeLoopbackBaseUrl(value: unknown): string | null {
+const TASK_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function normalizeLoopbackBridgeUrl(value: unknown, expectedTaskId: string): string | null {
+  if (!TASK_ID_PATTERN.test(expectedTaskId)) return null;
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return null;
   let parsed: URL;
@@ -47,10 +50,14 @@ function normalizeLoopbackBaseUrl(value: unknown): string | null {
   const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
   if (!isLoopback) return null;
   if (!parsed.port) return null;
-  if ((parsed.pathname !== '' && parsed.pathname !== '/') || parsed.search || parsed.hash || parsed.username || parsed.password) {
+  if (parsed.search || parsed.hash || parsed.username || parsed.password) {
     return null;
   }
-  return `${parsed.protocol}//${parsed.host}`;
+  const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
+  if (segments.length !== 2 || segments[0] !== 'session') return null;
+  const taskIdInPath = decodeURIComponent(segments[1] ?? '');
+  if (taskIdInPath !== expectedTaskId || !TASK_ID_PATTERN.test(taskIdInPath)) return null;
+  return `${parsed.protocol}//${parsed.host}/session/${encodeURIComponent(taskIdInPath)}`;
 }
 
 function commandPollLimit(req: Request): number {
@@ -192,9 +199,9 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(400).json({ error: 'sessionId must be a non-empty string' });
       return;
     }
-    const baseUrl = normalizeLoopbackBaseUrl(req.body.baseUrl);
+    const baseUrl = normalizeLoopbackBridgeUrl(req.body.baseUrl, task.id);
     if (!baseUrl) {
-      res.status(400).json({ error: 'baseUrl must be loopback http(s) with explicit port and no path/query/hash/userinfo' });
+      res.status(400).json({ error: 'baseUrl must be a loopback bridge URL matching /session/:taskId with explicit port and no query/hash/userinfo' });
       return;
     }
     await workers.registerTaskSession(task.id, sessionId, baseUrl, now);

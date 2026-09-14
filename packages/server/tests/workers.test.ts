@@ -201,13 +201,13 @@ test('worker can register a task OpenCode session link and poll queued commands'
       const registerSession = await fetch(`${localUrl}/api/workers/me/tasks/task-1/session`, {
         method: 'POST',
         headers: { ...workerHeaders({ 'x-worker-claim': claimBody.claimToken }), 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4096' }),
+        body: JSON.stringify({ sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4455/session/task-1' }),
       });
       assert.equal(registerSession.status, 200);
       const sessionBody = await registerSession.json() as { success: boolean };
       assert.equal(sessionBody.success, true);
       assert.deepEqual(workerRepo.sessions.map(({ taskId, sessionId, baseUrl }) => ({ taskId, sessionId, baseUrl })), [
-        { taskId: 'task-1', sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4096' },
+        { taskId: 'task-1', sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4455/session/task-1' },
       ]);
 
       await workerRepo.enqueueTaskCommand('task-1', {
@@ -260,6 +260,36 @@ test('worker session registration rejects non-loopback OpenCode base URLs', asyn
       method: 'POST',
       headers: { ...workerHeaders({ 'x-worker-claim': claimBody.claimToken }), 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: 'ses_worker_1', baseUrl: 'http://192.168.1.10:4096' }),
+    });
+    assert.equal(registerSession.status, 400);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test('worker session registration rejects bridge URLs with task ids that do not match the claimed task', async () => {
+  const taskRepo = new FakeTaskRepository();
+  const workerRepo = new FakeWorkerRepository();
+  const app = express();
+  app.use(express.json());
+  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const claimResponse = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/claim`, {
+      method: 'POST',
+      headers: workerHeaders(),
+    });
+    assert.equal(claimResponse.status, 200);
+    const claimBody = await claimResponse.json() as { claimToken: string };
+
+    const registerSession = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/session`, {
+      method: 'POST',
+      headers: { ...workerHeaders({ 'x-worker-claim': claimBody.claimToken }), 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4455/session/task-2' }),
     });
     assert.equal(registerSession.status, 400);
   } finally {

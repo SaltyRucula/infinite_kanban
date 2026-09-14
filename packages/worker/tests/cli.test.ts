@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { completeTaskFailure, fetchAssignments, requestWithLoggedFailure } from '../src/api.js';
+import { completeTaskFailure, fetchAssignments, registerTaskSession, requestWithLoggedFailure } from '../src/api.js';
 import { parseWorkspaceSettings } from '../src/local-runner.js';
 
 test('requestWithLoggedFailure returns undefined and logs the API failure', async () => {
@@ -73,4 +73,28 @@ test('parseWorkspaceSettings rejects unknown runner kinds', () => {
     () => parseWorkspaceSettings({ workspacePath: '/tmp/workspace', runner: { kind: 'shell' } }),
     /runner.kind must be either "agent-sdk" or "opencode-server"/,
   );
+});
+
+test('registerTaskSession sends only sessionId and bridge URL without local workspace leakage', async () => {
+  let capturedBody = '';
+  await registerTaskSession(
+    { serverUrl: 'http://worker.example', workerId: 'worker-1', workerToken: 'token' },
+    'task-1',
+    'claim-token',
+    'ses_worker_1',
+    'http://127.0.0.1:4455/session/task-1',
+    async (_config, endpoint, init) => {
+      assert.equal(endpoint, '/me/tasks/task-1/session');
+      capturedBody = String(init?.body ?? '');
+      return { success: true };
+    },
+  );
+
+  const parsed = JSON.parse(capturedBody) as Record<string, unknown>;
+  assert.deepEqual(parsed, {
+    sessionId: 'ses_worker_1',
+    baseUrl: 'http://127.0.0.1:4455/session/task-1',
+  });
+  assert.equal(capturedBody.includes('/tmp/workspace'), false);
+  assert.equal(capturedBody.includes('/L1VzZXJz'), false);
 });
