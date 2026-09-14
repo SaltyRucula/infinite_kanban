@@ -35,6 +35,8 @@ const task: Task = {
   repoPath: '/private/repository',
   worktreePath: '/private/worktree',
   timeoutMinutes: 30,
+  labels: ['backend', 'urgent'],
+  agentPreference: 'fast-coder',
   assignedWorkerId: worker.id,
 };
 
@@ -103,8 +105,10 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal(assignmentsResponse.status, 200);
     const assignments = await assignmentsResponse.json() as { tasks: readonly Record<string, unknown>[] };
     assert.deepEqual(Object.keys(assignments.tasks[0] ?? {}).sort(), [
-      'agentType', 'baseBranch', 'branchName', 'description', 'id', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
+      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
     ]);
+    assert.deepEqual(assignments.tasks[0]?.labels, ['backend', 'urgent']);
+    assert.equal(assignments.tasks[0]?.agentPreference, 'fast-coder');
     assert.equal('repoPath' in (assignments.tasks[0] ?? {}), false);
     assert.equal('worktreePath' in (assignments.tasks[0] ?? {}), false);
     assert.equal('projectId' in (assignments.tasks[0] ?? {}), false);
@@ -116,7 +120,7 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal(claimResponse.status, 200);
     const claim = await claimResponse.json() as { task: Record<string, unknown> };
     assert.deepEqual(Object.keys(claim.task).sort(), [
-      'agentType', 'baseBranch', 'branchName', 'description', 'id', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
+      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
     ]);
     assert.equal('repoPath' in claim.task, false);
     assert.equal('worktreePath' in claim.task, false);
@@ -130,7 +134,7 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal(completionResponse.status, 200);
     const completion = await completionResponse.json() as { task: Record<string, unknown> };
     assert.deepEqual(Object.keys(completion.task).sort(), [
-      'agentType', 'baseBranch', 'branchName', 'description', 'id', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
+      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
     ]);
     assert.equal('repoPath' in completion.task, false);
     assert.equal('worktreePath' in completion.task, false);

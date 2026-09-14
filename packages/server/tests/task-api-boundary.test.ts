@@ -7,7 +7,7 @@ import { WebSocket } from 'ws';
 import { createAgentRouter } from '../src/routes/agent.js';
 import { createTaskRouter } from '../src/routes/tasks.js';
 import { createWorkersRouter } from '../src/routes/workers.js';
-import { broadcastTaskUpdate, buildTask } from '../src/routes/helpers.js';
+import { broadcastTaskUpdate, buildTask, normalizeTaskLabels } from '../src/routes/helpers.js';
 import { createWSS } from '../src/websocket.js';
 import type { Project, Task } from '../src/types.js';
 import type { ProjectRepository } from '../src/repositories/project-types.js';
@@ -228,6 +228,56 @@ test('POST /api/tasks rejects path fields and does not inherit the project repo 
     assert.equal('worktreePath' in body, false);
     assert.equal(getTasks()[0]?.repoPath, undefined);
   });
+});
+
+test('task boundary normalizes portable labels and preserves agent preference', async () => {
+  const { repo, getTasks, calls } = createTaskRepo();
+  const app = jsonApp();
+  app.use('/api/tasks', createTaskRouter(repo, createManager(calls), createProjectRepo(makeProject())));
+
+  await withApp(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Portable task',
+        projectId: 'project-1',
+        labels: [' Feature ', 'FEATURE', 'Bug'],
+        agentPreference: 'fast-coder',
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.deepEqual(body.labels, ['feature', 'bug']);
+    assert.equal(body.agentPreference, 'fast-coder');
+    assert.deepEqual(getTasks()[0]?.labels, ['feature', 'bug']);
+    assert.equal(getTasks()[0]?.agentPreference, 'fast-coder');
+  });
+});
+
+test('task boundary rejects local worker configuration fields', async () => {
+  const { repo, calls } = createTaskRepo();
+  const app = jsonApp();
+  app.use('/api/tasks', createTaskRouter(repo, createManager(calls), createProjectRepo(makeProject())));
+
+  await withApp(app, async (baseUrl) => {
+    for (const field of ['workspacePath', 'projectPath', 'command', 'executable', 'skill']) {
+      const response = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Task', projectId: 'project-1', [field]: 'local-only' }),
+      });
+      const body = await response.json();
+      assert.equal(response.status, 400);
+      assert.equal(body.error, `${field} is not supported for tasks`);
+    }
+  });
+});
+
+test('normalizeTaskLabels lowercases, deduplicates, trims, and bounds labels', () => {
+  assert.deepEqual(normalizeTaskLabels([' Feature ', 'FEATURE', '', 'Bug']), ['feature', 'bug']);
+  assert.deepEqual(normalizeTaskLabels('feature'), []);
+  assert.deepEqual(normalizeTaskLabels(['a'.repeat(51)]), []);
 });
 
 test('PATCH /api/tasks/:id rejects repoPath and worktreePath and returns a portable task', async () => {

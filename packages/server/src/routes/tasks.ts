@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import type { Project, Task } from '../types.js';
-import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
+import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import { broadcast } from '../websocket.js';
@@ -9,6 +9,7 @@ import {
   asyncHandler, paramId,
   validateTaskFields, buildTask, broadcastTaskUpdate,
   rejectTaskPathFields, toPortableTask,
+  normalizeTaskLabels,
 } from './helpers.js';
 
 export function createTaskRouter(repo: TaskRepository, agentManager: AgentManager, projectRepo: ProjectRepository): Router {
@@ -160,7 +161,7 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     const pathError = rejectTaskPathFields(req.body);
     if (pathError) { res.status(400).json({ error: pathError }); return; }
 
-    const { title, description, priority, columnId, agentStatus, agentType, branchName, baseBranch, useWorktree, archived, timeoutMinutes, assignedWorkerId } = req.body;
+    const { title, description, priority, columnId, agentStatus, agentType, branchName, baseBranch, useWorktree, archived, timeoutMinutes, assignedWorkerId, labels, agentPreference } = req.body;
 
     if (title !== undefined && (typeof title !== 'string' || !title.trim())) {
       res.status(400).json({ error: 'title must be a non-empty string' });
@@ -202,6 +203,14 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
       res.status(400).json({ error: 'assignedWorkerId must be a string or null' });
       return;
     }
+    if (labels !== undefined && (!Array.isArray(labels) || labels.some((label: unknown) => typeof label !== 'string' || label.trim().length === 0 || label.trim().length > MAX_LABEL_LENGTH) || normalizeTaskLabels(labels).length > MAX_LABELS)) {
+      res.status(400).json({ error: `labels must contain at most ${MAX_LABELS} non-empty strings of at most ${MAX_LABEL_LENGTH} characters` });
+      return;
+    }
+    if (agentPreference !== undefined && (typeof agentPreference !== 'string' || agentPreference.trim().length > MAX_AGENT_PREFERENCE_LENGTH)) {
+      res.status(400).json({ error: `agentPreference must be a string of at most ${MAX_AGENT_PREFERENCE_LENGTH} characters` });
+      return;
+    }
     if (assignedWorkerId !== undefined && (task.agentStatus === 'executing' || task.agentStatus === 'planning')) {
       res.status(409).json({ error: 'cannot assign a claimed or running task' });
       return;
@@ -239,6 +248,8 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     if (archived !== undefined) updates.archived = Boolean(archived);
     if (timeoutMinutes !== undefined) updates.timeoutMinutes = timeoutMinutes;
     if (assignedWorkerId !== undefined) updates.assignedWorkerId = assignedWorkerId;
+    if (labels !== undefined) updates.labels = normalizeTaskLabels(labels);
+    if (agentPreference !== undefined) updates.agentPreference = agentPreference.trim() || undefined;
 
     // Reset agent state when moved to in-progress
     if (columnId === 'in-progress') {

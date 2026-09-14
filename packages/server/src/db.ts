@@ -183,6 +183,8 @@ function migrate(db: Database.Database): void {
   if (!colNames.has('worker_claimed_at')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_claimed_at INTEGER`);
   if (!colNames.has('worker_lease_expires_at')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_lease_expires_at INTEGER`);
   if (!colNames.has('worker_attempt')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_attempt INTEGER NOT NULL DEFAULT 0`);
+  if (!colNames.has('labels')) db.exec(`ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'`);
+  if (!colNames.has('agent_preference')) db.exec(`ALTER TABLE tasks ADD COLUMN agent_preference TEXT`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
@@ -362,7 +364,9 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worker_claim_token_hash TEXT,
         worker_claimed_at INTEGER,
         worker_lease_expires_at INTEGER,
-        worker_attempt INTEGER NOT NULL DEFAULT 0,
+         worker_attempt INTEGER NOT NULL DEFAULT 0,
+         labels TEXT NOT NULL DEFAULT '[]',
+         agent_preference TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (group_id) REFERENCES task_groups(id) ON DELETE CASCADE
       );
@@ -373,7 +377,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes
         , clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
-          worker_claimed_at, worker_lease_expires_at, worker_attempt
+         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference
       )
       SELECT
         id, title, description, priority, column_id, agent_status, created_at,
@@ -381,7 +385,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes,
         clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
-        worker_claimed_at, worker_lease_expires_at, worker_attempt
+         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference
       FROM tasks;
 
       DROP TABLE tasks;
@@ -540,6 +544,8 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addCol('worker_claimed_at', 'BIGINT');
   await addCol('worker_lease_expires_at', 'BIGINT');
   await addCol('worker_attempt', 'INTEGER NOT NULL DEFAULT 0');
+  await addCol('labels', "TEXT NOT NULL DEFAULT '[]'");
+  await addCol('agent_preference', 'TEXT');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,

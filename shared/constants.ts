@@ -50,6 +50,9 @@ export function canTransitionAgentStatus(from: AgentStatus, to: AgentStatus): bo
 
 export const MAX_TITLE_LENGTH = 200;
 export const MAX_DESCRIPTION_LENGTH = 5000;
+export const MAX_LABELS = 20;
+export const MAX_LABEL_LENGTH = 50;
+export const MAX_AGENT_PREFERENCE_LENGTH = 100;
 export const MIN_AGENT_TIMEOUT_MINUTES = 1;
 export const MAX_AGENT_TIMEOUT_MINUTES = 240;
 export const MAX_GROUP_CHILDREN = 20;

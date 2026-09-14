@@ -82,6 +82,7 @@ function rowToTask(row: TaskRow): Task {
     groupId: row.group_id ?? undefined,
     groupOrder: row.group_order ?? undefined,
     timeoutMinutes: row.timeout_minutes ?? undefined,
+    labels: [],
   };
 }
 
@@ -113,10 +114,10 @@ export class SqliteTaskGroupRepository implements TaskGroupRepository {
       insertChild: db.prepare(`
         INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type,
           created_at, repo_path, base_branch, use_worktree, branch_name, archived, group_id, group_order,
-          started_at, completed_at, worktree_path)
+           started_at, completed_at, worktree_path, labels, agent_preference)
         VALUES (@id, @project_id, @title, @description, @priority, @column_id, @agent_status, @agent_type,
           @created_at, @repo_path, @base_branch, @use_worktree, @branch_name, 0, @group_id, @group_order,
-          NULL, NULL, NULL)
+           NULL, NULL, NULL, @labels, @agent_preference)
       `),
       update: db.prepare(`
         UPDATE task_groups SET
@@ -181,7 +182,9 @@ export class SqliteTaskGroupRepository implements TaskGroupRepository {
           agentType: child.agentType,
           branchName: child.branchName,
           groupId: group.id,
-          groupOrder: child.groupOrder ?? i,
+           groupOrder: child.groupOrder ?? i,
+           labels: child.labels ?? [],
+           ...(child.agentPreference === undefined ? {} : { agentPreference: child.agentPreference }),
         };
 
         this.stmts.insertChild.run({
@@ -200,6 +203,8 @@ export class SqliteTaskGroupRepository implements TaskGroupRepository {
           branch_name: task.branchName ?? null,
           group_id: group.id,
           group_order: task.groupOrder ?? i,
+          labels: JSON.stringify(task.labels ?? []),
+          agent_preference: task.agentPreference ?? null,
         });
 
         createdChildren.push(task);

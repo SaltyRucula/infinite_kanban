@@ -102,6 +102,7 @@ test('importAssignedJiraIssues creates only new tasks and preserves external ide
       projectName: 'Project',
       created: '2026-08-10T00:00:00.000+0000',
       updated: '2026-08-10T01:00:00.000+0000',
+      labels: ['Backend', 'backend', 'Intvis.Demo'],
     },
     {
       id: '10001',
@@ -150,10 +151,11 @@ test('importAssignedJiraIssues creates only new tasks and preserves external ide
   assert.equal(first.priority, 'high');
   assert.equal(first.projectId, 'proj-123');
   assert.equal(first.columnId, 'backlog');
-  assert.equal(first.repoPath, '/tmp/demo-repo');
+  assert.equal(first.repoPath, undefined);
   assert.equal(first.agentType, 'claude');
   assert.equal(first.baseBranch, 'main');
   assert.equal(first.useWorktree, true);
+  assert.deepEqual(first.labels, ['backend', 'intvis.demo']);
   assert.equal(first.branchName, 'agent/fix-login-bug-proj11');
   assert.equal(first.provenance?.sourcePlatform, 'jira');
   assert.equal(first.provenance?.origin?.jiraKey, 'PROJ-11');

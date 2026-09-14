@@ -35,6 +35,8 @@ interface TaskRow {
   worker_claimed_at: number | null;
   worker_lease_expires_at: number | null;
   worker_attempt: number;
+  labels: string;
+  agent_preference: string | null;
 }
 
 function parseOptionalJson<T>(value: string | null): T | undefined {
@@ -71,6 +73,8 @@ function rowToTask(row: TaskRow): Task {
     clarificationRequest: parseOptionalJson(row.clarification_request),
     clarificationAnswer: parseOptionalJson(row.clarification_answer),
     assignedWorkerId: row.assigned_worker_id ?? null,
+    labels: parseOptionalJson<string[]>(row.labels) ?? [],
+    ...(row.agent_preference == null ? {} : { agentPreference: row.agent_preference }),
   };
 }
 
@@ -99,9 +103,9 @@ export class SqliteTaskRepository implements TaskRepository {
       getById: db.prepare('SELECT * FROM tasks WHERE id = ?'),
       insert: db.prepare(`
         INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type, created_at, started_at, completed_at,
-          repo_path, branch_name, base_branch, use_worktree, worktree_path, archived, group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id, worker_attempt)
+          repo_path, branch_name, base_branch, use_worktree, worktree_path, archived, group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id, worker_attempt, labels, agent_preference)
         VALUES (@id, @project_id, @title, @description, @priority, @column_id, @agent_status, @agent_type, @created_at, @started_at, @completed_at,
-          @repo_path, @branch_name, @base_branch, @use_worktree, @worktree_path, @archived, @group_id, @group_order, @summary, @external_source, @external_key, @provenance, @run_requested_at, @run_claimed_at, @timeout_minutes, @clarification_request, @clarification_answer, @assigned_worker_id, @worker_attempt)
+          @repo_path, @branch_name, @base_branch, @use_worktree, @worktree_path, @archived, @group_id, @group_order, @summary, @external_source, @external_key, @provenance, @run_requested_at, @run_claimed_at, @timeout_minutes, @clarification_request, @clarification_answer, @assigned_worker_id, @worker_attempt, @labels, @agent_preference)
       `),
       update: db.prepare(`
         UPDATE tasks SET
@@ -123,7 +127,9 @@ export class SqliteTaskRepository implements TaskRepository {
           timeout_minutes = @timeout_minutes,
           clarification_request = @clarification_request,
           clarification_answer = @clarification_answer,
-          assigned_worker_id = @assigned_worker_id
+          assigned_worker_id = @assigned_worker_id,
+          labels = @labels,
+          agent_preference = @agent_preference
         WHERE id = @id
       `),
       delete: db.prepare('DELETE FROM tasks WHERE id = ?'),
@@ -180,6 +186,8 @@ export class SqliteTaskRepository implements TaskRepository {
       clarification_answer: task.clarificationAnswer ? JSON.stringify(task.clarificationAnswer) : null,
       assigned_worker_id: task.assignedWorkerId ?? null,
       worker_attempt: 0,
+      labels: JSON.stringify(task.labels ?? []),
+      agent_preference: task.agentPreference ?? null,
     });
     return task;
   }
@@ -261,8 +269,10 @@ export class SqliteTaskRepository implements TaskRepository {
         timeout_minutes: merged.timeoutMinutes ?? null,
         clarification_request: merged.clarificationRequest ? JSON.stringify(merged.clarificationRequest) : null,
           clarification_answer: merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
-          assigned_worker_id: merged.assignedWorkerId ?? null,
-          worker_attempt: 0,
+           assigned_worker_id: merged.assignedWorkerId ?? null,
+           worker_attempt: 0,
+           labels: JSON.stringify(merged.labels ?? []),
+           agent_preference: merged.agentPreference ?? null,
       });
       return merged;
     })();

@@ -193,8 +193,8 @@ test('sqlite migration replaces legacy global external identity index with proje
       started_at INTEGER,
       completed_at INTEGER,
       project_id TEXT NOT NULL DEFAULT 'default',
-      external_source TEXT,
-      external_key TEXT
+       external_source TEXT,
+       external_key TEXT
     );
     CREATE UNIQUE INDEX idx_tasks_external_identity
       ON tasks(external_source, external_key)
@@ -212,6 +212,9 @@ test('sqlite migration replaces legacy global external identity index with proje
       WHERE type = 'index' AND name = 'idx_tasks_external_identity'
     `).get() as { sql: string | null };
     assert.match(indexRow.sql ?? '', /\(project_id,\s*external_source,\s*external_key\)/i);
+    const columns = migrated.pragma('table_info(tasks)') as Array<{ name: string; dflt_value: string | null }>;
+    assert.equal(columns.some((column) => column.name === 'labels' && column.dflt_value === "'[]'"), true);
+    assert.equal(columns.some((column) => column.name === 'agent_preference'), true);
     migrated.close();
   } finally {
     if (priorDbPath === undefined) {

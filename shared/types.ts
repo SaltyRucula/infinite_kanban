@@ -69,6 +69,8 @@ export interface Task {
    * Assignment is only permitted before the task is claimed/running.
    */
   assignedWorkerId?: string | null;
+  labels: string[];
+  agentPreference?: string;
 }
 
 export interface WorkerTaskAssignment {
@@ -81,6 +83,8 @@ export interface WorkerTaskAssignment {
   baseBranch?: string;
   useWorktree?: boolean;
   timeoutMinutes?: number | null;
+  labels: string[];
+  agentPreference?: string;
 }
 
 export interface ClarificationRequestPayload {

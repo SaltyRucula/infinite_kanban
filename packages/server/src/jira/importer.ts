@@ -130,8 +130,9 @@ function buildImportedTask(issue: JiraIssue, project: Project, normalizedBaseUrl
     agentType: project.defaultAgentType,
     baseBranch: project.defaultBaseBranch,
     branchName: project.defaultUseWorktree ? buildImportedBranchName(issue) : undefined,
-    useWorktree: project.defaultUseWorktree,
-    externalSource: 'jira',
+      useWorktree: project.defaultUseWorktree,
+     labels: issue.labels,
+      externalSource: 'jira',
     externalKey: buildExternalKey(normalizedBaseUrl, issue.id),
     provenance: buildProvenance(issue, normalizedBaseUrl),
   });

@@ -35,6 +35,8 @@ interface TaskRow {
   worker_claimed_at: string | null;
   worker_lease_expires_at: string | null;
   worker_attempt: number;
+  labels: string;
+  agent_preference: string | null;
 }
 
 function parseOptionalJson<T>(value: string | null): T | undefined {
@@ -91,6 +93,8 @@ function rowToTask(row: TaskRow): Task {
     clarificationRequest: parseOptionalJson(row.clarification_request),
     clarificationAnswer: parseOptionalJson(row.clarification_answer),
     assignedWorkerId: row.assigned_worker_id ?? null,
+    labels: parseOptionalJson<string[]>(row.labels) ?? [],
+    ...(row.agent_preference == null ? {} : { agentPreference: row.agent_preference }),
   };
 }
 
@@ -125,8 +129,8 @@ export class PostgresTaskRepository implements TaskRepository {
     await this.pool.query(
       `INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type,
         created_at, started_at, completed_at, repo_path, branch_name, base_branch, use_worktree, worktree_path, archived,
-        group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
+        group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id, labels, agent_preference)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
       [
         task.id,
         task.projectId,
@@ -151,6 +155,8 @@ export class PostgresTaskRepository implements TaskRepository {
         task.clarificationRequest ? JSON.stringify(task.clarificationRequest) : null,
         task.clarificationAnswer ? JSON.stringify(task.clarificationAnswer) : null,
         task.assignedWorkerId ?? null,
+        JSON.stringify(task.labels ?? []),
+        task.agentPreference ?? null,
       ]
     );
     return task;
@@ -227,8 +233,9 @@ export class PostgresTaskRepository implements TaskRepository {
           agent_status = $5, agent_type = $6, started_at = $7, completed_at = $8,
           repo_path = $9, branch_name = $10, base_branch = $11, use_worktree = $12,
           worktree_path = $13, archived = $14, summary = $15, run_requested_at=$16, run_claimed_at=$17,
-          timeout_minutes=$18, clarification_request=$19, clarification_answer=$20, assigned_worker_id=$21
-        WHERE id = $22`,
+          timeout_minutes=$18, clarification_request=$19, clarification_answer=$20, assigned_worker_id=$21,
+          labels=$22, agent_preference=$23
+         WHERE id = $24`,
         [
           merged.title,
           merged.description,
@@ -248,6 +255,8 @@ export class PostgresTaskRepository implements TaskRepository {
           merged.clarificationRequest ? JSON.stringify(merged.clarificationRequest) : null,
           merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
           merged.assignedWorkerId ?? null,
+          JSON.stringify(merged.labels ?? []),
+          merged.agentPreference ?? null,
           id,
         ]
       );

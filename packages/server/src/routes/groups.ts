@@ -160,6 +160,7 @@ export function createGroupsRouter(
           : undefined,
         groupId,
         groupOrder: i,
+        labels: [],
       };
     });
 

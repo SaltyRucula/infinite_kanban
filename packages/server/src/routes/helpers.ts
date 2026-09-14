@@ -5,7 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { Project, Task, TaskGroup, WorkerTaskAssignment } from '../types.js';
-import { isValidPriority, isValidColumnId, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
+import { isValidPriority, isValidColumnId, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
 import { errorMessage } from '../utils.js';
 import { getCloneRoot } from '../config.js';
 import type { TaskRepository } from '../repositories/types.js';
@@ -390,7 +390,7 @@ export type PortableTaskGroup = Omit<TaskGroup, 'repoPath'>;
 
 export function toPortableTask(task: Task): PortableTask {
   const { repoPath: _repoPath, worktreePath: _worktreePath, ...portable } = task;
-  return portable;
+  return { ...portable, labels: task.labels ?? [] };
 }
 
 export function toPortableTaskGroup(group: TaskGroup): PortableTaskGroup {
@@ -401,6 +401,9 @@ export function toPortableTaskGroup(group: TaskGroup): PortableTaskGroup {
 export function rejectTaskPathFields(body: Record<string, unknown>): string | null {
   if ('repoPath' in body) return 'repoPath is not supported for tasks';
   if ('worktreePath' in body) return 'worktreePath is not supported for tasks';
+  for (const field of ['workspacePath', 'projectPath', 'command', 'executable', 'skill']) {
+    if (field in body) return `${field} is not supported for tasks`;
+  }
   return null;
 }
 
@@ -427,6 +430,8 @@ export function toWorkerTaskAssignment(task: Task): WorkerTaskAssignment {
     ...(task.baseBranch === undefined ? {} : { baseBranch: task.baseBranch }),
     ...(task.useWorktree === undefined ? {} : { useWorktree: task.useWorktree }),
     ...(task.timeoutMinutes === undefined ? {} : { timeoutMinutes: task.timeoutMinutes }),
+    labels: task.labels ?? [],
+    ...(task.agentPreference === undefined ? {} : { agentPreference: task.agentPreference }),
   };
 }
 
@@ -517,8 +522,20 @@ export function isRateLimited(taskId: string): boolean {
 
 // ─── Task field validation ──────────────────────────────────────────
 
+export function normalizeTaskLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const labels: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const label = item.trim().toLowerCase();
+    if (label && label.length <= MAX_LABEL_LENGTH && !labels.includes(label)) labels.push(label);
+    if (labels.length === MAX_LABELS) break;
+  }
+  return labels;
+}
+
 export function validateTaskFields(body: Record<string, any>): string | null {
-  const { title, description, priority, columnId, agentType, branchName, baseBranch, useWorktree, autoRun, timeoutMinutes } = body;
+  const { title, description, priority, columnId, agentType, branchName, baseBranch, useWorktree, autoRun, timeoutMinutes, labels, agentPreference } = body;
 
   if (!title || typeof title !== 'string' || !title.trim()) {
     return 'title is required and must be a non-empty string';
@@ -562,13 +579,19 @@ export function validateTaskFields(body: Record<string, any>): string | null {
   if (timeoutMinutes !== undefined && !isValidAgentTimeoutMinutes(timeoutMinutes)) {
     return `timeoutMinutes must be an integer between ${MIN_AGENT_TIMEOUT_MINUTES} and ${MAX_AGENT_TIMEOUT_MINUTES}`;
   }
+  if (labels !== undefined && (!Array.isArray(labels) || labels.length > MAX_LABELS || labels.some((label: unknown) => typeof label !== 'string' || label.trim().length === 0 || label.trim().length > MAX_LABEL_LENGTH))) {
+    return `labels must contain at most ${MAX_LABELS} non-empty strings of at most ${MAX_LABEL_LENGTH} characters`;
+  }
+  if (agentPreference !== undefined && (typeof agentPreference !== 'string' || agentPreference.trim().length > MAX_AGENT_PREFERENCE_LENGTH)) {
+    return `agentPreference must be a string of at most ${MAX_AGENT_PREFERENCE_LENGTH} characters`;
+  }
   return null;
 }
 
 // ─── Task builder ───────────────────────────────────────────────────
 
 export function buildTask(body: Record<string, any>): Task {
-  const { title, description, priority, columnId, agentType, branchName, baseBranch, useWorktree, projectId, timeoutMinutes } = body;
+  const { title, description, priority, columnId, agentType, branchName, baseBranch, useWorktree, projectId, timeoutMinutes, agentPreference } = body;
   return {
     id: uuid(),
     projectId: typeof projectId === 'string' && projectId ? projectId : 'default',
@@ -583,6 +606,8 @@ export function buildTask(body: Record<string, any>): Task {
     baseBranch: baseBranch || undefined,
     useWorktree: useWorktree ?? undefined, externalSource: body.externalSource, externalKey: body.externalKey, provenance: body.provenance, runRequestedAt: body.runRequestedAt,
     timeoutMinutes,
+    labels: normalizeTaskLabels(body.labels),
+    ...(typeof agentPreference === 'string' && agentPreference.trim() ? { agentPreference: agentPreference.trim() } : {}),
   };
 }
 
