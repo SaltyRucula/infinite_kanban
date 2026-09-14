@@ -1,11 +1,5 @@
 import { v4 as uuid } from 'uuid';
 import {
-  ClaudeProvider,
-  CodexProvider,
-  CopilotProvider,
-  GrokProvider,
-  HermesProvider,
-  OpenClawProvider,
   OpenCodeProvider,
   type AgentEvent as CoreEvent,
   type AgentProvider,
@@ -22,6 +16,14 @@ export type SdkRunResult = {
   readonly status: 'complete' | 'failed';
   readonly summary?: string;
   readonly error?: string;
+};
+
+export type RunningAgentSdkTask = {
+  readonly sessionId: string | null;
+  readonly baseUrl?: string;
+  readonly done: Promise<SdkRunResult>;
+  sendMessage(message: string, attachmentIds?: readonly string[]): Promise<void>;
+  abort(): Promise<void>;
 };
 
 type RunAgentSdkTaskInput = {
@@ -115,26 +117,14 @@ function getOpenCodeBaseUrl(): string | undefined {
 }
 
 function providerFor(agentType: AgentType): AgentProvider {
-  switch (agentType) {
-    case 'copilot':
-      return new CopilotProvider();
-    case 'claude':
-      return new ClaudeProvider();
-    case 'codex':
-      return new CodexProvider();
-    case 'opencode': {
-      const baseUrl = getOpenCodeBaseUrl();
-      return new OpenCodeProvider(baseUrl ? { baseUrl } : undefined);
-    }
-    case 'hermes':
-      return new HermesProvider();
-    case 'openclaw':
-      return new OpenClawProvider();
-    case 'grok':
-      return new GrokProvider();
-    default:
-      throw new Error(`unsupported agent type: ${agentType satisfies never}`);
-  }
+  if (agentType !== 'opencode') throw new Error(`unsupported agent type: ${agentType}`);
+  const baseUrl = getOpenCodeBaseUrl();
+  return new OpenCodeProvider(baseUrl ? { baseUrl } : undefined);
+}
+
+function maybeOpenCodeBaseUrl(agentType: AgentType): string | undefined {
+  if (agentType !== 'opencode') return undefined;
+  return getOpenCodeBaseUrl();
 }
 
 function coerceEventType(candidate: string): AgentEventType {
@@ -142,6 +132,11 @@ function coerceEventType(candidate: string): AgentEventType {
 }
 
 export async function runAgentSdkTask(input: RunAgentSdkTaskInput): Promise<SdkRunResult> {
+  const running = await startAgentSdkTask(input);
+  return running.done;
+}
+
+export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<RunningAgentSdkTask> {
   const agentType = input.task.agentType;
   if (!agentType || !isValidAgentType(agentType)) {
     throw new Error('task has no supported agentType');
@@ -170,21 +165,48 @@ export async function runAgentSdkTask(input: RunAgentSdkTaskInput): Promise<SdkR
     },
   });
 
-  try {
-    const result = await session.execute(`${input.task.title}\n\n${input.task.description}`);
-    if (result.status === 'complete') {
-      return {
-        status: 'complete',
-        summary: 'Agent SDK task completed',
-      };
-    }
-    return {
-      status: 'failed',
-      summary: 'Agent SDK task failed',
-      ...(result.error ? { error: sanitizeLocalText(result.error, input.workingDirectory) } : {}),
-    };
-  } finally {
+  let cleanedUp = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     await session.destroy();
     await provider.stop();
-  }
+  };
+
+  const done = (async (): Promise<SdkRunResult> => {
+    try {
+      const result = await session.execute(`${input.task.title}\n\n${input.task.description}`);
+      if (result.status === 'complete') {
+        return {
+          status: 'complete',
+          summary: 'Agent SDK task completed',
+        };
+      }
+      return {
+        status: 'failed',
+        summary: 'Agent SDK task failed',
+        ...(result.error ? { error: sanitizeLocalText(result.error, input.workingDirectory) } : {}),
+      };
+    } catch (error: unknown) {
+      return {
+        status: 'failed',
+        summary: 'Agent SDK task failed',
+        error: sanitizeLocalText(error instanceof Error ? error.message : String(error), input.workingDirectory),
+      };
+    } finally {
+      await cleanup();
+    }
+  })();
+
+  return {
+    sessionId: session.sessionId ?? null,
+    ...(maybeOpenCodeBaseUrl(agentType) ? { baseUrl: maybeOpenCodeBaseUrl(agentType) } : {}),
+    done,
+    sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
+      await session.send(message);
+    },
+    abort: async () => {
+      await session.abort();
+    },
+  };
 }

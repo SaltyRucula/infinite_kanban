@@ -16,6 +16,9 @@ import type { WorkerRegistration, WorkerRepository } from '../repositories/worke
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
 import { asyncHandler, broadcastTaskUpdate, toWorkerTaskAssignment } from './helpers.js';
 
+const COMMAND_POLL_LIMIT_DEFAULT = 20;
+const COMMAND_POLL_LIMIT_MAX = 100;
+
 function publicWorker(worker: Worker & { readonly tokenHash?: string }): Worker {
   const { tokenHash: _tokenHash, ...result } = worker;
   return result;
@@ -28,6 +31,33 @@ function tokenHash(): { raw: string; hash: string } {
 
 function taskBelongs(task: Task | undefined, workerId: string): task is Task {
   return !!task && task.assignedWorkerId === workerId;
+}
+
+function normalizeLoopbackBaseUrl(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  const hostname = parsed.hostname.toLowerCase();
+  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  if (!isLoopback) return null;
+  if (!parsed.port) return null;
+  if ((parsed.pathname !== '' && parsed.pathname !== '/') || parsed.search || parsed.hash || parsed.username || parsed.password) {
+    return null;
+  }
+  return `${parsed.protocol}//${parsed.host}`;
+}
+
+function commandPollLimit(req: Request): number {
+  const value = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const parsed = typeof value === 'string' ? Number.parseInt(value, 10) : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed <= 0) return COMMAND_POLL_LIMIT_DEFAULT;
+  return Math.min(parsed, COMMAND_POLL_LIMIT_MAX);
 }
 
 export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository): Router {
@@ -136,7 +166,70 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task is already claimed or not eligible' });
       return;
     }
+    await workers.clearTaskCommands(task.id);
     res.json({ task: toWorkerTaskAssignment(claimed), leaseExpiresAt: now + WORKER_TASK_LEASE_MS, claimToken: claim.raw });
+  }));
+
+  router.post('/me/tasks/:taskId/session', asyncHandler(async (req: Request, res: Response) => {
+    const worker = authenticatedWorker(res);
+    const task = await tasks.getById(taskId(req));
+    if (!task) {
+      res.status(404).json({ error: 'task not found' });
+      return;
+    }
+    if (!taskBelongs(task, worker.id)) {
+      res.status(403).json({ error: 'task is not assigned to this worker' });
+      return;
+    }
+    const claim = claimTokenHash(req);
+    const now = Date.now();
+    if (!claim || !await tasks.isWorkerClaimValid(task.id, worker.id, claim, now)) {
+      res.status(409).json({ error: 'task claim is invalid' });
+      return;
+    }
+    const sessionId = typeof req.body.sessionId === 'string' ? req.body.sessionId.trim() : '';
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId must be a non-empty string' });
+      return;
+    }
+    const baseUrl = normalizeLoopbackBaseUrl(req.body.baseUrl);
+    if (!baseUrl) {
+      res.status(400).json({ error: 'baseUrl must be loopback http(s) with explicit port and no path/query/hash/userinfo' });
+      return;
+    }
+    await workers.registerTaskSession(task.id, sessionId, baseUrl, now);
+    const renewed = await tasks.renewWorkerLease(task.id, worker.id, claim, now, WORKER_TASK_LEASE_MS);
+    if (!renewed) {
+      res.status(409).json({ error: 'task claim is expired' });
+      return;
+    }
+    res.json({ success: true });
+  }));
+
+  router.get('/me/tasks/:taskId/commands', asyncHandler(async (req: Request, res: Response) => {
+    const worker = authenticatedWorker(res);
+    const task = await tasks.getById(taskId(req));
+    if (!task) {
+      res.status(404).json({ error: 'task not found' });
+      return;
+    }
+    if (!taskBelongs(task, worker.id)) {
+      res.status(403).json({ error: 'task is not assigned to this worker' });
+      return;
+    }
+    const claim = claimTokenHash(req);
+    const now = Date.now();
+    if (!claim || !await tasks.isWorkerClaimValid(task.id, worker.id, claim, now)) {
+      res.status(409).json({ error: 'task claim is invalid' });
+      return;
+    }
+    const renewed = await tasks.renewWorkerLease(task.id, worker.id, claim, now, WORKER_TASK_LEASE_MS);
+    if (!renewed) {
+      res.status(409).json({ error: 'task claim is expired' });
+      return;
+    }
+    const commands = await workers.claimTaskCommands(task.id, commandPollLimit(req));
+    res.json({ commands });
   }));
 
   router.post('/me/tasks/:taskId/events', asyncHandler(async (req: Request, res: Response) => {
@@ -210,6 +303,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task claim is expired or invalid' });
       return;
     }
+    await workers.clearTaskCommands(task.id);
     broadcastTaskUpdate(completed);
     res.json({ task: toWorkerTaskAssignment(completed) });
   }));

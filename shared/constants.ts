@@ -3,7 +3,7 @@ import type { ColumnId, Priority, AgentStatus, AgentType, WorkerStatus } from '.
 export const VALID_PRIORITIES: readonly Priority[] = ['low', 'medium', 'high', 'critical'] as const;
 export const VALID_COLUMNS: readonly ColumnId[] = ['backlog', 'in-progress', 'pending', 'review', 'done'] as const;
 export const VALID_AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'planning', 'executing', 'awaiting_clarification', 'complete', 'failed'] as const;
-export const VALID_AGENT_TYPES: readonly AgentType[] = ['copilot', 'claude', 'codex', 'opencode', 'hermes', 'openclaw', 'grok'] as const;
+export const VALID_AGENT_TYPES: readonly AgentType[] = ['opencode'] as const;
 export const VALID_WORKER_STATUSES: readonly WorkerStatus[] = ['online', 'offline', 'disabled'] as const;
 
 export const VALID_AGENT_STATUS_TRANSITIONS: Record<AgentStatus, readonly AgentStatus[]> = {
@@ -38,6 +38,15 @@ export function isValidAgentStatus(value: unknown): value is AgentStatus {
 
 export function isValidAgentType(value: unknown): value is AgentType {
   return typeof value === 'string' && (VALID_AGENT_TYPES as readonly string[]).includes(value);
+}
+
+export function coerceAgentType(value: unknown): AgentType {
+  void value;
+  return 'opencode';
+}
+
+export function coerceOptionalAgentType(value: unknown): AgentType | undefined {
+  return value == null ? undefined : coerceAgentType(value);
 }
 
 export function isValidWorkerStatus(value: unknown): value is WorkerStatus {

@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
-import { createOpencodeClient } from '@opencode-ai/sdk';
+import { v4 as uuid } from 'uuid';
 import type { Task } from '../types.js';
 import { isValidAgentType, VALID_AGENT_TYPES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
+import type { WorkerRepository } from '../repositories/worker-types.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
-import { resolveOpenCodeBaseUrl } from '../opencode/config.js';
 import { buildOpenCodeSessionUrl } from '../opencode/session-link.js';
 import { resolveTaskOpenCodeSession } from '../opencode/session-resolver.js';
 import {
@@ -21,8 +21,51 @@ export function createAgentRouter(
   agentManager: AgentManager,
   groupRepo?: TaskGroupRepository,
   projectRepo?: ProjectRepository,
+  workerRepo?: WorkerRepository,
 ): Router {
   const router = Router();
+
+  const hasActiveWorkerLease = (task: Task): boolean => {
+    return task.assignedWorkerId != null
+      && (task.agentStatus === 'planning' || task.agentStatus === 'executing' || task.agentStatus === 'awaiting_clarification');
+  };
+
+  const enqueueWorkerCommand = async (
+    task: Task,
+    command:
+      | { readonly type: 'cancel' }
+      | { readonly type: 'message'; readonly message: string; readonly attachmentIds?: readonly string[] }
+      | { readonly type: 'clarification'; readonly requestId: string; readonly sessionId: string; readonly answer: string },
+  ): Promise<boolean> => {
+    if (!workerRepo || !task.assignedWorkerId || !hasActiveWorkerLease(task)) return false;
+    if (command.type === 'cancel') {
+      await workerRepo.enqueueTaskCommand(task.id, {
+        id: uuid(),
+        type: 'cancel',
+        createdAt: Date.now(),
+      });
+      return true;
+    }
+    if (command.type === 'message') {
+      await workerRepo.enqueueTaskCommand(task.id, {
+        id: uuid(),
+        type: 'message',
+        message: command.message,
+        createdAt: Date.now(),
+        ...(command.attachmentIds && command.attachmentIds.length > 0 ? { attachmentIds: command.attachmentIds } : {}),
+      });
+      return true;
+    }
+    await workerRepo.enqueueTaskCommand(task.id, {
+      id: uuid(),
+      type: 'clarification',
+      createdAt: Date.now(),
+      requestId: command.requestId,
+      sessionId: command.sessionId,
+      answer: command.answer,
+    });
+    return true;
+  };
 
   // POST /api/tasks/:id/configure — store worktree config before running
   router.post('/:id/configure', asyncHandler(async (req: Request, res: Response) => {
@@ -167,6 +210,16 @@ export function createAgentRouter(
       res.status(404).json({ error: 'task not found' });
       return;
     }
+    if (await enqueueWorkerCommand(task, { type: 'cancel' })) {
+      const updated = await repo.update(task.id, { agentStatus: 'failed' });
+      if (!updated) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+      broadcastTaskUpdate(updated);
+      res.json(toPortableTask(updated));
+      return;
+    }
     const stopped = await agentManager.stopAgent(task.id);
     if (!stopped) {
       res.status(409).json({ error: 'no running agent for this task' });
@@ -196,18 +249,24 @@ export function createAgentRouter(
       return;
     }
 
-    if (!agentManager.isRunning(task.id)) {
-      res.status(409).json({ error: 'no running agent for this task' });
-      return;
-    }
-
     if (task.agentStatus === 'awaiting_clarification') {
       res.status(409).json({ error: 'task is awaiting clarification; use /clarification/resume with requestId and sessionId' });
       return;
     }
 
+    const validIds = Array.isArray(attachmentIds) ? attachmentIds.filter((id: unknown) => typeof id === 'string') : undefined;
+    if (await enqueueWorkerCommand(task, { type: 'message', message: message.trim(), attachmentIds: validIds })) {
+      broadcast({ type: 'agent_follow_up', payload: { taskId: task.id, message: message.trim(), attachmentIds: validIds } });
+      res.json({ success: true });
+      return;
+    }
+
+    if (!agentManager.isRunning(task.id)) {
+      res.status(409).json({ error: 'no running agent for this task' });
+      return;
+    }
+
     try {
-      const validIds = Array.isArray(attachmentIds) ? attachmentIds.filter((id: unknown) => typeof id === 'string') : undefined;
       await agentManager.sendMessage(task.id, message, validIds);
       broadcast({ type: 'agent_follow_up', payload: { taskId: task.id, message, attachmentIds: validIds } });
       res.json({ success: true });
@@ -235,6 +294,16 @@ export function createAgentRouter(
     const requestId = typeof req.body.requestId === 'string' ? req.body.requestId : '';
     const sessionId = typeof req.body.sessionId === 'string' ? req.body.sessionId : '';
     const answer = typeof req.body.answer === 'string' ? req.body.answer : '';
+
+    if (await enqueueWorkerCommand(task, {
+      type: 'clarification',
+      requestId,
+      sessionId,
+      answer,
+    })) {
+      res.json({ success: true, code: 'queued_for_worker', message: 'clarification queued for worker session' });
+      return;
+    }
 
     const result = await agentManager.resumeClarification(task.id, {
       requestId,
@@ -284,24 +353,18 @@ export function createAgentRouter(
       res.status(409).json({ error: 'task is not an OpenCode-backed task' });
       return;
     }
-    const baseUrl = resolveOpenCodeBaseUrl();
-    if (!baseUrl) {
-      res.status(503).json({ error: 'OPENCODE_BASE_URL is not configured' });
+    if (!workerRepo) {
+      res.status(503).json({ error: 'worker repository is not configured' });
       return;
     }
-    const client = createOpencodeClient({ baseUrl });
-    const resolved = await resolveTaskOpenCodeSession(
-      client,
-      task.id,
-      agentManager.getSessionIdentity(task.id),
-    );
+    const resolved = resolveTaskOpenCodeSession(await workerRepo.getTaskSessions(task.id), agentManager.getSessionIdentity(task.id));
     if (!resolved) {
       res.status(404).json({ error: 'no OpenCode session found for this task' });
       return;
     }
     res.json({
       sessionId: resolved.sessionId,
-      url: buildOpenCodeSessionUrl(baseUrl, resolved.directory, resolved.sessionId),
+      url: buildOpenCodeSessionUrl(resolved.baseUrl, resolved.sessionId),
     });
   }));
 

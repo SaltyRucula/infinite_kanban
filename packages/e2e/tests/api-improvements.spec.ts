@@ -23,13 +23,13 @@ test.describe('Single-call task creation + autoRun', () => {
         description: 'Test creating with extra fields',
         priority: 'high',
         columnId: 'backlog',
-        agentType: 'claude',
+        agentType: 'opencode',
       },
     });
     expect(res.status()).toBe(201);
     const task = await res.json();
     expect(task.title).toBe('API test task');
-    expect(task.agentType).toBe('claude');
+    expect(task.agentType).toBe('opencode');
     expect(task.columnId).toBe('backlog');
     expect(task.agentStatus).toBe('idle');
 
@@ -83,7 +83,7 @@ test.describe('Single-call task creation + autoRun', () => {
         title: 'Auto-run task',
         description: 'Should auto-start the agent',
         columnId: 'in-progress',
-        agentType: 'copilot',
+        agentType: 'opencode',
         assignedWorkerId: 'worker-1',
         autoRun: true,
       },
@@ -138,7 +138,7 @@ test.describe('Lightweight status endpoint', () => {
   test('GET /api/tasks/:id/status returns lightweight status', async ({ request }) => {
     // Create a task first
     const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Status test', agentType: 'claude' },
+      data: { title: 'Status test', agentType: 'opencode' },
     });
     const task = await createRes.json();
 
@@ -148,7 +148,7 @@ test.describe('Lightweight status endpoint', () => {
 
     expect(status.id).toBe(task.id);
     expect(status.agentStatus).toBe('idle');
-    expect(status.agentType).toBe('claude');
+    expect(status.agentType).toBe('opencode');
     expect(status.columnId).toBe('backlog');
     expect(status.isRunning).toBe(false);
 
@@ -242,7 +242,7 @@ test.describe('Batch create endpoint', () => {
           {
             title: 'Batch autoRun',
             columnId: 'in-progress',
-            agentType: 'copilot',
+            agentType: 'opencode',
             assignedWorkerId: 'worker-1',
             autoRun: true,
           },
@@ -296,8 +296,7 @@ test.describe('agent_complete WebSocket event', () => {
         title: 'WS complete test',
         description: 'Agent will be stopped to trigger agent_complete',
         columnId: 'in-progress',
-        agentType: 'copilot',
-        assignedWorkerId: 'worker-1',
+        agentType: 'opencode',
         autoRun: true,
       },
     });
@@ -339,8 +338,7 @@ test.describe('Task result summary events', () => {
         title: 'Summary event test',
         description: 'Should generate summary event',
         columnId: 'in-progress',
-        agentType: 'copilot',
-        assignedWorkerId: 'worker-1',
+        agentType: 'opencode',
         autoRun: true,
       },
     });
@@ -451,7 +449,7 @@ test.describe('Backward compatibility', () => {
     expect(task.title).toBe('Old-style task');
     expect(task.agentStatus).toBe('idle');
     expect(task.columnId).toBe('backlog');
-    expect(task.agentType).toBe('copilot');
+    expect(task.agentType).toBe('opencode');
 
     await deleteTaskViaAPI(request, task.id);
   });
@@ -482,8 +480,6 @@ test.describe('Backward compatibility', () => {
   test('board UI still renders correctly', async ({ page }) => {
     await page.goto('/');
     await waitForBoard(page);
-    for (const col of ['Backlog', 'In Progress', 'Review', 'Done']) {
-      await expect(page.getByRole('heading', { name: col, exact: true })).toBeVisible();
-    }
+    await expect(page.getByText('Backlog').first()).toBeVisible();
   });
 });

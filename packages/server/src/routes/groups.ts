@@ -153,7 +153,7 @@ export function createGroupsRouter(
         title: child.title.trim(),
         description: child.description?.trim() || '',
         priority: child.priority || group.priority,
-        agentType: child.agentType !== undefined ? child.agentType : (project.defaultAgentType ?? 'copilot'),
+        agentType: child.agentType !== undefined ? child.agentType : (project.defaultAgentType ?? 'opencode'),
         useWorktree,
         branchName: useWorktree !== false
           ? `group/${groupId.slice(0, 8)}/${i}-${slugify(child.title)}`

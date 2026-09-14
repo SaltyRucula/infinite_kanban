@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import type { Task, Priority, ColumnId, AgentStatus, AgentType, AgentEvent } from '../types.js';
 import type { TaskRepository } from './types.js';
 import { errorMessage } from '../utils.js';
-import { CLAIMABLE_AGENT_STATUS_SQL_LIST } from '@ai-agent-board/shared/constants.js';
+import { CLAIMABLE_AGENT_STATUS_SQL_LIST, coerceAgentType } from '@ai-agent-board/shared/constants.js';
 
 interface TaskRow {
   id: string;
@@ -61,7 +61,7 @@ function rowToTask(row: TaskRow): Task {
     baseBranch: row.base_branch ?? undefined,
     useWorktree: row.use_worktree != null ? Boolean(row.use_worktree) : undefined,
     worktreePath: row.worktree_path ?? undefined,
-    agentType: row.agent_type,
+    agentType: coerceAgentType(row.agent_type),
     archived: Boolean(row.archived),
     groupId: row.group_id ?? undefined,
     groupOrder: row.group_order ?? undefined,
@@ -167,7 +167,7 @@ export class SqliteTaskRepository implements TaskRepository {
       priority: task.priority,
       column_id: task.columnId,
       agent_status: task.agentStatus,
-      agent_type: task.agentType ?? 'copilot',
+       agent_type: task.agentType ?? 'opencode',
       created_at: task.createdAt,
       started_at: task.startedAt ?? null,
       completed_at: task.completedAt ?? null,

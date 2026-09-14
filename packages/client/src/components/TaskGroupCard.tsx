@@ -25,7 +25,7 @@ export function TaskGroupCard({ group, onClickGroup, onRunGroup, onStopGroup, on
   const agentCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const c of group.children) {
-      const type = c.agentType || 'copilot';
+  const type = c.agentType || 'opencode';
       counts.set(type, (counts.get(type) || 0) + 1);
     }
     return [...counts.entries()];

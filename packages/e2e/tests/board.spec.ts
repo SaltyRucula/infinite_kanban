@@ -405,33 +405,33 @@ test.describe('Filter Chips', () => {
     createdTaskIds = [];
   });
 
-  test('filter by agent type shows only matching tasks', async ({ page, request }) => {
-    // Create tasks with different agent types via API
-    const res1 = await request.post(`${API}/api/tasks`, { data: { title: 'Filter Claude Task', description: 'test', agentType: 'claude' } });
-    const res2 = await request.post(`${API}/api/tasks`, { data: { title: 'Filter Copilot Task', description: 'test', agentType: 'copilot' } });
+  test('filter by label shows only matching tasks', async ({ page, request }) => {
+    // Create tasks with different labels via API
+    const res1 = await request.post(`${API}/api/tasks`, { data: { title: 'Filter Frontend Task', description: 'test', labels: ['frontend'] } });
+    const res2 = await request.post(`${API}/api/tasks`, { data: { title: 'Filter Backend Task', description: 'test', labels: ['backend'] } });
     createdTaskIds.push((await res1.json()).id, (await res2.json()).id);
 
     await page.reload();
     await waitForBoard(page);
 
     // Both tasks should be visible
-    await expect(page.getByRole('heading', { name: 'Filter Claude Task' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Filter Copilot Task' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Filter Frontend Task' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Filter Backend Task' })).toBeVisible();
 
-    // Click Filter toggle then Claude filter chip
+    // Click Filter toggle then frontend filter chip
     await page.getByLabel('Toggle filters').click();
-    await page.getByRole('button', { name: 'Claude', exact: true }).click();
+    await page.getByRole('button', { name: '#frontend', exact: true }).click();
 
-    // Only Claude task should be visible
-    await expect(page.getByRole('heading', { name: 'Filter Claude Task' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Filter Copilot Task' })).not.toBeVisible({ timeout: 2_000 });
+    // Only Frontend task should be visible
+    await expect(page.getByRole('heading', { name: 'Filter Frontend Task' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Filter Backend Task' })).not.toBeVisible({ timeout: 2_000 });
 
     // Click Clear to reset
     await page.getByRole('button', { name: 'Clear' }).click();
 
     // Both visible again
-    await expect(page.getByRole('heading', { name: 'Filter Claude Task' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Filter Copilot Task' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Filter Frontend Task' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Filter Backend Task' })).toBeVisible();
   });
 });
 
@@ -507,18 +507,18 @@ test.describe('OpenCode Session Button', () => {
     createdTaskIds = [];
   });
 
-  test('shows the session button only for OpenCode-backed tasks', async ({ page, request }) => {
+  test('shows the OpenCode session button for active in-progress tasks', async ({ page, request }) => {
     const openCodeRes = await request.post(`${API}/api/tasks`, {
       data: { title: 'OpenCode Session Task', description: 'test', columnId: 'in-progress', agentType: 'opencode' },
     });
     const openCodeTask = await openCodeRes.json();
     createdTaskIds.push(openCodeTask.id);
 
-    const copilotRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Copilot Session Task', description: 'test', columnId: 'in-progress', agentType: 'copilot' },
+    const backlogRes = await request.post(`${API}/api/tasks`, {
+      data: { title: 'Backlog Task', description: 'test', columnId: 'backlog', agentType: 'opencode' },
     });
-    const copilotTask = await copilotRes.json();
-    createdTaskIds.push(copilotTask.id);
+    const backlogTask = await backlogRes.json();
+    createdTaskIds.push(backlogTask.id);
 
     await page.reload();
     await waitForBoard(page);
@@ -527,9 +527,9 @@ test.describe('OpenCode Session Button', () => {
     await openCodeCard.hover();
     await expect(openCodeCard.getByRole('button', { name: 'Open OpenCode session' })).toBeVisible();
 
-    const copilotCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: 'Copilot Session Task' }) });
-    await copilotCard.hover();
-    await expect(copilotCard.getByRole('button', { name: 'Open OpenCode session' })).toHaveCount(0);
+    const backlogCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: 'Backlog Task' }) });
+    await backlogCard.hover();
+    await expect(backlogCard.getByRole('button', { name: 'Open OpenCode session' })).toHaveCount(0);
   });
 });
 

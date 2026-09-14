@@ -7,8 +7,7 @@ import {
   HardDrive,
   Check,
 } from 'lucide-react';
-import type { Task, TaskAttachment, ColumnId, AgentType, AgentInfo, Priority } from '@/types';
-import { AGENT_OPTIONS } from '@/lib/agent-config';
+import type { Task, TaskAttachment, ColumnId, AgentType, Priority } from '@/types';
 import { PRIORITY_OPTIONS } from '@/lib/priority-config';
 import { cn, slugify } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -18,11 +17,11 @@ import ImageUpload from './ImageUpload';
 interface TaskDialogProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (task: { title: string; description: string; priority: Priority; columnId: ColumnId; agentType: AgentType; autoRun?: boolean; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null }) => Promise<unknown>;
+  onSubmit: (task: { title: string; description: string; priority: Priority; columnId: ColumnId; agentType: AgentType; autoRun?: boolean; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null; labels?: string[] }) => Promise<unknown>;
   /** When set, dialog is in edit mode with pre-populated fields */
   editTask?: Task | null;
   /** Called on save in edit mode */
-  onEditSubmit?: (id: string, updates: { title: string; description: string; priority: Priority; agentType: AgentType; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null }) => Promise<unknown>;
+  onEditSubmit?: (id: string, updates: { title: string; description: string; priority: Priority; agentType: AgentType; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null; labels?: string[] }) => Promise<unknown>;
   /** Project-level task defaults used to prefill create mode (each overridable). */
   projectDefaults?: {
     defaultAgentType?: AgentType;
@@ -32,16 +31,15 @@ interface TaskDialogProps {
   };
 }
 
-const agents = AGENT_OPTIONS;
 const priorities = PRIORITY_OPTIONS;
 
 export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, projectDefaults }: TaskDialogProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
-  const [agentType, setAgentType] = useState<AgentType>('copilot');
+  const [agentType, setAgentType] = useState<AgentType>('opencode');
+  const [labelsInput, setLabelsInput] = useState('');
   const [showPriority, setShowPriority] = useState(false);
-  const [showAgent, setShowAgent] = useState(false);
   const [autoRun, setAutoRun] = useState(false);
   const [branchName, setBranchName] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
@@ -50,14 +48,13 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
   const [submitting, setSubmitting] = useState(false);
   const [pendingImages, setPendingImages] = useState<File[]>([]);
   const [existingAttachments, setExistingAttachments] = useState<TaskAttachment[]>([]);
-  const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
 
   const { workers } = useWorkers();
 
   const isEditMode = !!editTask;
 
-  const defaultAgent = projectDefaults?.defaultAgentType ?? 'copilot';
+  const defaultAgent = projectDefaults?.defaultAgentType ?? 'opencode';
   const defaultPriority = projectDefaults?.defaultPriority ?? 'medium';
   const defaultBaseBranch = projectDefaults?.defaultBaseBranch ?? 'main';
   const defaultUseWorktree = projectDefaults?.defaultUseWorktree ?? false;
@@ -83,7 +80,8 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
       setTitle(editTask.title);
       setDescription(editTask.description);
       setPriority(editTask.priority || 'medium');
-      setAgentType(editTask.agentType || 'copilot');
+      setAgentType(editTask.agentType || 'opencode');
+      setLabelsInput(editTask.labels ? editTask.labels.join(', ') : '');
       setSelectedWorkerId(editTask.assignedWorkerId || null);
       setBranchName(editTask.branchName || `task/${slugify(editTask.title)}`);
       setBaseBranch(editTask.baseBranch || 'main');
@@ -95,6 +93,7 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
       // Opening in create mode — prefill from project defaults (each overridable)
       setPriority(defaultPriority);
       setAgentType(defaultAgent);
+      setLabelsInput('');
       setSelectedWorkerId(null);
       setBaseBranch(defaultBaseBranch);
       setUseWorktree(defaultUseWorktree);
@@ -103,10 +102,10 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
       setTitle('');
       setDescription('');
       setPriority('medium');
-      setAgentType('copilot');
+      setAgentType('opencode');
+      setLabelsInput('');
       setSelectedWorkerId(null);
       setShowPriority(false);
-      setShowAgent(false);
       setAutoRun(false);
       setBranchName('');
       setBaseBranch('main');
@@ -118,30 +117,7 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
     }
   }, [editTask, open, defaultAgent, defaultPriority, defaultBaseBranch, defaultUseWorktree]);
 
-  useEffect(() => {
-    if (!open) return;
 
-    let cancelled = false;
-    api.getAgents()
-      .then((result) => {
-        if (cancelled) return;
-        setAvailableAgents(result);
-
-        const selectedInfo = result.find((agent) => agent.name === agentType);
-        const firstAvailable = result.find((agent) => agent.available);
-        // Don't auto-swap when the project configures a default agent — respect the choice.
-        if (!editTask && !projectDefaults?.defaultAgentType && selectedInfo && !selectedInfo.available && firstAvailable) {
-          setAgentType(firstAvailable.name);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setAvailableAgents([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, editTask, agentType, projectDefaults?.defaultAgentType]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,11 +128,17 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
       ? (branchName.trim() || `task/${slugify(title.trim())}`)
       : undefined;
 
+    const parsedLabels = labelsInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     const gitFields = {
       branchName: effectiveBranch,
       baseBranch: baseBranch.trim() || 'main',
       useWorktree,
       timeoutMinutes: timeoutMinutes === '' ? (isEditMode ? null : undefined) : Number(timeoutMinutes),
+      labels: parsedLabels,
     };
 
     setSubmitting(true);
@@ -184,6 +166,14 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
           ...gitFields,
         })) as Task | undefined;
         if (result === undefined) return; // Server error — keep dialog open
+
+        if (parsedLabels.length > 0 && result?.id) {
+          try {
+            await api.updateTask(result.id, { labels: parsedLabels });
+          } catch (labelErr) {
+            console.warn('Failed to save labels for new task', result.id, labelErr);
+          }
+        }
 
         // Upload pending images after task creation
         if (pendingImages.length > 0 && result?.id) {
@@ -226,27 +216,20 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
     }
   };
 
-  // Close dropdowns on outside click
+  // Close priority dropdown on outside click
   const priorityRef = useRef<HTMLDivElement>(null);
-  const agentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!showPriority && !showAgent) return;
+    if (!showPriority) return;
     const handleClick = (e: MouseEvent) => {
       if (showPriority && priorityRef.current && !priorityRef.current.contains(e.target as Node)) {
         setShowPriority(false);
       }
-      if (showAgent && agentRef.current && !agentRef.current.contains(e.target as Node)) {
-        setShowAgent(false);
-      }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showPriority, showAgent]);
+  }, [showPriority]);
 
-  const selectedAgent = agents.find((a) => a.value === agentType)!;
   const selectedPriority = priorities.find((p) => p.value === priority)!;
-  const agentAvailability = new Map(availableAgents.map((agent) => [agent.name, agent]));
-  const selectedAgentInfo = agentAvailability.get(agentType);
 
   return (
     <AnimatePresence>
@@ -373,68 +356,32 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
                 </AnimatePresence>
               </div>
 
-              {/* Agent */}
-              <div className="relative" ref={agentRef}>
+              {/* Agent display & Labels */}
+              <div>
                 <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Agent
+                  Agent Engine
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setShowAgent(!showAgent)}
-                  className="flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-sm hover:bg-accent transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <span>{selectedAgent.emoji}</span>
-                    {selectedAgent.label}
-                    {selectedAgentInfo && !selectedAgentInfo.available && (
-                      <span className="text-xs text-red-500">Unavailable</span>
-                    )}
+                <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
+                  <span className="flex items-center gap-2 font-medium">
+                    OpenCode / Sisyphus Worker
                   </span>
-                  <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', showAgent && 'rotate-180')} />
-                </button>
+                  <span className="text-[10px] text-emerald-500 font-semibold uppercase tracking-wider">Active</span>
+                </div>
+              </div>
 
-                <AnimatePresence>
-                  {showAgent && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -4 }}
-                      className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
-                    >
-                      {agents.map((a) => {
-                        const info = agentAvailability.get(a.value);
-                        const unavailable = info?.available === false;
-                        return (
-                          <button
-                            key={a.value}
-                            type="button"
-                            disabled={unavailable}
-                            onClick={() => {
-                              setAgentType(a.value);
-                              setShowAgent(false);
-                            }}
-                            className={cn(
-                              'flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
-                              agentType === a.value && 'bg-accent'
-                            )}
-                            title={unavailable ? info?.reason || `${a.label} is unavailable` : undefined}
-                          >
-                            <span>{a.emoji}</span>
-                            <span className="flex-1 text-left">{a.label}</span>
-                            {info && (
-                              <span className={cn(
-                                'text-[10px]',
-                                info.available ? 'text-emerald-500' : 'text-red-500'
-                              )}>
-                                {info.available ? 'Available' : info.reason || 'Unavailable'}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+              {/* Labels */}
+              <div>
+                <label htmlFor="task-labels" className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                  Labels
+                </label>
+                <input
+                  id="task-labels"
+                  type="text"
+                  value={labelsInput}
+                  onChange={(e) => setLabelsInput(e.target.value)}
+                  placeholder="e.g. frontend, bug, feature (comma-separated)"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
               </div>
 
               <div className="space-y-2">
@@ -473,7 +420,7 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
 
                   {matchingOnlineWorkers.length === 0 ? (
                     <div className="p-2.5 rounded-lg bg-muted/30 border border-border text-xs text-muted-foreground text-center italic">
-                      No online registered workers currently support <span className="font-mono text-primary">{selectedAgent.label}</span>.
+                      No online registered workers currently support <span className="font-mono text-primary">OpenCode</span>.
                     </div>
                   ) : (
                     matchingOnlineWorkers.map((worker) => {

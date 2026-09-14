@@ -74,6 +74,7 @@ function migrate(db: Database.Database): void {
   if (!projectColNames.has('jira_import_last_total')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_total INTEGER`);
   if (!projectColNames.has('jira_import_last_created')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_created INTEGER`);
   if (!projectColNames.has('jira_import_last_skipped')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_skipped INTEGER`);
+  db.exec(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode'`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
   db.exec(`
@@ -152,8 +153,10 @@ function migrate(db: Database.Database): void {
   if (!colNames.has('worktree_path')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN worktree_path TEXT`);
   }
+  if (!colNames.has('started_at')) db.exec(`ALTER TABLE tasks ADD COLUMN started_at INTEGER`);
+  if (!colNames.has('completed_at')) db.exec(`ALTER TABLE tasks ADD COLUMN completed_at INTEGER`);
   if (!colNames.has('agent_type')) {
-    db.exec(`ALTER TABLE tasks ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'copilot'`);
+    db.exec(`ALTER TABLE tasks ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'opencode'`);
   }
   if (!colNames.has('archived')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`);
@@ -185,6 +188,7 @@ function migrate(db: Database.Database): void {
   if (!colNames.has('worker_attempt')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_attempt INTEGER NOT NULL DEFAULT 0`);
   if (!colNames.has('labels')) db.exec(`ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'`);
   if (!colNames.has('agent_preference')) db.exec(`ALTER TABLE tasks ADD COLUMN agent_preference TEXT`);
+  db.exec(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
@@ -202,6 +206,33 @@ function migrate(db: Database.Database): void {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
+  db.exec(`UPDATE workers SET agent_types_json = '["opencode"]'`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worker_task_sessions (
+      task_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (task_id, session_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_worker_task_sessions_task_updated ON worker_task_sessions(task_id, updated_at DESC)`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worker_task_commands (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      message TEXT,
+      attachment_ids_json TEXT,
+      request_id TEXT,
+      session_id TEXT,
+      answer TEXT,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_worker_task_commands_task_created ON worker_task_commands(task_id, created_at ASC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_worker_assignment ON tasks(assigned_worker_id, run_requested_at)`);
   // Task groups table
   db.exec(`
@@ -243,12 +274,31 @@ function migrate(db: Database.Database): void {
       title         TEXT NOT NULL DEFAULT '',
       description   TEXT NOT NULL DEFAULT '',
       priority      TEXT NOT NULL DEFAULT 'medium',
-      agent_type    TEXT NOT NULL DEFAULT 'copilot',
+      agent_type    TEXT NOT NULL DEFAULT 'opencode',
       repo_path     TEXT,
       base_branch   TEXT,
       use_worktree  INTEGER,
       created_at    INTEGER NOT NULL
     )
+  `);
+  db.exec(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
+
+  db.exec(`
+    UPDATE tasks
+    SET agent_type = 'opencode'
+    WHERE agent_type IS NULL OR agent_type <> 'opencode';
+
+    UPDATE templates
+    SET agent_type = 'opencode'
+    WHERE agent_type IS NULL OR agent_type <> 'opencode';
+
+    UPDATE projects
+    SET default_agent_type = 'opencode'
+    WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode';
+
+    UPDATE workers
+    SET agent_types_json = '["opencode"]'
+    WHERE agent_types_json IS NULL OR agent_types_json <> '["opencode"]';
   `);
 
   // Task attachments table
@@ -346,7 +396,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         base_branch   TEXT,
         use_worktree  INTEGER,
         worktree_path TEXT,
-        agent_type    TEXT NOT NULL DEFAULT 'copilot',
+        agent_type    TEXT NOT NULL DEFAULT 'opencode',
         archived      INTEGER NOT NULL DEFAULT 0,
         project_id    TEXT NOT NULL DEFAULT 'default',
         group_id      TEXT,
@@ -483,6 +533,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addProjectCol('jira_import_last_total', 'INTEGER');
   await addProjectCol('jira_import_last_created', 'INTEGER');
   await addProjectCol('jira_import_last_skipped', 'INTEGER');
+  await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode'`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
   await pool.query(`
@@ -501,7 +552,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       base_branch   TEXT,
       use_worktree  BOOLEAN,
       worktree_path TEXT,
-      agent_type    TEXT NOT NULL DEFAULT 'copilot',
+      agent_type    TEXT NOT NULL DEFAULT 'opencode',
       archived      BOOLEAN NOT NULL DEFAULT FALSE,
       project_id    TEXT NOT NULL DEFAULT 'default',
       timeout_minutes INTEGER,
@@ -525,7 +576,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addCol('base_branch', 'TEXT');
   await addCol('use_worktree', 'BOOLEAN');
   await addCol('worktree_path', 'TEXT');
-  await addCol('agent_type', "TEXT NOT NULL DEFAULT 'copilot'");
+  await addCol('agent_type', "TEXT NOT NULL DEFAULT 'opencode'");
   await addCol('archived', 'BOOLEAN NOT NULL DEFAULT FALSE');
   await addCol('project_id', "TEXT NOT NULL DEFAULT 'default'");
   await addCol('group_id', 'TEXT');
@@ -546,6 +597,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addCol('worker_attempt', 'INTEGER NOT NULL DEFAULT 0');
   await addCol('labels', "TEXT NOT NULL DEFAULT '[]'");
   await addCol('agent_preference', 'TEXT');
+  await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
@@ -563,6 +615,31 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
+  await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]'`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS worker_task_sessions (
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (task_id, session_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_worker_task_sessions_task_updated ON worker_task_sessions(task_id, updated_at DESC)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS worker_task_commands (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      message TEXT,
+      attachment_ids_json TEXT,
+      request_id TEXT,
+      session_id TEXT,
+      answer TEXT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_worker_task_commands_task_created ON worker_task_commands(task_id, created_at ASC)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_worker_assignment ON tasks(assigned_worker_id, run_requested_at)`);
   await ensurePostgresExternalIdentityIndex(pool);
 
@@ -667,13 +744,19 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       title         TEXT NOT NULL DEFAULT '',
       description   TEXT NOT NULL DEFAULT '',
       priority      TEXT NOT NULL DEFAULT 'medium',
-      agent_type    TEXT NOT NULL DEFAULT 'copilot',
+      agent_type    TEXT NOT NULL DEFAULT 'opencode',
       repo_path     TEXT,
       base_branch   TEXT,
       use_worktree  BOOLEAN,
       created_at    BIGINT NOT NULL
     )
   `);
+  await pool.query(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
+
+  await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS DISTINCT FROM 'opencode'`);
+  await pool.query(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS DISTINCT FROM 'opencode'`);
+  await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode'`);
+  await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]' WHERE agent_types_json IS DISTINCT FROM '["opencode"]'`);
 
   // Task attachments table
   await pool.query(`

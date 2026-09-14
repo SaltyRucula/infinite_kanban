@@ -1,18 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Bot, Check, X, Play, Server, AlertCircle, HardDrive } from 'lucide-react';
-import type { Task, AgentType, AgentInfo } from '@/types';
+import type { Task, AgentType } from '@/types';
 import { api } from '@/lib/api';
 import { useWorkers } from '@/hooks/useWorkers';
-
-const ALL_AGENT_TYPES: { id: AgentType; name: string }[] = [
-  { id: 'claude', name: 'Claude Code' },
-  { id: 'copilot', name: 'GitHub Copilot' },
-  { id: 'codex', name: 'Codex Agent' },
-  { id: 'opencode', name: 'OpenCode' },
-  { id: 'hermes', name: 'Hermes' },
-  { id: 'openclaw', name: 'OpenClaw' },
-  { id: 'grok', name: 'Grok' },
-];
 
 interface AssignWorkerModalProps {
   task: Task | null;
@@ -27,40 +17,26 @@ export function AssignWorkerModal({
   onClose,
   onAssign,
 }: AssignWorkerModalProps) {
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<AgentType>('claude');
+  const [selectedAgent] = useState<AgentType>('opencode');
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { workers } = useWorkers();
 
+  // Filter available registered workers: online + supports opencode agent type
+  const matchingOnlineWorkers = useMemo(() => {
+    return workers.filter(
+      (w) => w.status === 'online' && (!w.agentTypes || w.agentTypes.includes('opencode')),
+    );
+  }, [workers]);
+
   useEffect(() => {
     if (isOpen && task) {
-      void api.getAgents().then(setAgents).catch(console.error);
-      setSelectedAgent(task.agentType || 'claude');
       setSelectedWorkerId(task.assignedWorkerId || null);
       setError(null);
     }
   }, [isOpen, task]);
-
-  // Filter available registered workers: online + supports selected agent type
-  const matchingOnlineWorkers = useMemo(() => {
-    return workers.filter(
-      (w) => w.status === 'online' && w.agentTypes?.includes(selectedAgent),
-    );
-  }, [workers, selectedAgent]);
-
-  // When selected agent changes, verify worker supports it
-  const handleSelectAgent = (agentType: AgentType) => {
-    setSelectedAgent(agentType);
-    if (selectedWorkerId) {
-      const currentWorker = workers.find((w) => w.id === selectedWorkerId);
-      if (!currentWorker || !currentWorker.agentTypes?.includes(agentType) || currentWorker.status !== 'online') {
-        setSelectedWorkerId(null);
-      }
-    }
-  };
 
   if (!isOpen || !task) return null;
 
@@ -127,43 +103,16 @@ export function AssignWorkerModal({
             <div className="flex items-center gap-1.5">
               <Bot className="w-3.5 h-3.5 text-[#00b4d8]" />
               <label className="text-[11px] font-semibold uppercase tracking-[0.05em] text-[#94a3b8]">
-                1. Select Agent Provider
+                Agent Harness
               </label>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
-              {ALL_AGENT_TYPES.map((agent) => {
-                const info = agents.find((a) => a.name === agent.id);
-                const isAvailable = info ? info.available : true;
-                const isSelected = selectedAgent === agent.id;
-
-                return (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    onClick={() => handleSelectAgent(agent.id)}
-                    className={`flex items-center justify-between p-2 rounded-md border text-left transition-colors ${
-                      isSelected
-                        ? 'border-[#00b4d8] bg-[rgba(0,180,216,0.12)]'
-                        : 'border-[#202532] bg-[#14171e] hover:border-[#2c3343]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0 pr-1">
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${
-                          isAvailable ? 'bg-[#34d399]' : 'bg-[#94a3b8]'
-                        }`}
-                      />
-                      <div className="truncate">
-                        <span className="text-[11px] font-medium text-white block truncate">{agent.name}</span>
-                        <span className="text-[9px] font-mono text-[#94a3b8]">({agent.id})</span>
-                      </div>
-                    </div>
-
-                    {isSelected && <Check className="w-3.5 h-3.5 text-[#00b4d8] shrink-0" />}
-                  </button>
-                );
-              })}
+            <div className="p-2.5 rounded-md border border-[#00b4d8]/40 bg-[rgba(0,180,216,0.12)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#34d399]" />
+                <span className="text-[12px] font-medium text-white">OpenCode / Sisyphus Worker</span>
+              </div>
+              <span className="text-[10px] font-mono text-[#00b4d8] uppercase font-semibold">Active</span>
             </div>
           </div>
 
@@ -173,7 +122,7 @@ export function AssignWorkerModal({
               <div className="flex items-center gap-1.5">
                 <Server className="w-3.5 h-3.5 text-emerald-400" />
                 <label className="text-[11px] font-semibold uppercase tracking-[0.05em] text-[#94a3b8]">
-                  2. Assign to Registered Worker
+                  Assign to Registered OpenCode Worker
                 </label>
               </div>
               <span className="text-[10px] text-[#94a3b8]">Optional</span>

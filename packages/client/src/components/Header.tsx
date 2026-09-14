@@ -21,8 +21,11 @@ interface HeaderProps {
   onSortDirChange: (sortDir: SortDir) => void;
   activeAgentTypes: AgentType[];
   activeStatuses: StatusFilter[];
+  availableLabels?: string[];
+  activeLabels?: string[];
   onToggleAgentType: (agentType: AgentType) => void;
   onToggleStatus: (status: StatusFilter) => void;
+  onToggleLabel?: (label: string) => void;
   onClearFilters: () => void;
   onNewTask: () => void;
   onNewGroup: () => void;
@@ -38,11 +41,11 @@ const SORT_OPTIONS: { value: SortBy; label: string }[] = [
   { value: 'status', label: 'Status' },
 ];
 
-export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showArchived, onToggleArchived, sortBy, sortDir, onSortByChange, onSortDirChange, activeAgentTypes, activeStatuses, onToggleAgentType, onToggleStatus, onClearFilters, onNewTask, onNewGroup, onImportJira, title = 'AI Agent Board', onBackToProjects }: HeaderProps) {
+export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showArchived, onToggleArchived, sortBy, sortDir, onSortByChange, onSortDirChange, activeAgentTypes, activeStatuses, availableLabels, activeLabels, onToggleAgentType, onToggleStatus, onToggleLabel, onClearFilters, onNewTask, onNewGroup, onImportJira, title = 'AI Agent Board', onBackToProjects }: HeaderProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuSearchRef = useRef<HTMLInputElement>(null);
-  const hasActiveFilters = activeAgentTypes.length > 0 || activeStatuses.length > 0;
+  const hasActiveFilters = activeAgentTypes.length > 0 || activeStatuses.length > 0 || (activeLabels && activeLabels.length > 0);
   const { status: wsStatus, wasConnected } = useConnectionStatus();
 
   useEffect(() => {
@@ -325,8 +328,11 @@ export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showAr
               <FilterChips
                 activeAgentTypes={activeAgentTypes}
                 activeStatuses={activeStatuses}
+                availableLabels={availableLabels}
+                activeLabels={activeLabels}
                 onToggleAgentType={onToggleAgentType}
                 onToggleStatus={onToggleStatus}
+                onToggleLabel={onToggleLabel}
                 onClear={onClearFilters}
               />
             </div>
@@ -340,8 +346,11 @@ export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showAr
           <FilterChips
             activeAgentTypes={activeAgentTypes}
             activeStatuses={activeStatuses}
+            availableLabels={availableLabels}
+            activeLabels={activeLabels}
             onToggleAgentType={onToggleAgentType}
             onToggleStatus={onToggleStatus}
+            onToggleLabel={onToggleLabel}
             onClear={onClearFilters}
           />
         </div>

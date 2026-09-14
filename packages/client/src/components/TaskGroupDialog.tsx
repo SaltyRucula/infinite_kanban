@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Trash2, ChevronDown, AlertTriangle } from 'lucide-react';
 import type { AgentType, Priority } from '@/types';
 import { MAX_GROUP_CHILDREN, MIN_GROUP_CHILDREN } from '@/types';
-import { AGENT_OPTIONS } from '@/lib/agent-config';
 import { PRIORITY_OPTIONS } from '@/lib/priority-config';
 import { cn, getRepoPathHelpText, getRepoPathPlaceholder, isAbsoluteRepoPath } from '@/lib/utils';
 import { getRecentRepoPaths, addRepoPath } from '@/lib/repo-history';
@@ -43,11 +42,10 @@ interface TaskGroupDialogProps {
   };
 }
 
-const agents = AGENT_OPTIONS;
 const priorities = PRIORITY_OPTIONS;
 
 let nextKey = 0;
-function makeRow(agentType: AgentType = 'copilot', useWorktree = true): ChildRow {
+function makeRow(agentType: AgentType = 'opencode', useWorktree = true): ChildRow {
   return { key: `child-${nextKey++}`, title: '', description: '', agentType, useWorktree };
 }
 
@@ -67,7 +65,7 @@ export function TaskGroupDialog({ open, onClose, onSubmit, editGroup, onEditSubm
   const isEditMode = !!editGroup;
   const hasLockedRepoPath = !!lockedRepoPath;
 
-  const defaultAgent = projectDefaults?.defaultAgentType ?? 'copilot';
+  const defaultAgent = projectDefaults?.defaultAgentType ?? 'opencode';
   const defaultPriorityVal = projectDefaults?.defaultPriority ?? 'medium';
   const defaultBaseBranchVal = projectDefaults?.defaultBaseBranch ?? 'main';
   const defaultUseWorktreeVal = projectDefaults?.defaultUseWorktree ?? true;
@@ -85,7 +83,7 @@ export function TaskGroupDialog({ open, onClose, onSubmit, editGroup, onEditSubm
         key: `child-${nextKey++}`,
         title: c.title,
         description: c.description,
-        agentType: c.agentType || 'copilot',
+    agentType: c.agentType || 'opencode',
         useWorktree: c.useWorktree ?? true,
       })));
     } else if (open && !editGroup) {
@@ -357,16 +355,9 @@ export function TaskGroupDialog({ open, onClose, onSubmit, editGroup, onEditSubm
                           />
                           {/* Agent + Worktree row */}
                           <div className="flex items-center gap-3">
-                            {/* Agent selector */}
-                            <select
-                              value={child.agentType}
-                              onChange={(e) => updateChild(child.key, { agentType: e.target.value as AgentType })}
-                              className="rounded border border-border bg-background px-2 py-1 text-sm"
-                            >
-                              {agents.map((a) => (
-                                <option key={a.value} value={a.value}>{a.emoji} {a.label}</option>
-                              ))}
-                            </select>
+                            <span className="inline-flex items-center rounded border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground font-medium">
+                              OpenCode Worker
+                            </span>
                             {/* Worktree toggle */}
                             <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
                               <input

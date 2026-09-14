@@ -166,13 +166,7 @@ export function TaskQueuePanel({
             className="bg-[#14171e] text-[#e2e8f0] border border-[#202532] rounded px-2 py-1 text-[11px] focus:outline-none focus:border-[#00b4d8]"
           >
             <option value="all">All Workers</option>
-            <option value="claude">Claude</option>
-            <option value="copilot">Copilot</option>
-            <option value="codex">Codex</option>
-            <option value="opencode">OpenCode</option>
-            <option value="hermes">Hermes</option>
-            <option value="openclaw">OpenClaw</option>
-            <option value="grok">Grok</option>
+              <option value="opencode">OpenCode</option>
           </select>
 
           <select
@@ -239,8 +233,14 @@ export function TaskQueuePanel({
 
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="font-mono text-[10px] text-[#94a3b8] bg-[#14171e] px-1.5 py-0.5 rounded border border-[#202532]">
-                          {task.agentType || 'copilot'}
+                          {task.agentType || 'opencode'}
                         </span>
+
+                        {task.labels && task.labels.length > 0 && task.labels.map((lbl) => (
+                          <span key={lbl} className="px-1.5 py-0.5 rounded text-[10px] bg-[#00b4d8]/10 text-[#00b4d8] border border-[#00b4d8]/30 font-medium">
+                            {lbl}
+                          </span>
+                        ))}
 
                         {getPriorityBadge(task.priority)}
 

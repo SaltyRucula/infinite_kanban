@@ -1,44 +1,28 @@
-export interface OpenCodeSessionLike {
-  readonly id: string;
-  readonly title?: string;
-  readonly directory: string;
-  readonly time: { readonly updated: number };
-}
+import type { RegisteredWorkerOpenCodeSession } from '../repositories/worker-types.js';
 
-export interface OpenCodeSessionClient {
-  session: {
-    get(args: { path: { id: string } }): Promise<{ data?: OpenCodeSessionLike }>;
-    list(): Promise<{ data?: readonly OpenCodeSessionLike[] }>;
-  };
-}
+export interface OpenCodeSessionClient {}
 
-export interface ResolvedOpenCodeSession {
+export type ResolvedOpenCodeSession = {
   readonly sessionId: string;
-  readonly directory: string;
-}
+  readonly baseUrl: string;
+};
 
-/**
- * Resolve the OpenCode session backing a task: prefer the live in-memory
- * session (still running), otherwise fall back to the most recently updated
- * OpenCode session whose title matches the task id — OpenCode sessions are
- * created with `title: taskId` and can outlive the task's in-memory entry
- * (e.g. after a failure that did not tear down the remote session).
- */
-export async function resolveTaskOpenCodeSession(
-  client: OpenCodeSessionClient,
-  taskId: string,
+export { type RegisteredWorkerOpenCodeSession };
+
+export function resolveTaskOpenCodeSession(
+  sessions: readonly RegisteredWorkerOpenCodeSession[],
   liveSessionId: string | null,
-): Promise<ResolvedOpenCodeSession | null> {
+): ResolvedOpenCodeSession | null {
+  if (sessions.length === 0) return null;
+
   if (liveSessionId) {
-    const live = await client.session.get({ path: { id: liveSessionId } });
-    if (live.data) return { sessionId: liveSessionId, directory: live.data.directory };
+    const live = sessions.find((session) => session.sessionId === liveSessionId);
+    if (live) {
+      return { sessionId: live.sessionId, baseUrl: live.baseUrl };
+    }
   }
 
-  const list = await client.session.list();
-  const matches = (list.data ?? []).filter((session) => session.title === taskId);
-  if (matches.length === 0) return null;
-
-  const latest = matches.reduce((newest, candidate) =>
-    candidate.time.updated > newest.time.updated ? candidate : newest);
-  return { sessionId: latest.id, directory: latest.directory };
+  const newest = sessions.reduce((latest, candidate) =>
+    candidate.updatedAt > latest.updatedAt ? candidate : latest);
+  return { sessionId: newest.sessionId, baseUrl: newest.baseUrl };
 }

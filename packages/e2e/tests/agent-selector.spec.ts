@@ -84,10 +84,10 @@ async function openAgentDropdown(page: Page) {
 }
 
 // ---------------------------------------------------------------------------
-// Tests – TaskDialog agent selector
+// Tests – TaskDialog agent engine & labels
 // ---------------------------------------------------------------------------
 
-test.describe('Agent Selector in TaskDialog', () => {
+test.describe('OpenCode Engine and Labels in TaskDialog', () => {
   let createdTaskIds: string[] = [];
 
   test.beforeEach(async ({ page }) => {
@@ -103,54 +103,22 @@ test.describe('Agent Selector in TaskDialog', () => {
     createdTaskIds = [];
   });
 
-  test('shows agent dropdown with all supported agent options', async ({ page }) => {
-    await openCreateDialog(page);
-    const dialog = await openAgentDropdown(page);
-
-    // The dropdown menu should show all supported agent options as buttons
-    // Use role=button filter to avoid matching the trigger button text
-    const dropdownOptions = dialog.locator('[class*="popover"] button');
-    await expect(dropdownOptions).toHaveCount(AGENT_LABEL_ORDER.length);
-    for (const [index, label] of AGENT_LABEL_ORDER.entries()) {
-      await expect(dropdownOptions.nth(index)).toContainText(label);
-    }
-  });
-
-  test('clicking an available agent option selects it', async ({ page, request }) => {
-    await openCreateDialog(page);
-    const dialog = await openAgentDropdown(page);
-    const selected = await getPreferredAgent(request);
-    const dropdownOptions = dialog.locator('[class*="popover"] button');
-
-    if (!selected.hasAvailableAgent) {
-      await expect(dropdownOptions).toHaveCount(AGENT_LABEL_ORDER.length);
-      // When no provider is available every option is disabled. The trailing
-      // status text is the provider's reason (e.g. "... not found" or a
-      // test-environment reason) and falls back to "Unavailable" only when the
-      // reason is empty, so assert the disabled state rather than the label.
-      for (let i = 0; i < AGENT_LABEL_ORDER.length; i++) {
-        await expect(dropdownOptions.nth(i)).toBeDisabled();
-      }
-      return;
-    }
-
-    await dropdownOptions.filter({ hasText: selected.label }).first().click();
-
-    // The dropdown button should now show the selected agent.
-    const agentLabel = dialog.getByText('Agent', { exact: true });
-    const agentButton = agentLabel.locator('..').locator('button').first();
-    await expect(agentButton).toContainText(selected.label);
-  });
-
-  test('default agent selection follows provider availability', async ({ page, request }) => {
+  test('shows static OpenCode engine label and allows editing labels', async ({ page }) => {
     await openCreateDialog(page);
     const dialog = page.locator('[role="dialog"]');
-    const expected = await getPreferredAgent(request);
 
-    // If Copilot is unavailable, the dialog defaults to the first available provider.
-    const agentLabel = dialog.getByText('Agent', { exact: true });
-    const agentButton = agentLabel.locator('..').locator('button').first();
-    await expect(agentButton).toContainText(expected.label);
+    await expect(dialog.getByText('OpenCode / Sisyphus Worker')).toBeVisible();
+
+    const title = `LabeledTask ${Date.now()}`;
+    await page.getByPlaceholder('What needs to be done?').fill(title);
+    await page.getByPlaceholder('e.g. frontend, bug, feature (comma-separated)').fill('frontend, e2e-test');
+    await page.getByRole('button', { name: 'Create Task' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Create Task' })).not.toBeVisible({ timeout: 5_000 });
+    const card = page.locator('.group').filter({ hasText: title });
+    await expect(card).toBeVisible();
+    await expect(page.getByText('frontend').first()).toBeVisible();
+    await expect(page.getByText('e2e-test').first()).toBeVisible();
   });
 });
 
@@ -181,7 +149,7 @@ test.describe('Worker Selection in TaskDialog', () => {
     const regRes = await request.post(`${API}/api/workers/register`, {
       data: {
         name: 'OpencodeWorker-1',
-        agentTypes: ['copilot', 'opencode', 'claude'],
+        agentTypes: ['opencode'],
         maxConcurrentTasks: 2,
         hostname: 'opencode-host-1',
       },
@@ -245,11 +213,11 @@ test.describe('Agent Type Badge on Task Cards', () => {
 
   test('agent type badge appears on task card when agentType is set and column is not backlog', async ({ page }) => {
     const title = `BadgeTask ${Date.now()}`;
-    const taskId = await createTaskInProgress(page, title, { agentType: 'copilot' });
+    const taskId = await createTaskInProgress(page, title, { agentType: 'opencode' });
     createdTaskIds.push(taskId);
 
     const card = page.locator('.group').filter({ hasText: title });
-    await expect(card.getByText('copilot')).toBeVisible();
+    await expect(card.getByText('OpenCode')).toBeVisible();
   });
 
   test('agent type badge does NOT appear on backlog cards', async ({ page }) => {
@@ -266,7 +234,7 @@ test.describe('Agent Type Badge on Task Cards', () => {
       await fetch(`/api/tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentType: 'claude' }),
+        body: JSON.stringify({ agentType: 'opencode' }),
       });
     }, { id: taskId });
     if (taskId) createdTaskIds.push(taskId);
@@ -299,12 +267,12 @@ test.describe('Agent Panel Header', () => {
     createdTaskIds = [];
   });
 
-  test('shows the agent type emoji and label when task has agentType', async ({ page }) => {
+  test('shows the agent type label when task has agentType', async ({ page }) => {
     const title = `PanelAgent ${Date.now()}`;
-    const taskId = await createTaskInProgress(page, title, { agentType: 'copilot' });
+    const taskId = await createTaskInProgress(page, title, { agentType: 'opencode' });
     createdTaskIds.push(taskId);
 
     await page.getByText(title).first().click();
-    await expect(page.locator('span').filter({ hasText: 'copilot' }).first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('span').filter({ hasText: 'OpenCode' }).first()).toBeVisible({ timeout: 5_000 });
   });
 });

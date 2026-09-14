@@ -40,6 +40,7 @@ type TaskSubmitData = {
   baseBranch?: string;
   useWorktree?: boolean;
   timeoutMinutes?: number | null;
+  labels?: string[];
 };
 
 export function BoardPage({
@@ -89,6 +90,15 @@ export function BoardPage({
   const [activeStatuses, setActiveStatuses] = useState<StatusFilter[]>(
     () => { try { return JSON.parse(localStorage.getItem(SK_FILTER_STATUSES) || '[]'); } catch { return []; } }
   );
+  const [activeLabels, setActiveLabels] = useState<string[]>([]);
+
+  const availableLabels = useMemo(() => Array.from(new Set(tasks.flatMap((t) => t.labels || []))), [tasks]);
+
+  const handleToggleLabel = useCallback((label: string) => {
+    setActiveLabels((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
+    );
+  }, []);
 
   // Debounce search query
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
@@ -154,7 +164,7 @@ export function BoardPage({
     setSelectedTaskId(task.id);
   }, []);
 
-  // Filter tasks by search query, agent type, and status
+  // Filter tasks by search query, agent type, status, and labels
   const filteredTasks = useMemo(() => {
     let result = tasks;
 
@@ -162,7 +172,10 @@ export function BoardPage({
     if (debouncedSearchQuery.trim()) {
       const q = debouncedSearchQuery.toLowerCase();
       result = result.filter(
-        (t) => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q) ||
+          (t.labels && t.labels.some((l) => l.toLowerCase().includes(q)))
       );
     }
 
@@ -177,8 +190,13 @@ export function BoardPage({
       result = result.filter((t) => matchingStatuses.includes(t.agentStatus));
     }
 
+    // Label filter (OR within group)
+    if (activeLabels.length > 0) {
+      result = result.filter((t) => t.labels && t.labels.some((lbl) => activeLabels.includes(lbl)));
+    }
+
     return result;
-  }, [tasks, debouncedSearchQuery, activeAgentTypes, activeStatuses]);
+  }, [tasks, debouncedSearchQuery, activeAgentTypes, activeStatuses, activeLabels]);
 
   // Sort comparator
   const sortTasks = useCallback((a: Task, b: Task): number => {
@@ -217,6 +235,7 @@ export function BoardPage({
   const handleClearFilters = useCallback(() => {
     setActiveAgentTypes([]);
     setActiveStatuses([]);
+    setActiveLabels([]);
   }, []);
 
   const handleTaskClick = useCallback((task: Task) => {
@@ -259,6 +278,7 @@ export function BoardPage({
   const handleCreateTask = useCallback((task: TaskSubmitData) => {
     return addTask({
       ...task,
+      labels: [],
       projectId: project.id,
     });
   }, [addTask, project.id]);
@@ -394,8 +414,11 @@ export function BoardPage({
         onSortDirChange={setSortDir}
         activeAgentTypes={activeAgentTypes}
         activeStatuses={activeStatuses}
+        availableLabels={availableLabels}
+        activeLabels={activeLabels}
         onToggleAgentType={handleToggleAgentType}
         onToggleStatus={handleToggleStatus}
+        onToggleLabel={handleToggleLabel}
         onClearFilters={handleClearFilters}
         onNewTask={handleOpenDialog}
         onNewGroup={handleOpenGroupDialog}

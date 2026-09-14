@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
-import type { Task, Priority, ColumnId, AgentStatus, AgentType, AgentEvent } from '../types.js';
+import type { Task, Priority, ColumnId, AgentStatus, AgentEvent } from '../types.js';
 import type { TaskRepository } from './types.js';
-import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, CLAIMABLE_AGENT_STATUS_SQL_LIST } from '@ai-agent-board/shared/constants.js';
+import { isValidPriority, isValidColumnId, isValidAgentStatus, coerceAgentType, CLAIMABLE_AGENT_STATUS_SQL_LIST } from '@ai-agent-board/shared/constants.js';
 import { errorMessage } from '../utils.js';
 
 interface TaskRow {
@@ -61,11 +61,6 @@ function rowToTask(row: TaskRow): Task {
     row.agent_status = 'idle';
   }
 
-  if (!isValidAgentType(row.agent_type)) {
-    console.warn(`[postgres] Invalid agent_type in database: ${row.agent_type} for task ${row.id}, using 'copilot' as default`);
-    row.agent_type = 'copilot';
-  }
-
   return {
     id: row.id,
     projectId: row.project_id,
@@ -82,7 +77,7 @@ function rowToTask(row: TaskRow): Task {
     baseBranch: row.base_branch ?? undefined,
     useWorktree: row.use_worktree ?? undefined,
     worktreePath: row.worktree_path ?? undefined,
-    agentType: row.agent_type as AgentType,
+    agentType: coerceAgentType(row.agent_type),
     archived: row.archived,
     groupId: row.group_id ?? undefined,
     groupOrder: row.group_order ?? undefined,
@@ -139,7 +134,7 @@ export class PostgresTaskRepository implements TaskRepository {
         task.priority,
         task.columnId,
         task.agentStatus,
-        task.agentType ?? 'copilot',
+         task.agentType ?? 'opencode',
         task.createdAt,
         task.startedAt ?? null,
         task.completedAt ?? null,

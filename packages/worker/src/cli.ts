@@ -11,13 +11,24 @@ import {
   WORKER_ASSIGNMENT_POLL_INTERVAL_MS,
   WORKER_HEARTBEAT_INTERVAL_MS,
 } from '@ai-agent-board/shared/constants.js';
-import { claimTask, completeTaskFailure, fetchAssignments, request, requestWithLoggedFailure, sendEvent, type Config } from './api.js';
+import {
+  claimTask,
+  completeTaskFailure,
+  fetchAssignments,
+  pollTaskCommands,
+  registerTaskSession,
+  request,
+  requestWithLoggedFailure,
+  sendEvent,
+  type Config,
+} from './api.js';
 import {
   parseWorkspaceSettings,
   runOpenCodeTask,
+  type OpenCodeRunResult,
   type RunnerProfile,
 } from './local-runner.js';
-import { runAgentSdkTask } from './sdk-runner.js';
+import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
 
 type Args = Readonly<Record<string, string>>;
 const configPath = path.join(os.homedir(), '.agentboard-worker', 'config.json');
@@ -122,6 +133,53 @@ function assertNever(value: never): never {
   throw new Error(`unsupported runner kind: ${String(value)}`);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type CommandAwareTaskRun = {
+  readonly done: Promise<SdkRunResult | OpenCodeRunResult>;
+  sendMessage(message: string, attachmentIds?: readonly string[]): Promise<void>;
+  abort(): Promise<void>;
+};
+
+async function runCommandLoop(
+  config: Config,
+  taskId: string,
+  claimToken: string,
+  run: CommandAwareTaskRun,
+  workspacePath: string,
+  signal: AbortSignal,
+): Promise<void> {
+  while (!signal.aborted) {
+    const commands = await pollTaskCommands(config, taskId, claimToken);
+    if (commands) {
+      for (const command of commands) {
+        if (command.type === 'cancel') {
+          await run.abort().catch((error: unknown) => {
+            console.error(`[worker] cancel command failed: ${safeWorkerError(error, workspacePath)}`);
+          });
+          continue;
+        }
+        if (command.type === 'message') {
+          const message = typeof command.message === 'string' ? command.message.trim() : '';
+          if (!message) continue;
+          await run.sendMessage(message, command.attachmentIds).catch((error: unknown) => {
+            console.error(`[worker] follow-up command failed: ${safeWorkerError(error, workspacePath)}`);
+          });
+          continue;
+        }
+        const answer = typeof command.answer === 'string' ? command.answer.trim() : '';
+        if (!answer) continue;
+        await run.sendMessage(answer).catch((error: unknown) => {
+          console.error(`[worker] clarification command failed: ${safeWorkerError(error, workspacePath)}`);
+        });
+      }
+    }
+    await sleep(750);
+  }
+}
+
 async function executeTask(
   config: Config,
   task: WorkerTaskAssignment,
@@ -134,15 +192,41 @@ async function executeTask(
     await sendEvent(config, task, claimToken, event);
   };
 
-  const result = await (() => {
+  const result = await (async (): Promise<SdkRunResult | OpenCodeRunResult> => {
     switch (runner.kind) {
-      case 'agent-sdk':
-        return runAgentSdkTask({
+      case 'agent-sdk': {
+        const live = await startAgentSdkTask({
           task,
           workingDirectory: workspacePath,
           sendEvent: sendTaskEvent,
         });
-      case 'opencode-run':
+        if (live.sessionId && live.baseUrl) {
+          await registerTaskSession(config, task.id, claimToken, live.sessionId, live.baseUrl);
+        }
+        const run: CommandAwareTaskRun = {
+          done: live.done,
+          sendMessage: (message, attachmentIds) => live.sendMessage(message, attachmentIds),
+          abort: () => live.abort(),
+        };
+        const control = new AbortController();
+        const onAbort = (): void => {
+          control.abort();
+          void live.abort();
+        };
+        if (abortSignal.aborted) onAbort();
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+        try {
+          const loop = runCommandLoop(config, task.id, claimToken, run, workspacePath, control.signal);
+          const done = await live.done;
+          control.abort();
+          await loop;
+          return done;
+        } finally {
+          abortSignal.removeEventListener('abort', onAbort);
+          control.abort();
+        }
+      }
+      case 'opencode-run': {
         return runOpenCodeTask({
           task,
           workspacePath,
@@ -150,6 +234,7 @@ async function executeTask(
           sendEvent: sendTaskEvent,
           abortSignal,
         });
+      }
       default:
         return assertNever(runner);
     }

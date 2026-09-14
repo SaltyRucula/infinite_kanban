@@ -152,7 +152,7 @@ export class PostgresTaskGroupRepository implements TaskGroupRepository {
              created_at, repo_path, base_branch, use_worktree, branch_name, archived, group_id, group_order, labels, agent_preference)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
           [task.id, task.projectId, task.title, task.description, task.priority, task.columnId, task.agentStatus,
-           task.agentType ?? 'copilot', task.createdAt, task.repoPath ?? null,
+            task.agentType ?? 'opencode', task.createdAt, task.repoPath ?? null,
            task.baseBranch ?? null, task.useWorktree ?? null, task.branchName ?? null,
             false, group.id, task.groupOrder ?? i, JSON.stringify(task.labels ?? []), task.agentPreference ?? null],
         );

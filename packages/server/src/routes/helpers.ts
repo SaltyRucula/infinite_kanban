@@ -600,7 +600,7 @@ export function buildTask(body: Record<string, any>): Task {
     priority: priority || 'medium',
     columnId: columnId || 'backlog',
     agentStatus: 'idle',
-    agentType: agentType || 'copilot',
+    agentType: agentType || 'opencode',
     createdAt: Date.now(),
     branchName: branchName || undefined,
     baseBranch: baseBranch || undefined,

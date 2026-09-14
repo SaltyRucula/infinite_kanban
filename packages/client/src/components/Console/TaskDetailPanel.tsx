@@ -177,7 +177,7 @@ export function TaskDetailPanel({
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-medium bg-[#14171e] text-[#e2e8f0] border border-[#2c3343] hover:bg-[#1b1f2b] transition-colors"
           >
             <Bot className="w-3.5 h-3.5 text-[#00b4d8]" />
-            Worker: {task.agentType || 'copilot'}
+              Worker: {task.agentType || 'opencode'}
           </button>
 
           <button

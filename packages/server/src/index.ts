@@ -147,7 +147,7 @@ const agentManager = new AgentManager();
   app.use('/api/orchestrations', createOrchestrationsRouter(taskRepo, projectRepo, agentManager));
   app.use('/api/jira', createJiraRouter(projectRepo, jiraImportExecutor));
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo));
-  app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo));
+  app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));
   app.use('/api/tasks', createGitRouter(taskRepo, agentManager));
   app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo));
   app.post('/api/tasks/:id/assign', async (req, res, next) => {

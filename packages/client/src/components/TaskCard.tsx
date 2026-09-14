@@ -206,13 +206,19 @@ function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarc
 
         {/* Footer */}
         <div className="mt-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {/* Agent type badge */}
             {task.agentType && task.columnId !== 'backlog' && (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground font-medium">
                 {agentDisplay?.emoji} {agentDisplay?.label}
               </span>
             )}
+            {/* Task labels */}
+            {task.labels && task.labels.length > 0 && task.labels.map((lbl) => (
+              <span key={lbl} className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[9px] font-medium text-primary">
+                {lbl}
+              </span>
+            ))}
           </div>
 
           <div className="flex items-center gap-1.5">

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import type { TaskTemplate, Priority, AgentType } from '../types.js';
 import type { TemplateRepository } from './template-types.js';
+import { coerceAgentType } from '@ai-agent-board/shared/constants.js';
 
 interface TemplateRow {
   id: string;
@@ -22,7 +23,7 @@ function rowToTemplate(row: TemplateRow): TaskTemplate {
     title: row.title,
     description: row.description,
     priority: row.priority,
-    agentType: row.agent_type,
+    agentType: coerceAgentType(row.agent_type),
     repoPath: row.repo_path ?? undefined,
     baseBranch: row.base_branch ?? undefined,
     useWorktree: row.use_worktree != null ? Boolean(row.use_worktree) : undefined,

@@ -349,7 +349,7 @@ export function WorkerConsole({
         open={newTaskDialogOpen}
         onClose={() => setNewTaskDialogOpen(false)}
         onSubmit={async (data) => {
-          const newTask = await addTask({ ...data, projectId: project.id });
+          const newTask = await addTask({ ...data, labels: [], projectId: project.id });
           if (!newTask) return undefined;
           setNewTaskDialogOpen(false);
           return newTask;

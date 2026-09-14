@@ -74,7 +74,7 @@ export function createTemplateRouter(templateRepo: TemplateRepository): Router {
       title: (title || '').trim(),
       description: (description || '').trim(),
       priority: priority || 'medium',
-      agentType: agentType || 'copilot',
+      agentType: agentType || 'opencode',
       repoPath: typeof repoPath === 'string' ? expandTilde(repoPath) : undefined,
       baseBranch: baseBranch || undefined,
       useWorktree: useWorktree ?? undefined,

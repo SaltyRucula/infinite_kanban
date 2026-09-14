@@ -26,13 +26,25 @@ export function statusFilterToStatuses(filter: StatusFilter): AgentStatus[] {
 interface FilterChipsProps {
   activeAgentTypes: AgentType[];
   activeStatuses: StatusFilter[];
+  availableLabels?: string[];
+  activeLabels?: string[];
   onToggleAgentType: (agentType: AgentType) => void;
   onToggleStatus: (status: StatusFilter) => void;
+  onToggleLabel?: (label: string) => void;
   onClear: () => void;
 }
 
-export function FilterChips({ activeAgentTypes, activeStatuses, onToggleAgentType, onToggleStatus, onClear }: FilterChipsProps) {
-  const hasActiveFilters = activeAgentTypes.length > 0 || activeStatuses.length > 0;
+export function FilterChips({
+  activeAgentTypes,
+  activeStatuses,
+  availableLabels = [],
+  activeLabels = [],
+  onToggleAgentType,
+  onToggleStatus,
+  onToggleLabel,
+  onClear,
+}: FilterChipsProps) {
+  const hasActiveFilters = activeAgentTypes.length > 0 || activeStatuses.length > 0 || activeLabels.length > 0;
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
@@ -70,6 +82,27 @@ export function FilterChips({ activeAgentTypes, activeStatuses, onToggleAgentTyp
           {chip.label}
         </button>
       ))}
+
+      {/* Label chips */}
+      {availableLabels.length > 0 && (
+        <>
+          <span className="mx-0.5 h-4 w-px bg-zinc-700" />
+          {availableLabels.map((lbl) => (
+            <button
+              key={lbl}
+              onClick={() => onToggleLabel?.(lbl)}
+              className={cn(
+                'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                activeLabels.includes(lbl)
+                  ? 'border-cyan-500 bg-cyan-500/20 text-cyan-300'
+                  : 'border-zinc-700 bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
+              )}
+            >
+              #{lbl}
+            </button>
+          ))}
+        </>
+      )}
 
       {/* Clear button */}
       {hasActiveFilters && (

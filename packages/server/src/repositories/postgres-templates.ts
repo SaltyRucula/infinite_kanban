@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
-import type { TaskTemplate, Priority, AgentType } from '../types.js';
+import type { TaskTemplate, Priority } from '../types.js';
 import type { TemplateRepository } from './template-types.js';
-import { isValidPriority, isValidAgentType } from '@ai-agent-board/shared/constants.js';
+import { isValidPriority, coerceAgentType } from '@ai-agent-board/shared/constants.js';
 
 interface TemplateRow {
   id: string;
@@ -23,7 +23,7 @@ function rowToTemplate(row: TemplateRow): TaskTemplate {
     title: row.title,
     description: row.description,
     priority: (isValidPriority(row.priority) ? row.priority : 'medium') as Priority,
-    agentType: (isValidAgentType(row.agent_type) ? row.agent_type : 'copilot') as AgentType,
+    agentType: coerceAgentType(row.agent_type),
     repoPath: row.repo_path ?? undefined,
     baseBranch: row.base_branch ?? undefined,
     useWorktree: row.use_worktree ?? undefined,

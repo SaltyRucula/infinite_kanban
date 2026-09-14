@@ -8,6 +8,17 @@ import type { TaskRepository } from '../src/repositories/types.js';
 import type { WorkerRepository } from '../src/repositories/worker-types.js';
 import type { AgentEvent, Task, Worker } from '../src/types.js';
 
+type QueuedWorkerCommand = {
+  readonly id: string;
+  readonly type: 'message' | 'clarification' | 'cancel';
+  readonly createdAt: number;
+  readonly message?: string;
+  readonly attachmentIds?: readonly string[];
+  readonly requestId?: string;
+  readonly sessionId?: string;
+  readonly answer?: string;
+};
+
 const worker: Worker = {
   id: 'worker-1',
   name: 'worker',
@@ -70,6 +81,9 @@ class FakeTaskRepository implements TaskRepository {
 }
 
 class FakeWorkerRepository implements WorkerRepository {
+  readonly sessions: Array<{ taskId: string; sessionId: string; baseUrl: string; updatedAt: number }> = [];
+  readonly commands = new Map<string, QueuedWorkerCommand[]>();
+
   async register(): Promise<Worker> { return worker; }
   async heartbeat(): Promise<Worker> { return worker; }
   async getById(): Promise<Worker | undefined> { return worker; }
@@ -78,6 +92,28 @@ class FakeWorkerRepository implements WorkerRepository {
   }
   async list(): Promise<Worker[]> { return [worker]; }
   async markOffline(): Promise<Worker[]> { return []; }
+  async registerTaskSession(taskId: string, sessionId: string, baseUrl: string, updatedAt: number): Promise<void> {
+    this.sessions.push({ taskId, sessionId, baseUrl, updatedAt });
+  }
+  async getTaskSessions(taskId: string): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> {
+    return this.sessions
+      .filter((session) => session.taskId === taskId)
+      .map(({ sessionId, baseUrl, updatedAt }) => ({ sessionId, baseUrl, updatedAt }));
+  }
+  async enqueueTaskCommand(taskId: string, command: QueuedWorkerCommand): Promise<void> {
+    const list = this.commands.get(taskId) ?? [];
+    list.push(command);
+    this.commands.set(taskId, list);
+  }
+  async claimTaskCommands(taskId: string, limit: number): Promise<readonly QueuedWorkerCommand[]> {
+    const list = this.commands.get(taskId) ?? [];
+    const claimed = list.slice(0, limit);
+    this.commands.set(taskId, list.slice(claimed.length));
+    return claimed;
+  }
+  async clearTaskCommands(taskId: string): Promise<void> {
+    this.commands.delete(taskId);
+  }
 }
 
 async function withServer(callback: (baseUrl: string) => Promise<void>): Promise<void> {
@@ -140,4 +176,93 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal('worktreePath' in completion.task, false);
     assert.equal('projectId' in completion.task, false);
   });
+});
+
+test('worker can register a task OpenCode session link and poll queued commands', async () => {
+  const taskRepo = new FakeTaskRepository();
+  const workerRepo = new FakeWorkerRepository();
+  await withServer(async (baseUrl) => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const localUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const claimResponse = await fetch(`${localUrl}/api/workers/me/tasks/task-1/claim`, {
+        method: 'POST',
+        headers: workerHeaders(),
+      });
+      assert.equal(claimResponse.status, 200);
+      const claimBody = await claimResponse.json() as { claimToken: string };
+
+      const registerSession = await fetch(`${localUrl}/api/workers/me/tasks/task-1/session`, {
+        method: 'POST',
+        headers: { ...workerHeaders({ 'x-worker-claim': claimBody.claimToken }), 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4096' }),
+      });
+      assert.equal(registerSession.status, 200);
+      const sessionBody = await registerSession.json() as { success: boolean };
+      assert.equal(sessionBody.success, true);
+      assert.deepEqual(workerRepo.sessions.map(({ taskId, sessionId, baseUrl }) => ({ taskId, sessionId, baseUrl })), [
+        { taskId: 'task-1', sessionId: 'ses_worker_1', baseUrl: 'http://127.0.0.1:4096' },
+      ]);
+
+      await workerRepo.enqueueTaskCommand('task-1', {
+        id: 'cmd-1',
+        type: 'message',
+        message: 'follow-up',
+        createdAt: Date.now(),
+      });
+
+      const poll = await fetch(`${localUrl}/api/workers/me/tasks/task-1/commands`, {
+        headers: workerHeaders({ 'x-worker-claim': claimBody.claimToken }),
+      });
+      assert.equal(poll.status, 200);
+      const commandBody = await poll.json() as { commands: readonly QueuedWorkerCommand[] };
+      assert.equal(commandBody.commands.length, 1);
+      assert.equal(commandBody.commands[0]?.type, 'message');
+
+      const pollAgain = await fetch(`${localUrl}/api/workers/me/tasks/task-1/commands`, {
+        headers: workerHeaders({ 'x-worker-claim': claimBody.claimToken }),
+      });
+      assert.equal(pollAgain.status, 200);
+      const commandBodyAgain = await pollAgain.json() as { commands: readonly QueuedWorkerCommand[] };
+      assert.equal(commandBodyAgain.commands.length, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+});
+
+test('worker session registration rejects non-loopback OpenCode base URLs', async () => {
+  const taskRepo = new FakeTaskRepository();
+  const workerRepo = new FakeWorkerRepository();
+  const app = express();
+  app.use(express.json());
+  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const claimResponse = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/claim`, {
+      method: 'POST',
+      headers: workerHeaders(),
+    });
+    assert.equal(claimResponse.status, 200);
+    const claimBody = await claimResponse.json() as { claimToken: string };
+
+    const registerSession = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/session`, {
+      method: 'POST',
+      headers: { ...workerHeaders({ 'x-worker-claim': claimBody.claimToken }), 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'ses_worker_1', baseUrl: 'http://192.168.1.10:4096' }),
+    });
+    assert.equal(registerSession.status, 400);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });

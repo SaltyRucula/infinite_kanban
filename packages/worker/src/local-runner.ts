@@ -170,6 +170,20 @@ export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
 
 export async function runOpenCodeTask(input: RunOpenCodeTaskInput): Promise<OpenCodeRunResult> {
   const spawnFn = input.spawnFn ?? defaultSpawn;
+  const runnerName = input.runner.agent.length > 0
+    ? `${input.runner.agent[0].toUpperCase()}${input.runner.agent.slice(1)}`
+    : input.runner.agent;
+  const startEvent: AgentEvent = {
+    id: uuid(),
+    taskId: input.task.id,
+    type: 'thinking',
+    content: `Starting local ${runnerName} runner…`,
+    timestamp: Date.now(),
+  };
+  void input.sendEvent(startEvent).catch((error: unknown) => {
+    console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+
   const args: readonly string[] = [
     'run',
     '--agent',

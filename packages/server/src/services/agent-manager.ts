@@ -15,9 +15,9 @@ import type {
   TaskClarificationAnswer,
 } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
-import type { AgentProvider, AgentSession, AgentInfo, AgentAttachment } from '@codewithdan/agent-sdk-core';
+import type { AgentProvider, AgentSession, AgentAttachment } from '@codewithdan/agent-sdk-core';
+import type { AgentInfo } from '../../../../shared/types.js';
 import type { AgentEvent as CoreAgentEvent } from '@codewithdan/agent-sdk-core';
-import { CopilotProvider, ClaudeProvider, CodexProvider, HermesProvider, OpenClawProvider, GrokProvider } from '@codewithdan/agent-sdk-core';
 import { NonDestructiveOpenCodeProvider } from '../opencode/non-destructive-provider.js';
 import { broadcast } from '../websocket.js';
 import { UPLOADS_DIR } from '../routes/attachments.js';
@@ -265,19 +265,12 @@ export class AgentManager {
   async initialize(): Promise<void> {
     const openCodeConfig = createOpenCodeProviderConfig();
 
-    // Register all providers
-    this.providers.set('copilot', new CopilotProvider());
-    this.providers.set('claude', new ClaudeProvider());
-    this.providers.set('codex', new CodexProvider());
     this.providers.set(
       'opencode',
       openCodeConfig.mode === 'managed'
         ? new NonDestructiveOpenCodeProvider()
         : new NonDestructiveOpenCodeProvider({ baseUrl: openCodeConfig.baseUrl }),
     );
-    this.providers.set('hermes', new HermesProvider());
-    this.providers.set('openclaw', new OpenClawProvider());
-    this.providers.set('grok', new GrokProvider());
 
     // Detect which agents are actually available on this system
     this.availableAgents = await detectAvailableAgents();
@@ -356,7 +349,7 @@ export class AgentManager {
   }
 
   registerProvider(provider: AgentProvider): void {
-    this.providers.set(provider.name, provider);
+    if (provider.name === 'opencode') this.providers.set('opencode', provider);
   }
 
   setAvailableAgents(agents: AgentInfo[]): void {
@@ -846,7 +839,7 @@ export class AgentManager {
   ): void {
     if (this.sessions.has(task.id)) return;
 
-    const agentType = task.agentType || 'copilot';
+    const agentType = task.agentType || 'opencode';
     const sessionStartTime = Date.now();
     let terminated = false;
 

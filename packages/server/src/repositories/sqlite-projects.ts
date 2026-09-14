@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import type { AgentType, ColumnId, Priority, Project, ProjectTaskCounts } from '../types.js';
 import type { ProjectRepository } from './project-types.js';
+import { coerceOptionalAgentType } from '@ai-agent-board/shared/constants.js';
 
 interface ProjectRow {
   id: string;
@@ -45,7 +46,7 @@ function rowToProject(row: ProjectRow, taskCounts?: ProjectTaskCounts): Project 
     isDefault: Boolean(row.is_default),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    defaultAgentType: (row.default_agent_type ?? undefined) as AgentType | undefined,
+    defaultAgentType: coerceOptionalAgentType(row.default_agent_type),
     defaultPriority: (row.default_priority ?? undefined) as Priority | undefined,
     defaultBaseBranch: row.default_base_branch ?? undefined,
     defaultUseWorktree: row.default_use_worktree === null ? undefined : Boolean(row.default_use_worktree),

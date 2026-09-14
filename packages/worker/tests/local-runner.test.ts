@@ -52,9 +52,11 @@ test('runOpenCodeTask spawns opencode run with exact argv, shell:false, and labe
   const spawned = new FakeOpenCodeProcess();
   let command = '';
   let argv: readonly string[] = [];
-  let shellOption: boolean | undefined;
+  let shellOption: string | boolean | undefined;
+  const order: string[] = [];
 
   const spawnFn: OpenCodeSpawn = (nextCommand, nextArgs, options) => {
+    order.push('spawn');
     command = nextCommand;
     argv = nextArgs;
     shellOption = options.shell;
@@ -70,10 +72,15 @@ test('runOpenCodeTask spawns opencode run with exact argv, shell:false, and labe
     task,
     workspacePath: '/tmp/workspace',
     runner: { kind: 'opencode-run', agent: 'sisyphus' },
-    sendEvent: async () => {},
+    sendEvent: async (event) => {
+      order.push(`sendEvent:${event.type}`);
+      assert.equal(event.type, 'thinking');
+      assert.equal(event.content, 'Starting local Sisyphus runner…');
+    },
     spawnFn,
   });
 
+  assert.deepEqual(order, ['sendEvent:thinking', 'spawn']);
   assert.equal(command, 'opencode');
   assert.deepEqual(argv, [
     'run',
@@ -92,6 +99,34 @@ test('runOpenCodeTask spawns opencode run with exact argv, shell:false, and labe
     ].join('\n'),
   ]);
   assert.equal(shellOption, false);
+  assert.equal(result.status, 'complete');
+});
+
+test('runOpenCodeTask continues when the immediate start event upload fails', async () => {
+  const spawned = new FakeOpenCodeProcess();
+  let spawnCount = 0;
+
+  const spawnFn: OpenCodeSpawn = () => {
+    spawnCount += 1;
+    queueMicrotask(() => {
+      spawned.stdout.end();
+      spawned.stderr.end();
+      spawned.emit('close', 0, null);
+    });
+    return spawned;
+  };
+
+  const result = await runOpenCodeTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-run', agent: 'sisyphus' },
+    sendEvent: async () => {
+      throw new Error('event upload failed');
+    },
+    spawnFn,
+  });
+
+  assert.equal(spawnCount, 1);
   assert.equal(result.status, 'complete');
 });
 
@@ -116,6 +151,9 @@ test('runOpenCodeTask maps JSONL output to worker AgentEvents safely', async () 
     workspacePath: '/tmp/workspace',
     runner: { kind: 'opencode-run', agent: 'sisyphus' },
     sendEvent: async (event) => {
+      if (event.content === 'Starting local Sisyphus runner…') {
+        return;
+      }
       events.push({ type: event.type, content: event.content });
     },
     spawnFn,

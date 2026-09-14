@@ -195,7 +195,7 @@ export class SqliteTaskGroupRepository implements TaskGroupRepository {
           priority: task.priority,
           column_id: task.columnId,
           agent_status: task.agentStatus,
-          agent_type: task.agentType ?? 'copilot',
+          agent_type: task.agentType ?? 'opencode',
           created_at: task.createdAt,
           repo_path: task.repoPath ?? null,
           base_branch: task.baseBranch ?? null,
