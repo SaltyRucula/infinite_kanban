@@ -349,10 +349,11 @@ export function WorkerConsole({
         open={newTaskDialogOpen}
         onClose={() => setNewTaskDialogOpen(false)}
         onSubmit={async (data) => {
-          await addTask({ ...data, projectId: project.id, repoPath: project.repoPath || data.repoPath });
+          const newTask = await addTask({ ...data, projectId: project.id });
+          if (!newTask) return undefined;
           setNewTaskDialogOpen(false);
+          return newTask;
         }}
-        lockedRepoPath={project.repoPath}
         projectDefaults={{
           defaultAgentType: project.defaultAgentType,
           defaultPriority: project.defaultPriority,

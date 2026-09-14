@@ -74,7 +74,6 @@ export function BoardPage({
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   useEffect(() => { if (initialTaskId) setSelectedTaskId(initialTaskId); }, [initialTaskId]);
-  const [highlightRequiredFields, setHighlightRequiredFields] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
@@ -250,7 +249,6 @@ export function BoardPage({
   const handleCloseDialog = useCallback(() => {
     setDialogOpen(false);
     setEditingTask(null);
-    setHighlightRequiredFields(false);
   }, []);
 
   const handleEditTask = useCallback((task: Task) => {
@@ -262,9 +260,8 @@ export function BoardPage({
     return addTask({
       ...task,
       projectId: project.id,
-      repoPath: lockedRepoPath || task.repoPath,
     });
-  }, [addTask, project.id, lockedRepoPath]);
+  }, [addTask, project.id]);
 
   const handleCreateGroup = useCallback((group: Parameters<typeof createGroup>[0]) => {
     return createGroup({
@@ -325,9 +322,7 @@ export function BoardPage({
         agentType: task.agentType,
       });
     } else {
-      // Missing config — open edit dialog with required fields highlighted
       setEditingTask(task);
-      setHighlightRequiredFields(true);
       setDialogOpen(true);
     }
   }, [tasks, configureAndRunTask]);
@@ -341,7 +336,6 @@ export function BoardPage({
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
     setEditingTask(task);
-    setHighlightRequiredFields(true);
     setDialogOpen(true);
   }, [tasks]);
 
@@ -357,7 +351,6 @@ export function BoardPage({
     } else if (dialogOpen) {
       setDialogOpen(false);
       setEditingTask(null);
-      setHighlightRequiredFields(false);
     } else if (selectedGroupId) {
       setSelectedGroupId(null);
     } else if (selectedTaskId) {
@@ -439,8 +432,6 @@ export function BoardPage({
         onSubmit={handleCreateTask}
         editTask={editingTask}
         onEditSubmit={updateTask}
-        highlightRequired={highlightRequiredFields}
-        lockedRepoPath={lockedRepoPath}
         projectDefaults={projectDefaults}
       />
 

@@ -1,29 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
   ChevronDown,
+  Server,
+  HardDrive,
+  Check,
 } from 'lucide-react';
 import type { Task, TaskAttachment, ColumnId, AgentType, AgentInfo, Priority } from '@/types';
 import { AGENT_OPTIONS } from '@/lib/agent-config';
 import { PRIORITY_OPTIONS } from '@/lib/priority-config';
-import { cn, getRepoPathHelpText, getRepoPathPlaceholder, isAbsoluteRepoPath, slugify } from '@/lib/utils';
-import { getRecentRepoPaths, addRepoPath } from '@/lib/repo-history';
+import { cn, slugify } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { useWorkers } from '@/hooks/useWorkers';
 import ImageUpload from './ImageUpload';
 
 interface TaskDialogProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (task: { title: string; description: string; priority: Priority; columnId: ColumnId; agentType: AgentType; autoRun?: boolean; repoPath?: string; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null }) => Promise<unknown>;
+  onSubmit: (task: { title: string; description: string; priority: Priority; columnId: ColumnId; agentType: AgentType; autoRun?: boolean; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null }) => Promise<unknown>;
   /** When set, dialog is in edit mode with pre-populated fields */
   editTask?: Task | null;
   /** Called on save in edit mode */
-  onEditSubmit?: (id: string, updates: { title: string; description: string; priority: Priority; agentType: AgentType; repoPath?: string; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null }) => Promise<unknown>;
-  /** When true, highlight missing required fields (e.g. opened from Play button) */
-  highlightRequired?: boolean;
-  /** Project-level repo path that cannot be changed per task. */
-  lockedRepoPath?: string;
+  onEditSubmit?: (id: string, updates: { title: string; description: string; priority: Priority; agentType: AgentType; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null }) => Promise<unknown>;
   /** Project-level task defaults used to prefill create mode (each overridable). */
   projectDefaults?: {
     defaultAgentType?: AgentType;
@@ -36,7 +35,7 @@ interface TaskDialogProps {
 const agents = AGENT_OPTIONS;
 const priorities = PRIORITY_OPTIONS;
 
-export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, highlightRequired, lockedRepoPath, projectDefaults }: TaskDialogProps) {
+export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, projectDefaults }: TaskDialogProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
@@ -44,24 +43,39 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
   const [showPriority, setShowPriority] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
   const [autoRun, setAutoRun] = useState(false);
-  const [repoPath, setRepoPath] = useState('');
   const [branchName, setBranchName] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
   const [useWorktree, setUseWorktree] = useState(false);
   const [timeoutMinutes, setTimeoutMinutes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [pathError, setPathError] = useState('');
   const [pendingImages, setPendingImages] = useState<File[]>([]);
   const [existingAttachments, setExistingAttachments] = useState<TaskAttachment[]>([]);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+
+  const { workers } = useWorkers();
 
   const isEditMode = !!editTask;
-  const hasLockedRepoPath = !!lockedRepoPath;
 
   const defaultAgent = projectDefaults?.defaultAgentType ?? 'copilot';
   const defaultPriority = projectDefaults?.defaultPriority ?? 'medium';
   const defaultBaseBranch = projectDefaults?.defaultBaseBranch ?? 'main';
   const defaultUseWorktree = projectDefaults?.defaultUseWorktree ?? false;
+
+  const matchingOnlineWorkers = useMemo(() => {
+    return workers.filter(
+      (w) => w.status === 'online' && w.agentTypes?.includes(agentType),
+    );
+  }, [workers, agentType]);
+
+  useEffect(() => {
+    if (selectedWorkerId) {
+      const currentWorker = workers.find((w) => w.id === selectedWorkerId);
+      if (!currentWorker || !currentWorker.agentTypes?.includes(agentType) || currentWorker.status !== 'online') {
+        setSelectedWorkerId(null);
+      }
+    }
+  }, [agentType, workers, selectedWorkerId]);
 
   // Pre-populate fields when editing
   useEffect(() => {
@@ -70,21 +84,18 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
       setDescription(editTask.description);
       setPriority(editTask.priority || 'medium');
       setAgentType(editTask.agentType || 'copilot');
-      setRepoPath(lockedRepoPath || editTask.repoPath || '');
+      setSelectedWorkerId(editTask.assignedWorkerId || null);
       setBranchName(editTask.branchName || `task/${slugify(editTask.title)}`);
       setBaseBranch(editTask.baseBranch || 'main');
       setUseWorktree(editTask.useWorktree ?? false);
       setTimeoutMinutes(editTask.timeoutMinutes?.toString() ?? '');
       // Load attachments from server
       api.getAttachments(editTask.id).then(setExistingAttachments).catch(() => setExistingAttachments([]));
-      // Highlight missing path if opened via Play button
-      if (highlightRequired && !editTask.repoPath) {
-        setPathError('Local path is required to run the agent');
-      }
     } else if (open && !editTask) {
       // Opening in create mode — prefill from project defaults (each overridable)
       setPriority(defaultPriority);
       setAgentType(defaultAgent);
+      setSelectedWorkerId(null);
       setBaseBranch(defaultBaseBranch);
       setUseWorktree(defaultUseWorktree);
     } else if (!open) {
@@ -93,27 +104,19 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
       setDescription('');
       setPriority('medium');
       setAgentType('copilot');
+      setSelectedWorkerId(null);
       setShowPriority(false);
       setShowAgent(false);
       setAutoRun(false);
-      setRepoPath('');
       setBranchName('');
       setBaseBranch('main');
       setUseWorktree(false);
       setTimeoutMinutes('');
       setSubmitting(false);
-      setPathError('');
       setPendingImages([]);
       setExistingAttachments([]);
     }
-  }, [editTask, open, highlightRequired, lockedRepoPath, defaultAgent, defaultPriority, defaultBaseBranch, defaultUseWorktree]);
-
-  useEffect(() => {
-    if (open && lockedRepoPath) {
-      setRepoPath(lockedRepoPath);
-      setPathError('');
-    }
-  }, [open, lockedRepoPath]);
+  }, [editTask, open, defaultAgent, defaultPriority, defaultBaseBranch, defaultUseWorktree]);
 
   useEffect(() => {
     if (!open) return;
@@ -144,25 +147,12 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
     e.preventDefault();
     if (!title.trim() || submitting) return;
 
-    // Client-side path validation — required
-    const trimmedPath = (lockedRepoPath || repoPath).trim();
-    if (!trimmedPath) {
-      setPathError('Local path is required');
-      return;
-    }
-    if (!isAbsoluteRepoPath(trimmedPath)) {
-      setPathError('Path must be absolute (use /, ~, D:\\, or \\\\server\\share)');
-      return;
-    }
-    setPathError('');
-
     // Auto-generate branch name from title if using worktree and no custom name set
     const effectiveBranch = useWorktree
       ? (branchName.trim() || `task/${slugify(title.trim())}`)
       : undefined;
 
-    const repoFields = {
-      repoPath: trimmedPath,
+    const gitFields = {
       branchName: effectiveBranch,
       baseBranch: baseBranch.trim() || 'main',
       useWorktree,
@@ -172,26 +162,27 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
     setSubmitting(true);
     try {
       if (isEditMode && onEditSubmit) {
-        if (!hasLockedRepoPath) addRepoPath(trimmedPath);
+        if (selectedWorkerId !== (editTask!.assignedWorkerId || null)) {
+          await api.assignWorker(editTask!.id, selectedWorkerId);
+        }
         const result = await onEditSubmit(editTask!.id, {
           title: title.trim(),
           description: description.trim(),
           priority,
           agentType,
-          ...repoFields,
+          ...gitFields,
         });
         if (result === undefined) return; // Server error — keep dialog open
       } else {
-        if (!hasLockedRepoPath) addRepoPath(trimmedPath);
-        const result = await onSubmit({
+        const result = (await onSubmit({
           title: title.trim(),
           description: description.trim(),
           priority,
           columnId: autoRun ? 'in-progress' : 'backlog',
           agentType,
           autoRun: autoRun || undefined,
-          ...repoFields,
-        }) as Task | undefined;
+          ...gitFields,
+        })) as Task | undefined;
         if (result === undefined) return; // Server error — keep dialog open
 
         // Upload pending images after task creation
@@ -202,6 +193,19 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
             console.warn('Failed to upload images for new task', result.id, uploadErr);
           }
         }
+
+        if (selectedWorkerId && result?.id) {
+          try {
+            await api.assignWorker(result.id, selectedWorkerId);
+            if (autoRun) {
+              await api.runTask(result.id).catch((runErr) => {
+                console.warn('Failed to start task on assigned worker', result.id, runErr);
+              });
+            }
+          } catch (assignErr) {
+            console.warn('Failed to assign worker to new task', result.id, assignErr);
+          }
+        }
       }
 
       // Success — reset and close
@@ -210,7 +214,6 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
       setPriority(defaultPriority);
       setAgentType(defaultAgent);
       setAutoRun(false);
-      setRepoPath('');
       setBranchName('');
       setBaseBranch(defaultBaseBranch);
       setUseWorktree(defaultUseWorktree);
@@ -244,8 +247,6 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
   const selectedPriority = priorities.find((p) => p.value === priority)!;
   const agentAvailability = new Map(availableAgents.map((agent) => [agent.name, agent]));
   const selectedAgentInfo = agentAvailability.get(agentType);
-  const repoPathPlaceholder = getRepoPathPlaceholder();
-  const repoPathHelpText = getRepoPathHelpText();
 
   return (
     <AnimatePresence>
@@ -436,6 +437,83 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
                 </AnimatePresence>
               </div>
 
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <Server className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Assign to Registered Worker</span>
+                  </label>
+                  <span className="text-[10px] text-muted-foreground">Optional</span>
+                </div>
+
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWorkerId(null)}
+                    className={cn(
+                      'w-full flex items-center justify-between p-2.5 rounded-lg border text-left transition-colors',
+                      selectedWorkerId === null
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border bg-background hover:bg-accent'
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <HardDrive className="w-4 h-4 text-primary shrink-0" />
+                      <div>
+                        <span className="text-xs font-medium text-foreground block">
+                          In-Process Server Execution
+                        </span>
+                        <span className="text-[10px] text-muted-foreground block">
+                          Unassigned — handled directly by local server
+                        </span>
+                      </div>
+                    </div>
+                    {selectedWorkerId === null && <Check className="w-4 h-4 text-primary shrink-0" />}
+                  </button>
+
+                  {matchingOnlineWorkers.length === 0 ? (
+                    <div className="p-2.5 rounded-lg bg-muted/30 border border-border text-xs text-muted-foreground text-center italic">
+                      No online registered workers currently support <span className="font-mono text-primary">{selectedAgent.label}</span>.
+                    </div>
+                  ) : (
+                    matchingOnlineWorkers.map((worker) => {
+                      const isWorkerSelected = selectedWorkerId === worker.id;
+
+                      return (
+                        <button
+                          key={worker.id}
+                          type="button"
+                          onClick={() => setSelectedWorkerId(worker.id)}
+                          className={cn(
+                            'w-full flex items-center justify-between p-2.5 rounded-lg border text-left transition-colors',
+                            isWorkerSelected
+                              ? 'border-primary bg-primary/10'
+                              : 'border-border bg-background hover:bg-accent'
+                          )}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#34d399] shrink-0" />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-medium text-foreground truncate">{worker.name}</span>
+                                {worker.hostname && (
+                                  <span className="text-[10px] font-mono text-muted-foreground">({worker.hostname})</span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-muted-foreground block">
+                                Max concurrent: {worker.maxConcurrentTasks}
+                              </span>
+                            </div>
+                          </div>
+
+                          {isWorkerSelected && <Check className="w-4 h-4 text-primary shrink-0" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
               <div>
                 <label htmlFor="task-timeout-minutes" className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   Time limit (minutes)
@@ -473,44 +551,7 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, hi
 
               {/* Repository configuration */}
               <div className="space-y-3 rounded-lg border border-border/50 bg-muted/30 p-3">
-                <div>
-                  <label htmlFor="task-repo-path" className="mb-1 block text-xs font-medium text-muted-foreground">
-                    Local Path <span className="text-red-400">*</span>
-                  </label>
-                    <input
-                      id="task-repo-path"
-                      type="text"
-                      value={repoPath}
-                      onChange={(e) => {
-                        if (hasLockedRepoPath) return;
-                        setRepoPath(e.target.value);
-                        setPathError('');
-                      }}
-                      placeholder={repoPathPlaceholder}
-                      list={hasLockedRepoPath ? undefined : 'task-recent-repo-paths'}
-                      readOnly={hasLockedRepoPath}
-                      aria-readonly={hasLockedRepoPath}
-                      className={`w-full rounded-lg border bg-background px-3 py-1.5 text-sm font-mono placeholder:text-muted-foreground/50 focus:outline-none ${
-                        hasLockedRepoPath
-                          ? 'border-border text-muted-foreground'
-                          : pathError ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-primary'
-                      }`}
-                    />
-                    {pathError && (
-                      <p className="mt-1 text-xs text-red-500">{pathError}</p>
-                    )}
-                    {!pathError && (
-                      <p className="mt-1 text-xs text-muted-foreground/60">
-                        {hasLockedRepoPath ? 'Locked to this Project local path.' : repoPathHelpText}
-                      </p>
-                    )}
-                    {!hasLockedRepoPath && (
-                      <datalist id="task-recent-repo-paths">
-                        {getRecentRepoPaths().map((p) => <option key={p} value={p} />)}
-                      </datalist>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-muted-foreground">Base Branch</label>
                       <input
