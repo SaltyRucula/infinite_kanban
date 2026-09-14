@@ -21,6 +21,7 @@ export type LiveOpenCodeServerTask = {
   readonly done: Promise<OpenCodeRunResult>;
   sendMessage(message: string, attachmentIds?: readonly string[]): Promise<void>;
   abort(): Promise<void>;
+  shutdown(): Promise<void>;
 };
 
 export interface OpenCodeProcess {
@@ -68,7 +69,7 @@ type StartOpenCodeServerTaskInput = {
   readonly spawnFn?: OpenCodeSpawn;
   readonly createClient?: CreateOpenCodeClient;
   readonly baseUrl?: string;
-  readonly abortSignal?: AbortSignal;
+  readonly managedServer?: OpenCodeProcess;
 };
 
 const DEFAULT_SERVER_HOSTNAME = '127.0.0.1';
@@ -211,11 +212,27 @@ export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInpu
   const spawnFn = input.spawnFn ?? defaultSpawn;
   const createClient = input.createClient ?? defaultCreateClient;
 
-  const managedServer = input.baseUrl
-    ? undefined
-    : spawnFn('opencode', ['serve', `--hostname=${DEFAULT_SERVER_HOSTNAME}`, `--port=${DEFAULT_SERVER_PORT}`], { shell: false });
-  const baseUrl = input.baseUrl ?? await waitForManagedServerReady(managedServer as OpenCodeProcess);
-  const client = createClient({ baseUrl, directory: input.workspacePath });
+  const managedServer = input.managedServer ?? (!input.baseUrl
+    ? spawnFn('opencode', ['serve', `--hostname=${DEFAULT_SERVER_HOSTNAME}`, `--port=${DEFAULT_SERVER_PORT}`], { shell: false })
+    : undefined);
+  if (input.baseUrl) {
+    return startOpenCodeServerTaskWithClient({ ...input, baseUrl: input.baseUrl, managedServer, createClient });
+  }
+  if (!managedServer) {
+    throw new Error('failed to start managed opencode server');
+  }
+  const baseUrl = await waitForManagedServerReady(managedServer);
+  return startOpenCodeServerTaskWithClient({ ...input, baseUrl, managedServer, createClient });
+}
+
+type StartOpenCodeServerTaskWithClientInput = StartOpenCodeServerTaskInput & {
+  readonly baseUrl: string;
+  readonly managedServer: OpenCodeProcess | undefined;
+  readonly createClient: CreateOpenCodeClient;
+};
+
+async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskWithClientInput): Promise<LiveOpenCodeServerTask> {
+  const client = input.createClient({ baseUrl: input.baseUrl, directory: input.workspacePath });
 
   const created = await client.session.create({ body: { title: input.task.title } });
   const sessionId = created.data?.id;
@@ -245,16 +262,14 @@ export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInpu
     aborted = true;
     streamAbortController.abort();
     await client.session.abort({ path: { id: sessionId } });
-    managedServer?.kill('SIGTERM');
   };
 
-  const onAbortSignal = (): void => {
-    void abort();
+  const shutdown = async (): Promise<void> => {
+    aborted = true;
+    streamAbortController.abort();
+    await client.session.abort({ path: { id: sessionId } }).catch(() => undefined);
+    input.managedServer?.kill('SIGTERM');
   };
-  if (input.abortSignal) {
-    if (input.abortSignal.aborted) onAbortSignal();
-    input.abortSignal.addEventListener('abort', onAbortSignal, { once: true });
-  }
 
   const done = (async (): Promise<OpenCodeRunResult> => {
     try {
@@ -271,17 +286,13 @@ export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInpu
       return { status: 'failed', error: message, summary: 'OpenCode server task failed' };
     } finally {
       streamAbortController.abort();
-      managedServer?.kill('SIGTERM');
       await streamLoop;
-      if (input.abortSignal) {
-        input.abortSignal.removeEventListener('abort', onAbortSignal);
-      }
     }
   })();
 
   return {
     sessionId,
-    baseUrl,
+    baseUrl: input.baseUrl,
     done,
     sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
       const trimmed = message.trim();
@@ -292,5 +303,6 @@ export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInpu
       });
     },
     abort,
+    shutdown,
   };
 }

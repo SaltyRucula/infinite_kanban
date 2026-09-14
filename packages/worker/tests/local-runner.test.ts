@@ -196,3 +196,62 @@ test('startOpenCodeServerTask forwards follow-up messages and abort to the same 
   });
   assert.deepEqual(state.aborts, ['ses_worker_1']);
 });
+
+test('startOpenCodeServerTask keeps a managed server alive after prompt completion', async () => {
+  const spawned = new FakeOpenCodeProcess();
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+
+  const live = await startOpenCodeServerTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    managedServer: spawned,
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+
+  await live.done;
+
+  assert.equal(spawned.killCalled, false);
+});
+
+test('startOpenCodeServerTask keeps a managed server alive when aborting the session', async () => {
+  const spawned = new FakeOpenCodeProcess();
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+
+  const live = await startOpenCodeServerTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    managedServer: spawned,
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+
+  await live.abort();
+
+  assert.equal(spawned.killCalled, false);
+  assert.deepEqual(state.aborts, ['ses_worker_1']);
+});
+
+test('startOpenCodeServerTask stops a managed server on worker shutdown signal', async () => {
+  const spawned = new FakeOpenCodeProcess();
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+
+  const live = await startOpenCodeServerTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    managedServer: spawned,
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+
+  await live.shutdown();
+
+  assert.equal(spawned.killCalled, true);
+  await live.done;
+});
