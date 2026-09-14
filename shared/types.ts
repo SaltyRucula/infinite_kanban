@@ -56,6 +56,9 @@ export interface Task {
   summary?: string | null;
   runRequestedAt?: number;
   runClaimedAt?: number;
+  workerClaimTokenHash?: string | null;
+  workerClaimedAt?: number | null;
+  workerLeaseExpiresAt?: number | null;
   externalSource?: string;
   externalKey?: string;
   provenance?: TaskProvenance;
