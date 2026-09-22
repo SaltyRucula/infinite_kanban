@@ -785,6 +785,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
 
   const failedWithoutDetails = task?.agentStatus === 'failed' && !latestError;
   const clarificationAcceptingResponses = task?.agentStatus === 'awaiting_clarification';
+  const canFollowUp = agentStatus === 'executing' || agentStatus === 'complete' || agentStatus === 'failed';
 
   const handleSendFollowUp = async () => {
     if (!task || (!followUpMessage.trim() && followUpImages.length === 0) || sending) return;
@@ -1177,7 +1178,11 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
 
           {task.agentStatus === 'failed' && (
             <FailureSummary
-              message={latestError?.content || 'The agent failed before it wrote an error log. Retry or reconfigure the task to capture the current failure reason.'}
+              message={
+                latestError?.content
+                || task.summary
+                || 'The agent failed before it wrote an error log. Retry or reconfigure the task to capture the current failure reason.'
+              }
             />
           )}
 
@@ -1483,7 +1488,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
               <button
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
-                disabled={agentStatus !== 'executing' || sending}
+                disabled={!canFollowUp || sending}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Attach images"
               >
@@ -1513,12 +1518,12 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
                   }
                 }}
                 placeholder="Send a message to the agent..."
-                disabled={agentStatus !== 'executing' || sending}
+                disabled={!canFollowUp || sending}
                 className="flex-1 rounded-md border border-border bg-muted px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-40 disabled:cursor-not-allowed"
               />
               <button
                 onClick={handleSendFollowUp}
-                disabled={agentStatus !== 'executing' || sending || (!followUpMessage.trim() && followUpImages.length === 0)}
+                disabled={!canFollowUp || sending || (!followUpMessage.trim() && followUpImages.length === 0)}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Send message"
               >

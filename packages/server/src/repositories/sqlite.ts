@@ -213,7 +213,7 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   async getWorkerAssignments(workerId: string, now: number): Promise<Task[]> {
-    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id = ? AND run_requested_at IS NOT NULL AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < ?) ORDER BY run_requested_at`).all(workerId, now) as TaskRow[]).map(rowToTask);
+    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id = ? AND run_requested_at IS NOT NULL AND agent_status IN ('idle','planning') AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < ?) ORDER BY run_requested_at`).all(workerId, now) as TaskRow[]).map(rowToTask);
   }
 
   async claimWorkerTask(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<Task | undefined> {

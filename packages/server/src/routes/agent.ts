@@ -273,8 +273,36 @@ export function createAgentRouter(
       return;
     }
 
-    if (!agentManager.isRunning(task.id)) {
-      res.status(409).json({ error: 'no running agent for this task' });
+    if (!agentManager.isRunning(task.id) && !hasActiveWorkerLease(task)) {
+      // No live session (task is idle/complete/failed and no worker holds a
+      // lease on it) — this is the common case for a worker-driven agent that
+      // already ended its turn while asking a clarifying question. Rather than
+      // reject the reply, fold it into the task description as the next round
+      // of context and kick off a fresh run, so answering on the board always
+      // makes forward progress instead of dead-ending in "no running agent".
+      if (!task.assignedWorkerId) {
+        res.status(409).json({ error: 'no running agent for this task, and no worker assigned to start a fresh run' });
+        return;
+      }
+      const trimmed = message.trim();
+      const updatedDescription = `${task.description}\n\n---\nHuman follow-up:\n${trimmed}`;
+      agentManager.resetEvents(task.id);
+      await repo.requestRun(task.id, Date.now());
+      const updated = await repo.update(task.id, {
+        description: updatedDescription,
+        agentStatus: 'planning',
+        columnId: 'in-progress',
+        startedAt: Date.now(),
+        completedAt: undefined,
+        summary: undefined,
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+      broadcastTaskUpdate(updated);
+      broadcast({ type: 'agent_follow_up', payload: { taskId: task.id, message: trimmed, attachmentIds: validIds } });
+      res.json({ success: true, code: 'requeued_with_followup' });
       return;
     }
 

@@ -176,7 +176,7 @@ export class PostgresTaskRepository implements TaskRepository {
   }
 
   async getWorkerAssignments(workerId: string, now: number): Promise<Task[]> {
-    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id = $1 AND run_requested_at IS NOT NULL AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < $2) ORDER BY run_requested_at`, [workerId, now]);
+    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id = $1 AND run_requested_at IS NOT NULL AND agent_status IN ('idle','planning') AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < $2) ORDER BY run_requested_at`, [workerId, now]);
     return rows.map(rowToTask);
   }
 

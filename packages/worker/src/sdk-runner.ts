@@ -12,6 +12,12 @@ import type {
 } from '@ai-agent-board/shared/types.js';
 import { isValidAgentType } from '@ai-agent-board/shared/constants.js';
 
+const SESSION_ERROR_GRACE_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
 export type SdkRunResult = {
   readonly status: 'complete' | 'failed';
   readonly summary?: string;
@@ -30,6 +36,7 @@ type RunAgentSdkTaskInput = {
   readonly task: WorkerTaskAssignment;
   readonly workingDirectory: string;
   readonly sendEvent: (event: AgentEvent) => Promise<void>;
+  readonly providerFactory?: (agentType: AgentType) => AgentProvider;
 };
 
 type WorkerEventMetadata = NonNullable<AgentEvent['metadata']>;
@@ -142,8 +149,18 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     throw new Error('task has no supported agentType');
   }
 
-  const provider = providerFor(agentType);
+  const provider = (input.providerFactory ?? providerFor)(agentType);
   await provider.start();
+
+  // The underlying provider's `execute()` can resolve with status 'complete'
+  // even when the session never produced real work (observed: an internal
+  // server error that isn't reflected in the response's `info.error` field).
+  // Track any 'error'-type event independently via the same onEvent stream
+  // the provider already emits, so a false "complete" can be overridden.
+  let sessionErrorMessage: string | undefined;
+  let resolveSessionError: (message: string) => void = () => {};
+  const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
+
   const session = await provider.createSession({
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
@@ -159,6 +176,10 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
         timestamp: event.timestamp,
         ...(metadata ? { metadata } : {}),
       };
+      if (mapped.type === 'error' && sessionErrorMessage === undefined) {
+        sessionErrorMessage = mapped.content || 'agent session reported an error';
+        resolveSessionError(sessionErrorMessage);
+      }
       void input.sendEvent(mapped).catch((error: unknown) => {
         console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -177,6 +198,13 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     try {
       const result = await session.execute(`${input.task.title}\n\n${input.task.description}`);
       if (result.status === 'complete') {
+        const late = await Promise.race([
+          sessionErrorSignal.then((message) => ({ message })),
+          sleep(SESSION_ERROR_GRACE_MS).then(() => undefined),
+        ]);
+        if (late) {
+          return { status: 'failed', summary: 'Agent SDK task failed', error: late.message };
+        }
         return {
           status: 'complete',
           summary: 'Agent SDK task completed',

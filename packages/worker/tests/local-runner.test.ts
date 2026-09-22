@@ -173,6 +173,38 @@ test('startOpenCodeServerTask streams mapped SSE events and strips local workspa
   assert.equal(events.some((value) => value.includes('[local workspace]')), true);
 });
 
+test('startOpenCodeServerTask reports failed when prompt() resolves but the SSE stream emits session.error', async () => {
+  // Regression test: the opencode HTTP client's `prompt()` call can resolve
+  // without throwing even though the server failed internally to process the
+  // turn. The fake client below mimics exactly that — `prompt` resolves
+  // cleanly — while the SSE stream still emits a `session.error` event, which
+  // must override the otherwise-successful result.
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+  const sse = (async function* stream(): AsyncGenerator<OpenCodeEvent, void, unknown> {
+    yield {
+      type: 'session.error',
+      properties: {
+        sessionID: 'ses_worker_1',
+        error: { name: 'UnknownError', data: { message: 'UnknownError' } },
+      },
+    } as unknown as OpenCodeEvent;
+  })();
+
+  const live = await startOpenCodeServerTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state, sse),
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'failed');
+  assert.match(result.error ?? '', /UnknownError|Session error/);
+});
+
+
 test('startOpenCodeServerTask forwards follow-up messages and abort to the same session', async () => {
   const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
   const live = await startOpenCodeServerTask({
