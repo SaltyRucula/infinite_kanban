@@ -74,6 +74,31 @@ services:
     ports:
       - "80:80"
 
+  # Optional: a local worker that registers against `server` and runs tasks
+  # via `opencode serve`. Disabled by default — start explicitly with:
+  #   docker compose --env-file .env --profile worker up -d --build worker
+  worker:
+    profiles:
+      - worker
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    image: ai-agent-board-worker:latest
+    container_name: ai-agent-board-worker
+    restart: unless-stopped
+    environment:
+      AGENTBOARD_SERVER_URL: ${AGENTBOARD_SERVER_URL:?set AGENTBOARD_SERVER_URL in deploy/.env}
+      AGENTBOARD_TOKEN: ${AGENTBOARD_TOKEN:?set AGENTBOARD_TOKEN (workers:register token) in deploy/.env}
+      AGENTBOARD_WORKER_NAME: ${AGENTBOARD_WORKER_NAME:-}
+      AGENTBOARD_AGENT_TYPES: ${AGENTBOARD_AGENT_TYPES:-opencode}
+      WORKSPACE_PATH: /workspace
+      RUNNER_AGENT: ${RUNNER_AGENT:-build}
+      OPENCODE_WORKER_MODEL: ${OPENCODE_WORKER_MODEL:-}
+    volumes:
+      - ${WORKER_HOST_WORKSPACE:?set WORKER_HOST_WORKSPACE (host repos parent dir) in deploy/.env}:/workspace
+      - workerdata:/home/worker/.agentboard-worker
+
 volumes:
   pgdata:
   serverdata:
+  workerdata:
