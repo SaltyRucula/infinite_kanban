@@ -225,6 +225,7 @@ async function executeTask(
     }
   };
 
+  let sessionId: string | undefined;
   try {
     const result = await (async (): Promise<SdkRunResult | OpenCodeRunResult> => {
       switch (runner.kind) {
@@ -234,6 +235,7 @@ async function executeTask(
             workingDirectory: workspacePath,
             sendEvent: sendTaskEvent,
           });
+          sessionId = live.sessionId ?? undefined;
           if (live.sessionId && live.baseUrl) {
             const bridgeUrl = sessionBridge.register({
               taskId: task.id,
@@ -256,6 +258,7 @@ async function executeTask(
             runner,
             sendEvent: sendTaskEvent,
           });
+          sessionId = live.sessionId;
           const bridgeUrl = sessionBridge.register({
             taskId: task.id,
             sessionId: live.sessionId,
@@ -281,6 +284,8 @@ async function executeTask(
         status: result.status,
         ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
         ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
+        ...(result.question ? { question: safeWorkerError(result.question, workspacePath) } : {}),
+        ...(sessionId ? { sessionId } : {}),
       }),
     });
   } finally {

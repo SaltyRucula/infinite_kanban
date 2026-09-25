@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import {
   isValidAgentType,
   isValidMaxConcurrency,
+  MAX_DESCRIPTION_LENGTH,
   MAX_GROUP_CHILDREN,
   WORKER_HEARTBEAT_INTERVAL_MS,
   WORKER_MAX_NAME_LENGTH,
@@ -297,8 +298,15 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(403).json({ error: 'task is not assigned to this worker' });
       return;
     }
-    if (req.body.status !== 'complete' && req.body.status !== 'failed') {
-      res.status(400).json({ error: 'status must be complete or failed' });
+    const status = req.body.status;
+    if (status !== 'complete' && status !== 'failed' && status !== 'awaiting_input') {
+      res.status(400).json({ error: 'status must be complete, failed, or awaiting_input' });
+      return;
+    }
+    const question = typeof req.body.question === 'string' ? req.body.question.trim() : '';
+    const sessionId = typeof req.body.sessionId === 'string' ? req.body.sessionId.trim() : '';
+    if (status === 'awaiting_input' && (!question || question.length > MAX_DESCRIPTION_LENGTH)) {
+      res.status(400).json({ error: `awaiting_input requires a question of at most ${MAX_DESCRIPTION_LENGTH} characters` });
       return;
     }
     const claim = claimTokenHash(req);
@@ -306,12 +314,13 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task claim is invalid' });
       return;
     }
+    const now = Date.now();
     const completed = await tasks.completeWorkerTask(
       task.id,
       worker.id,
       claim,
-      req.body.status,
-      Date.now(),
+      status === 'awaiting_input' ? 'awaiting_clarification' : status,
+      now,
       typeof req.body.summary === 'string' ? req.body.summary : undefined,
       typeof req.body.error === 'string' ? req.body.error : undefined,
     );
@@ -321,8 +330,40 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     await workers.clearTaskSessions(task.id);
     await workers.clearTaskCommands(task.id);
-    broadcastTaskUpdate(completed);
-    res.json({ task: toWorkerTaskAssignment(completed) });
+
+    // Mirror the in-process lifecycle (makeStatusCallback): finished work goes
+    // to Review, a blocking question parks the task in Pending, and a failure
+    // never leaves it stranded in Pending.
+    let updates: Partial<Task>;
+    if (status === 'awaiting_input') {
+      const clarificationRequest = {
+        requestId: uuid(),
+        // The board requires a session id to accept an answer; runners that
+        // cannot expose one resume with carried-over context instead.
+        sessionId: sessionId || `worker-task:${task.id}`,
+        prompt: question,
+        timestamp: now,
+      };
+      updates = { columnId: 'pending', completedAt: undefined, clarificationRequest, clarificationAnswer: null };
+      const event: AgentEvent = {
+        id: uuid(),
+        taskId: task.id,
+        type: 'command',
+        content: question,
+        timestamp: now,
+        metadata: { clarification_request: { requestId: clarificationRequest.requestId, prompt: question, timestamp: now } },
+      };
+      await tasks.insertEvent(event);
+      const { broadcast } = await import('../websocket.js');
+      broadcast({ type: 'agent_event', payload: event });
+    } else {
+      updates = { clarificationRequest: null, clarificationAnswer: null };
+      if (status === 'complete') updates.columnId = 'review';
+      else if (completed.columnId === 'pending') updates.columnId = 'in-progress';
+    }
+    const updated = await tasks.update(task.id, updates) ?? completed;
+    broadcastTaskUpdate(updated);
+    res.json({ task: toWorkerTaskAssignment(updated) });
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {

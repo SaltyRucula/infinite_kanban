@@ -15,7 +15,7 @@ export interface TaskRepository {
   claimWorkerTask(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<Task | undefined>;
   renewWorkerLease(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<boolean>;
   isWorkerClaimValid(id: string, workerId: string, claimTokenHash: string, now: number): Promise<boolean>;
-  completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined>;
+  completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed' | 'awaiting_clarification', completedAt: number, summary?: string, error?: string): Promise<Task | undefined>;
   getExpiredWorkerTasks(now: number): Promise<Task[]>;
   getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]>;
   update(id: string, updates: Partial<Task>): Promise<Task | undefined>;

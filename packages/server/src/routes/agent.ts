@@ -26,8 +26,18 @@ export function createAgentRouter(
   const router = Router();
 
   const hasActiveWorkerLease = (task: Task): boolean => {
+    if (task.assignedWorkerId == null) return false;
+    if (task.agentStatus === 'planning' || task.agentStatus === 'executing') return true;
+    // A worker that reports a blocking question releases its claim, so a
+    // Pending worker task only has a live session while the lease is valid.
+    return task.agentStatus === 'awaiting_clarification' && hasLiveOpenCodeSession(task);
+  };
+
+  const isParkedWorkerQuestion = (task: Task): boolean => {
     return task.assignedWorkerId != null
-      && (task.agentStatus === 'planning' || task.agentStatus === 'executing' || task.agentStatus === 'awaiting_clarification');
+      && task.agentStatus === 'awaiting_clarification'
+      && !hasActiveWorkerLease(task)
+      && !agentManager.isRunning(task.id);
   };
 
   const hasLiveOpenCodeSession = (task: Task): boolean => {
@@ -232,6 +242,21 @@ export function createAgentRouter(
       res.json(toPortableTask(updated));
       return;
     }
+    if (isParkedWorkerQuestion(task)) {
+      const updated = await repo.update(task.id, {
+        agentStatus: 'failed',
+        columnId: 'in-progress',
+        clarificationRequest: null,
+        clarificationAnswer: null,
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+      broadcastTaskUpdate(updated);
+      res.json(toPortableTask(updated));
+      return;
+    }
     const stopped = await agentManager.stopAgent(task.id);
     if (!stopped) {
       res.status(409).json({ error: 'no running agent for this task' });
@@ -342,6 +367,48 @@ export function createAgentRouter(
       answer,
     })) {
       res.json({ success: true, code: 'queued_for_worker', message: 'clarification queued for worker session' });
+      return;
+    }
+
+    if (isParkedWorkerQuestion(task)) {
+      const request = task.clarificationRequest;
+      const answerText = answer.trim();
+      if (!request || !requestId.trim() || !answerText) {
+        res.status(400).json({ error: 'requestId and answer are required', code: 'invalid_request' });
+        return;
+      }
+      if (request.requestId !== requestId.trim()) {
+        res.status(409).json({ error: 'clarification request is stale', code: 'stale_request' });
+        return;
+      }
+      // Re-queue the same task for its worker; the assignment carries the
+      // question, answer, and session so the agent continues where it stopped.
+      const now = Date.now();
+      const clarificationAnswer = { requestId: request.requestId, answer: answerText, timestamp: now, sessionId: request.sessionId };
+      await repo.requestRun(task.id, now);
+      const updated = await repo.update(task.id, {
+        agentStatus: 'planning',
+        columnId: 'in-progress',
+        startedAt: now,
+        completedAt: undefined,
+        clarificationAnswer,
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+      const event = {
+        id: uuid(),
+        taskId: task.id,
+        type: 'command' as const,
+        content: `Clarification answered: ${answerText}`,
+        timestamp: now,
+        metadata: { clarification_answer: clarificationAnswer },
+      };
+      await repo.insertEvent(event);
+      broadcast({ type: 'agent_event', payload: event });
+      broadcastTaskUpdate(updated);
+      res.json({ success: true, code: 'requeued_for_worker', message: 'answer queued; the worker will resume the task' });
       return;
     }
 
