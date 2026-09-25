@@ -12,6 +12,7 @@ import {
   Wifi,
   WifiOff,
   ChevronDown,
+  Download,
 } from 'lucide-react';
 import type { Task, Project, AgentType } from '@/types';
 import { useTasks } from '@/hooks/useTasks';
@@ -21,6 +22,7 @@ import { WorkerPresencePanel } from './WorkerPresencePanel';
 import { CollaborationLogPanel } from './CollaborationLogPanel';
 import { AssignWorkerModal } from './AssignWorkerModal';
 import { TaskDialog } from '@/components/TaskDialog';
+import { JiraImportDialog } from '@/components/JiraImportDialog';
 import { subscribeConnectionStatus, getConnectionStatus, type ConnectionStatus } from '@/lib/api';
 import { slugify } from '@/lib/utils';
 
@@ -55,6 +57,7 @@ export function WorkerConsole({
     createPR,
     mergeLocal,
     cleanupWorktree,
+    importAssignedJira,
   } = useTasks(project.id);
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialTaskId || null);
@@ -63,6 +66,7 @@ export function WorkerConsole({
   const [showLogFeed, setShowLogFeed] = useState(true);
   const [assigningTask, setAssigningTask] = useState<Task | null>(null);
   const [newTaskDialogOpen, setNewTaskDialogOpen] = useState(false);
+  const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(getConnectionStatus());
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
@@ -268,6 +272,14 @@ export function WorkerConsole({
               </div>
               <span className="text-[10px] font-mono text-[#94a3b8]">Live</span>
             </button>
+
+            <button
+              onClick={() => setJiraDialogOpen(true)}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] font-medium text-[#e2e8f0] hover:bg-[#1b1f2b] transition-colors"
+            >
+              <Download className="w-3.5 h-3.5 text-[#94a3b8]" />
+              <span>Import Jira</span>
+            </button>
           </div>
         </div>
 
@@ -360,6 +372,14 @@ export function WorkerConsole({
           defaultBaseBranch: project.defaultBaseBranch,
           defaultUseWorktree: project.defaultUseWorktree,
         }}
+      />
+
+      <JiraImportDialog
+        open={jiraDialogOpen}
+        onClose={() => setJiraDialogOpen(false)}
+        onImport={importAssignedJira}
+        projects={projects}
+        defaultProjectId={project.id}
       />
     </div>
   );

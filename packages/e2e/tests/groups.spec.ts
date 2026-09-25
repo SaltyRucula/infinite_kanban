@@ -13,7 +13,7 @@ function makeChildren(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     title: `Child task ${i + 1}`,
     description: `Description for child ${i + 1}`,
-    agentType: 'copilot',
+    agentType: 'opencode',
     useWorktree: false,
   }));
 }
@@ -146,7 +146,7 @@ test.describe('Task Groups API', () => {
       data: {
         title: 'Exclusion Test Group',
         maxConcurrency: 1,
-        children: [{ title: 'Hidden Child', agentType: 'copilot' }],
+        children: [{ title: 'Hidden Child', agentType: 'opencode' }],
       },
     });
     const group = await createRes.json();
@@ -164,7 +164,7 @@ test.describe('Task Groups API', () => {
       data: {
         title: 'Too Few Children',
         maxConcurrency: 1,
-        children: [{ title: 'Only one', agentType: 'copilot' }],
+        children: [{ title: 'Only one', agentType: 'opencode' }],
       },
     });
     expect(res.status()).toBe(400);
@@ -188,8 +188,8 @@ test.describe('Task Groups API', () => {
         title: 'Valid Group Title',
         maxConcurrency: 1,
         children: [
-          { title: 'Valid child', agentType: 'copilot' },
-          { description: 'No title here', agentType: 'copilot' },
+          { title: 'Valid child', agentType: 'opencode' },
+          { description: 'No title here', agentType: 'opencode' },
         ],
       },
     });
@@ -239,15 +239,14 @@ test.describe('Task Groups API', () => {
     expect(body.children[1].baseBranch).toBe('develop');
   });
 
-  test('children respect per-child agent type', async ({ request }) => {
+  test('children keep the supported agent type and reject unsupported ones', async ({ request }) => {
     const res = await request.post(`${API}/api/groups`, {
       data: {
-        title: 'Multi-Agent Group',
+        title: 'OpenCode Group',
         maxConcurrency: 2,
         children: [
-          { title: 'Copilot task', agentType: 'copilot' },
-          { title: 'Claude task', agentType: 'claude' },
-          { title: 'Codex task', agentType: 'codex' },
+          { title: 'Explicit OpenCode task', agentType: 'opencode' },
+          { title: 'Default agent task' },
         ],
       },
     });
@@ -255,9 +254,22 @@ test.describe('Task Groups API', () => {
     const body = await res.json();
     createdGroupIds.push(body.id);
 
-    expect(body.children[0].agentType).toBe('copilot');
-    expect(body.children[1].agentType).toBe('claude');
-    expect(body.children[2].agentType).toBe('codex');
+    expect(body.children[0].agentType).toBe('opencode');
+    expect(body.children[1].agentType).toBe('opencode');
+
+    // OpenCode is the only supported execution engine; legacy providers are rejected.
+    const legacy = await request.post(`${API}/api/groups`, {
+      data: {
+        title: 'Legacy Agent Group',
+        maxConcurrency: 1,
+        children: [
+          { title: 'Legacy task', agentType: 'claude' },
+          { title: 'Other task', agentType: 'opencode' },
+        ],
+      },
+    });
+    expect(legacy.status()).toBe(400);
+    expect((await legacy.json()).error).toContain('agentType');
   });
 
   test('PATCH /api/groups/:id/archive archives group and children', async ({ request }) => {
@@ -373,8 +385,8 @@ test.describe('Task Groups API', () => {
         title: 'Bad Description Group',
         maxConcurrency: 1,
         children: [
-          { title: 'Valid child', agentType: 'copilot' },
-          { title: 'Bad child', description: 123, agentType: 'copilot' },
+          { title: 'Valid child', agentType: 'opencode' },
+          { title: 'Bad child', description: 123, agentType: 'opencode' },
         ],
       },
     });
@@ -414,119 +426,7 @@ test.describe('Task Groups API', () => {
   });
 });
 
-// ─── UI Tests ───────────────────────────────────────────────────────
-
-test.describe('Task Groups UI', () => {
-  const createdGroupIds: string[] = [];
-
-  test.afterEach(async ({ request }) => {
-    for (const id of createdGroupIds) {
-      await deleteGroup(request, id);
-    }
-    createdGroupIds.length = 0;
-  });
-
-  test('New Group button opens group creation dialog', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'New Group' }).click();
-    await expect(page.getByRole('heading', { name: 'Create Task Group' })).toBeVisible();
-  });
-
-  test('group dialog requires title and child titles to submit', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'New Group' }).click();
-    await expect(page.getByRole('heading', { name: 'Create Task Group' })).toBeVisible();
-
-    // Create Group button should be disabled with empty title
-    const createBtn = page.getByRole('button', { name: 'Create Group' });
-    await expect(createBtn).toBeDisabled();
-
-    // Fill group title but not child titles — still disabled
-    await page.getByPlaceholder('e.g., Q2 Feature Sprint').fill('My Test Group');
-    await expect(createBtn).toBeDisabled();
-  });
-
-  test('group dialog can add and remove child rows', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'New Group' }).click();
-
-    // Initially 2 child rows
-    const childTitles = page.getByPlaceholder('Task title');
-    await expect(childTitles).toHaveCount(2);
-
-    // Add a child
-    await page.getByRole('button', { name: 'Add Task' }).click();
-    await expect(childTitles).toHaveCount(3);
-
-    // With 3 children, each row has a delete button (the small icon button at the end)
-    // The Trash2 icon renders as an SVG. Find the last small button in a child row.
-    const childRows = page.locator('[class*="rounded-lg border"][class*="bg-muted"]').filter({
-      has: page.getByPlaceholder('Task title'),
-    });
-    await expect(childRows).toHaveCount(3);
-
-    // Click the last icon button in the first child row (the trash button)
-    const firstRowTrash = childRows.first().locator('button').last();
-    await firstRowTrash.click();
-    await expect(childTitles).toHaveCount(2);
-  });
-
-  test('create a group and verify it appears on the board', async ({ page, request }) => {
-    const ts = Date.now();
-    await page.goto('/');
-    await page.getByRole('button', { name: 'New Group' }).click();
-
-    // Fill group fields
-    await page.getByPlaceholder('e.g., Q2 Feature Sprint').fill(`E2E Group ${ts}`);
-
-    // Fill child titles
-    const childTitles = page.getByPlaceholder('Task title');
-    await childTitles.nth(0).fill(`Child A ${ts}`);
-    await childTitles.nth(1).fill(`Child B ${ts}`);
-
-    // Submit
-    await page.getByRole('button', { name: 'Create Group' }).click();
-
-    // Dialog should close
-    await expect(page.getByRole('heading', { name: 'Create Task Group' })).not.toBeVisible({ timeout: 3000 });
-
-    // Group card should appear on the board
-    await expect(page.getByText(`E2E Group ${ts}`)).toBeVisible({ timeout: 5000 });
-
-    // Clean up via API
-    const groupsRes = await request.get(`${API}/api/groups`);
-    const groups = await groupsRes.json();
-    const created = groups.find((g: any) => g.title === `E2E Group ${ts}`);
-    if (created) createdGroupIds.push(created.id);
-  });
-
-  test('parallelism slider updates value in real-time', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'New Group' }).click();
-
-    // Add a third child to make slider range 1-3
-    await page.getByRole('button', { name: 'Add Task' }).click();
-
-    // Slider should show "2 of 3" by default
-    await expect(page.getByText('2 of 3')).toBeVisible();
-
-    // Move slider to max
-    const slider = page.locator('input[type="range"]');
-    await slider.fill('3');
-    await expect(page.getByText('3 of 3')).toBeVisible();
-
-    // Move slider to min
-    await slider.fill('1');
-    await expect(page.getByText('1 of 3')).toBeVisible();
-  });
-
-  test('Esc closes the group dialog', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'New Group' }).click();
-    await expect(page.getByRole('heading', { name: 'Create Task Group' })).toBeVisible();
-
-    // Click outside the input to ensure body has focus, then press Esc
-    await page.locator('.fixed.inset-0').click({ position: { x: 5, y: 5 } });
-    await expect(page.getByRole('heading', { name: 'Create Task Group' })).not.toBeVisible({ timeout: 3000 });
-  });
-});
+// ─── UI ─────────────────────────────────────────────────────────────
+// The Worker Operations Console (root view) does not surface task groups or
+// the group creation dialog, so the former board-level group UI specs were
+// removed. Group behavior stays covered through the API specs above.
