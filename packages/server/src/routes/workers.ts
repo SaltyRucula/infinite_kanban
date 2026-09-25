@@ -14,7 +14,7 @@ import type { AgentEvent, AgentType, Task, Worker } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { WorkerRegistration, WorkerRepository } from '../repositories/worker-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
-import { asyncHandler, broadcastTaskUpdate, toWorkerTaskAssignment } from './helpers.js';
+import { asyncHandler, broadcastTaskUpdate, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
 const COMMAND_POLL_LIMIT_DEFAULT = 20;
 const COMMAND_POLL_LIMIT_MAX = 100;
@@ -112,6 +112,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       ...(req.body.version ? { version: req.body.version } : {}),
     };
     const worker = await workers.register(registration);
+    broadcastWorkerUpdate(worker);
     res.json({
       worker: publicWorker(worker),
       token: credentials.raw,
@@ -146,6 +147,14 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     if (!updated) {
       res.status(404).json({ error: 'worker not found' });
       return;
+    }
+    // Only broadcast on a status transition (e.g. offline -> online after a
+    // stale sweep) so routine 15s heartbeats don't spam every connected
+    // client. Board UIs otherwise only learn a worker came online on their
+    // next page load / WS-reconnect refetch, which silently hides newly
+    // registered or recovered workers from the task-assignment dropdown.
+    if (updated.status !== worker.status) {
+      broadcastWorkerUpdate(updated);
     }
     res.json({ worker: publicWorker(updated) });
   }));
