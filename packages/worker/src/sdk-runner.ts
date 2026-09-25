@@ -11,6 +11,7 @@ import type {
   WorkerTaskAssignment,
 } from '@ai-agent-board/shared/types.js';
 import { isValidAgentType } from '@ai-agent-board/shared/constants.js';
+import { buildResumeContext, extractInputRequest, INPUT_REQUEST_INSTRUCTIONS } from './input-request.js';
 
 const SESSION_ERROR_GRACE_MS = 250;
 
@@ -19,9 +20,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 export type SdkRunResult = {
-  readonly status: 'complete' | 'failed';
+  readonly status: 'complete' | 'failed' | 'awaiting_input';
   readonly summary?: string;
   readonly error?: string;
+  readonly question?: string;
 };
 
 export type RunningAgentSdkTask = {
@@ -161,12 +163,18 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   let resolveSessionError: (message: string) => void = () => {};
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
+  // Output streams as deltas or whole-part snapshots, so this can repeat text;
+  // it is only scanned for the input-request marker, never shown to anyone.
+  let outputText = '';
+
   const session = await provider.createSession({
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
     systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
+      + `${INPUT_REQUEST_INSTRUCTIONS} `
       + `Task title: ${input.task.title}`,
     onEvent: (event: CoreEvent) => {
+      if (event.type === 'output') outputText += event.content;
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {
         id: event.id || uuid(),
@@ -196,7 +204,11 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
 
   const done = (async (): Promise<SdkRunResult> => {
     try {
-      const result = await session.execute(`${input.task.title}\n\n${input.task.description}`);
+      // The provider deletes its sessions on cleanup, so a resumed task starts
+      // a fresh session carrying the question and answer as context.
+      const prompt = `${input.task.title}\n\n${input.task.description}`
+        + (input.task.resume ? `\n\n${buildResumeContext(input.task.resume)}` : '');
+      const result = await session.execute(prompt);
       if (result.status === 'complete') {
         const late = await Promise.race([
           sessionErrorSignal.then((message) => ({ message })),
@@ -204,6 +216,14 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
         ]);
         if (late) {
           return { status: 'failed', summary: 'Agent SDK task failed', error: late.message };
+        }
+        const question = extractInputRequest(outputText);
+        if (question) {
+          return {
+            status: 'awaiting_input',
+            question: sanitizeLocalText(question, input.workingDirectory),
+            summary: 'Agent SDK task is waiting for input',
+          };
         }
         return {
           status: 'complete',
@@ -231,6 +251,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     ...(maybeOpenCodeBaseUrl(agentType) ? { baseUrl: maybeOpenCodeBaseUrl(agentType) } : {}),
     done,
     sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
+      outputText = '';
       await session.send(message);
     },
     abort: async () => {

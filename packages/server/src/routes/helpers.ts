@@ -432,7 +432,15 @@ export function toWorkerTaskAssignment(task: Task): WorkerTaskAssignment {
     ...(task.timeoutMinutes === undefined ? {} : { timeoutMinutes: task.timeoutMinutes }),
     labels: task.labels ?? [],
     ...(task.agentPreference === undefined ? {} : { agentPreference: task.agentPreference }),
+    ...workerResume(task),
   };
+}
+
+function workerResume(task: Task): Pick<WorkerTaskAssignment, 'resume'> {
+  const request = task.clarificationRequest;
+  const answer = task.clarificationAnswer;
+  if (!request || !answer || answer.requestId !== request.requestId) return {};
+  return { resume: { sessionId: request.sessionId, question: request.prompt, answer: answer.answer } };
 }
 
 export function broadcastWorkerUpdate(worker: Worker & { readonly tokenHash?: string }): void {

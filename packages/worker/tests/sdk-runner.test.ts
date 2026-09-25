@@ -72,3 +72,42 @@ test('startAgentSdkTask reports complete when execute() resolves complete with n
 
   assert.equal(result.status, 'complete');
 });
+
+test('startAgentSdkTask reports awaiting_input when the agent output ends with a blocking question', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'Checked the repo. ', timestamp: Date.now() },
+    { id: 'e2', contextId: 'task-1', type: 'output', content: 'NEEDS_INPUT: Should the review cover tests too?', timestamp: Date.now() },
+  ]);
+
+  const live = await startAgentSdkTask({
+    task,
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'awaiting_input');
+  assert.equal(result.question, 'Should the review cover tests too?');
+});
+
+test('startAgentSdkTask carries a resumed question and answer into the prompt', async () => {
+  const prompts: string[] = [];
+  const provider = createFakeProvider([]);
+  const createSession = provider.createSession.bind(provider);
+  provider.createSession = async (config) => {
+    const session = await createSession(config);
+    return { ...session, sessionId: session.sessionId, execute: async (prompt: string) => { prompts.push(prompt); return { status: 'complete' }; } };
+  };
+
+  const live = await startAgentSdkTask({
+    task: { ...task, resume: { sessionId: 'ses_old', question: 'Cover tests?', answer: 'Yes' } },
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  await live.done;
+
+  assert.match(prompts[0] ?? '', /Your question: Cover tests\?/);
+  assert.match(prompts[0] ?? '', /Answer: Yes/);
+});

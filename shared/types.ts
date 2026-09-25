@@ -88,6 +88,18 @@ export interface WorkerTaskAssignment {
   timeoutMinutes?: number | null;
   labels: string[];
   agentPreference?: string;
+  /**
+   * Present when this run resumes a task that paused in `pending` because the
+   * agent asked a blocking question: the worker continues `sessionId` (when
+   * still available) with the human's `answer` instead of starting over.
+   */
+  resume?: WorkerTaskResume;
+}
+
+export interface WorkerTaskResume {
+  sessionId: string;
+  question: string;
+  answer: string;
 }
 
 export interface ClarificationRequestPayload {
