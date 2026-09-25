@@ -3,7 +3,8 @@ import { v4 as uuid } from 'uuid';
 import { mapOpenCodeEvent, type AgentEvent as CoreEvent } from '@codewithdan/agent-sdk-core';
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk';
-import type { AgentEvent, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import type { AgentEvent, ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { buildReviewPrompt, isReviewRun, REVIEW_DISABLED_TOOLS, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 export type AgentSdkRunnerProfile = { readonly kind: 'agent-sdk' };
 export type OpenCodeServerRunnerProfile = { readonly kind: 'opencode-server'; readonly agent: string };
@@ -13,6 +14,7 @@ export type OpenCodeRunResult = {
   readonly status: 'complete' | 'failed';
   readonly summary?: string;
   readonly error?: string;
+  readonly reviewVerdict?: ReviewVerdict;
 };
 
 export type LiveOpenCodeServerTask = {
@@ -255,6 +257,16 @@ export function buildTaskPrompt(task: WorkerTaskAssignment): string {
   ].join('\n');
 }
 
+function responseText(response: unknown): string {
+  const parts = asRecord(asRecord(response)?.data)?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((part) => asRecord(part))
+    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part) => part?.text as string)
+    .join('\n');
+}
+
 export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
   const record = asRecord(raw);
   const workspacePath = typeof record?.workspacePath === 'string' ? record.workspacePath.trim() : '';
@@ -370,7 +382,7 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
     input.managedServer?.kill('SIGTERM');
   };
 
-  const promptWithStallRecovery = async (body: OpenCodePromptBody): Promise<void> => {
+  const promptWithStallRecovery = async (body: OpenCodePromptBody): Promise<unknown> => {
     let attempt = 0;
     let currentBody = body;
     for (;;) {
@@ -382,9 +394,9 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
           if (Date.now() - lastActivityAt > STALL_TIMEOUT_MS) resolve('stalled');
         }, STALL_CHECK_INTERVAL_MS);
       });
-      const outcome = await Promise.race([promptPromise.then(() => 'done' as const), stallPromise]);
+      const outcome = await Promise.race([promptPromise.then((response) => ({ response })), stallPromise]);
       clearInterval(stallTimer);
-      if (outcome === 'done') return;
+      if (outcome !== 'stalled') return outcome.response;
 
       // Stalled: the original prompt() call is still in flight server-side,
       // but we've given up waiting on it. Swallow whatever it eventually
@@ -402,12 +414,13 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
 
   const done = (async (): Promise<OpenCodeRunResult> => {
     try {
-      await promptWithStallRecovery({
+      const review = isReviewRun(input.task);
+      const response = await promptWithStallRecovery({
         agent: input.runner.agent,
-        system: HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
+        system: review ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}` : HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
         model: headlessModel(),
-        tools: HEADLESS_DISABLED_TOOLS,
-        parts: [{ type: 'text', text: buildTaskPrompt(input.task) }],
+        tools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
+        parts: [{ type: 'text', text: review ? buildReviewPrompt(input.task) : buildTaskPrompt(input.task) }],
       });
       if (aborted) {
         return { status: 'failed', error: 'opencode session cancelled', summary: 'Cancelled OpenCode session task' };
@@ -422,6 +435,7 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
       if (late) {
         return { status: 'failed', error: late.message, summary: 'OpenCode server task failed' };
       }
+      if (review) return reviewResult(responseText(response), input.workspacePath);
       return { status: 'complete', summary: 'OpenCode server task completed' };
     } catch (error: unknown) {
       const message = sanitizeLocalText(error instanceof Error ? error.message : String(error), input.workspacePath);

@@ -232,7 +232,7 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
-    const result = this.db.prepare(`UPDATE tasks SET agent_status = ?, completed_at = ?, summary = ?, run_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`).run(status, completedAt, summary ?? (error ? error : null), id, workerId, claimTokenHash, completedAt);
+    const result = this.db.prepare(`UPDATE tasks SET agent_status = ?, completed_at = ?, summary = ?, run_claimed_at = NULL, worker_claim_token_hash = NULL, worker_lease_expires_at = NULL WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`).run(status, completedAt, summary ?? (error ? error : null), id, workerId, claimTokenHash, completedAt);
     return result.changes ? this.getById(id) : undefined;
   }
 

@@ -67,6 +67,39 @@ function commandPollLimit(req: Request): number {
   return Math.min(parsed, COMMAND_POLL_LIMIT_MAX);
 }
 
+/**
+ * A run started from Review is a review, not an implementation. A pass keeps
+ * the task in Review with the findings as its summary; requested changes send
+ * it back to In Progress (idle) so the next run implements them; a review that
+ * reports no verdict is never treated as a pass.
+ */
+async function settleReviewRun(
+  tasks: TaskRepository,
+  completed: Task,
+  status: 'complete' | 'failed',
+  verdict: 'pass' | 'changes_requested' | undefined,
+): Promise<Task> {
+  const now = Date.now();
+  let updates: Partial<Task>;
+  let content: string;
+  if (status === 'complete' && verdict === 'pass') {
+    updates = { columnId: 'review' };
+    content = `Review passed.\n\n${completed.summary ?? ''}`.trim();
+  } else if (status === 'complete' && verdict === 'changes_requested') {
+    updates = { columnId: 'in-progress', agentStatus: 'idle', startedAt: undefined, completedAt: undefined };
+    content = `Review requested changes; task moved back to In Progress.\n\n${completed.summary ?? ''}`.trim();
+  } else {
+    const reason = status === 'complete' ? 'Review finished without a verdict.' : 'Review failed.';
+    updates = { columnId: 'review', agentStatus: 'failed', summary: completed.summary ? `${reason}\n\n${completed.summary}` : reason };
+    content = updates.summary ?? reason;
+  }
+  const event: AgentEvent = { id: uuid(), taskId: completed.id, type: status === 'failed' || !verdict ? 'error' : 'output', content, timestamp: now };
+  await tasks.insertEvent(event);
+  const { broadcast } = await import('../websocket.js');
+  broadcast({ type: 'agent_event', payload: event });
+  return await tasks.update(completed.id, updates) ?? completed;
+}
+
 export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository): Router {
   const router = Router();
   const taskId = (req: Request): string => {
@@ -301,6 +334,11 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(400).json({ error: 'status must be complete or failed' });
       return;
     }
+    const reviewVerdict = req.body.reviewVerdict;
+    if (reviewVerdict !== undefined && reviewVerdict !== 'pass' && reviewVerdict !== 'changes_requested') {
+      res.status(400).json({ error: 'reviewVerdict must be pass or changes_requested' });
+      return;
+    }
     const claim = claimTokenHash(req);
     if (!claim) {
       res.status(409).json({ error: 'task claim is invalid' });
@@ -321,8 +359,11 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     await workers.clearTaskSessions(task.id);
     await workers.clearTaskCommands(task.id);
-    broadcastTaskUpdate(completed);
-    res.json({ task: toWorkerTaskAssignment(completed) });
+    const settled = task.columnId === 'review'
+      ? await settleReviewRun(tasks, completed, req.body.status, reviewVerdict)
+      : completed;
+    broadcastTaskUpdate(settled);
+    res.json({ task: toWorkerTaskAssignment(settled) });
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {

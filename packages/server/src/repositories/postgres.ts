@@ -196,7 +196,7 @@ export class PostgresTaskRepository implements TaskRepository {
   }
 
   async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
-    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET agent_status = $1, completed_at = $2, summary = $3, run_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = $4 AND assigned_worker_id = $5 AND worker_claim_token_hash = $6 AND worker_lease_expires_at >= $2 RETURNING *`, [status, completedAt, summary ?? error ?? null, id, workerId, claimTokenHash]);
+    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET agent_status = $1, completed_at = $2, summary = $3, run_claimed_at = NULL, worker_claim_token_hash = NULL, worker_lease_expires_at = NULL WHERE id = $4 AND assigned_worker_id = $5 AND worker_claim_token_hash = $6 AND worker_lease_expires_at >= $2 RETURNING *`, [status, completedAt, summary ?? error ?? null, id, workerId, claimTokenHash]);
     return rows[0] ? rowToTask(rows[0]) : undefined;
   }
 

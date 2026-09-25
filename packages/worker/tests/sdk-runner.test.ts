@@ -72,3 +72,32 @@ test('startAgentSdkTask reports complete when execute() resolves complete with n
 
   assert.equal(result.status, 'complete');
 });
+
+test('startAgentSdkTask runs a review task with the reviewer prompt and reports the verdict', async () => {
+  let systemPrompt = '';
+  let prompt = '';
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'All requirements met.\nREVIEW_VERDICT: pass', timestamp: Date.now() },
+  ]);
+  const createSession = provider.createSession.bind(provider);
+  provider.createSession = async (config) => {
+    systemPrompt = config.systemPrompt;
+    const session = await createSession(config);
+    const execute = session.execute.bind(session);
+    return { ...session, sessionId: session.sessionId, execute: async (text: string) => { prompt = text; return execute(text); } };
+  };
+
+  const live = await startAgentSdkTask({
+    task: { ...task, mode: 'review' },
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  const result = await live.done;
+
+  assert.match(systemPrompt, /REVIEWER/);
+  assert.match(prompt, /Review the implementation of this task/);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.reviewVerdict, 'pass');
+  assert.equal(result.summary, 'All requirements met.');
+});
