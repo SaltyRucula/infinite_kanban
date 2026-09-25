@@ -40,7 +40,7 @@ async function mockClarificationBoard(
     agentStatus: 'awaiting_clarification',
     createdAt: Date.now() - 60_000,
     projectId: 'default',
-    agentType: 'copilot',
+    agentType: 'opencode',
     clarificationRequest: {
       requestId: REQUEST_ID,
       sessionId: SESSION_ID,
@@ -97,7 +97,7 @@ async function mockClarificationBoard(
   });
 }
 
-test.describe('AgentPanel clarification card', () => {
+test.describe('Task detail clarification card', () => {
   test('renders prompt + choices and submits selected choice exactly once with request/session payload', async ({ page }) => {
     const calls: ResumeCall[] = [];
     await mockClarificationBoard(
@@ -126,9 +126,9 @@ test.describe('AgentPanel clarification card', () => {
     await page.goto('/');
     await waitForBoard(page);
 
-    await page.getByRole('heading', { name: 'Clarification UI task' }).click();
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
     const card = page.getByTestId('clarification-card');
-    await expect(card.getByText('Clarification required')).toBeVisible();
+    await expect(card.getByText('Clarification Needed')).toBeVisible();
     await expect(card.getByText(PROMPT)).toBeVisible();
     await expect(page.getByRole('button', { name: CHOICES[0] })).toBeVisible();
     await expect(page.getByRole('button', { name: CHOICES[1] })).toBeVisible();
@@ -163,10 +163,10 @@ test.describe('AgentPanel clarification card', () => {
 
     await page.goto('/');
     await waitForBoard(page);
-    await page.getByRole('heading', { name: 'Clarification UI task' }).click();
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
 
     const freeTextAnswer = 'Use the JS zip library so we can keep behavior cross-platform.';
-    const input = page.getByPlaceholder('Reply to clarification...');
+    const input = page.getByPlaceholder('Type your response...');
     await input.fill(freeTextAnswer);
     await page.getByRole('button', { name: 'Submit clarification reply' }).click();
 
@@ -211,15 +211,14 @@ test.describe('AgentPanel clarification card', () => {
 
     await page.goto('/');
     await waitForBoard(page);
-    await page.getByRole('heading', { name: 'Clarification UI task' }).click();
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
 
     const card = page.getByTestId('clarification-card');
-    await expect(card.getByText('Clarification required')).toBeVisible();
+    await expect(card.getByText('Clarification Needed')).toBeVisible();
     await expect(card.getByText(PROMPT)).toBeVisible();
     await expect(page.getByRole('button', { name: CHOICES[0], exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: CHOICES[1], exact: true })).toBeDisabled();
-    await expect(page.getByPlaceholder('Reply to clarification...')).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Submit clarification reply' })).toBeDisabled();
+    await page.getByRole('button', { name: CHOICES[0], exact: true }).click({ force: true });
     expect(calls).toHaveLength(0);
 
     taskOverrides.agentStatus = 'complete';
@@ -232,7 +231,7 @@ test.describe('AgentPanel clarification card', () => {
 
     await page.reload();
     await waitForBoard(page);
-    await page.getByRole('heading', { name: 'Clarification UI task' }).click();
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
     await expect(page.getByTestId('clarification-card').getByText(PROMPT)).toBeVisible();
     await expect(page.getByText(`Submitted: ${CHOICES[1]}`)).toBeVisible();
   });

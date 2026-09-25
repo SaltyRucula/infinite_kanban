@@ -249,7 +249,6 @@ export function createOrchestrationsRouter(
       title,
       description,
       projectId: project.id,
-      repoPath: project.repoPath,
       agentType,
       priority: req.body.priority ?? project.defaultPriority,
       columnId: autoStart ? 'in-progress' : 'backlog',
@@ -262,6 +261,9 @@ export function createOrchestrationsRouter(
       runRequestedAt: autoStart ? Date.now() : undefined,
       timeoutMinutes,
     });
+    // buildTask builds portable (worker) tasks and drops host paths; orchestrated
+    // tasks run on this host in a worktree of the project's repository.
+    task.repoPath = project.repoPath;
 
     const result = await repo.createIdempotent(task);
     const deepLink = taskLink(req, result.task.projectId, result.task.id);

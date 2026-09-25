@@ -1,47 +1,59 @@
 import { test, expect, type Page } from '@playwright/test';
-import { API, fillLocalPath, waitForBoard } from './helpers';
+import { API, waitForBoard } from './helpers';
 
-// Helper to open the create task dialog
+// The root view is the Worker Operations Console (saved views + task queue +
+// task detail panel). These specs cover its task workflows; the legacy
+// drag-and-drop Kanban board is no longer mounted.
+
 async function openCreateDialog(page: Page) {
-  const backlogHeading = page.getByRole('heading', { name: 'Backlog', exact: true });
-  const headerRow = backlogHeading.locator('..').locator('..');
-  const addButton = headerRow.locator('button').first();
-  await addButton.click();
+  await page.getByRole('button', { name: 'New Task' }).click();
   await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
 }
 
-// Helper to create a task — returns task ID via API lookup
+function taskRow(page: Page, title: string) {
+  return page.locator('div.group').filter({ hasText: title });
+}
+
 async function createTask(page: Page, title: string, description = 'Test description'): Promise<string> {
   await openCreateDialog(page);
   await page.getByPlaceholder('What needs to be done?').fill(title);
   await page.getByPlaceholder('Describe the task for the selected agent...').fill(description);
-  // Local path is required
-  await fillLocalPath(page);
   await page.getByRole('button', { name: 'Create Task' }).click();
   await expect(page.getByRole('heading', { name: 'Create Task' })).not.toBeVisible({ timeout: 3_000 });
-  await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 5_000 });
+  await expect(taskRow(page, title)).toBeVisible({ timeout: 5_000 });
   const id = await page.evaluate(async (t) => {
     const res = await fetch('/api/tasks');
     const tasks = await res.json();
     return tasks.find((tk: any) => tk.title === t)?.id ?? null;
   }, title);
+  expect(id).toBeTruthy();
   return id as string;
 }
 
-test.describe('Kanban Board', () => {
+async function createTaskViaApi(request: any, data: Record<string, unknown>): Promise<any> {
+  const res = await request.post(`${API}/api/tasks`, { data: { description: 'test', ...data } });
+  expect(res.status()).toBe(201);
+  return res.json();
+}
+
+test.describe('Worker console shell', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await waitForBoard(page);
   });
 
-  test('renders all four columns', async ({ page }) => {
-    for (const col of ['Backlog', 'In Progress', 'Review', 'Done']) {
-      await expect(page.getByRole('heading', { name: col, exact: true })).toBeVisible();
+  test('renders the saved views', async ({ page }) => {
+    for (const view of ['All Issues', 'Active / Executing', 'Backlog', 'Done / Completed']) {
+      await expect(page.getByRole('button', { name: new RegExp(view) })).toBeVisible();
     }
   });
 
-  test('shows app title', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'AI Agent Board' })).toBeVisible();
+  test('shows the current project in the project switcher', async ({ page }) => {
+    const switcher = page.getByRole('button', { name: /Default/ }).first();
+    await expect(switcher).toBeVisible();
+    await switcher.click();
+    await expect(page.getByText('Switch Project')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Manage All Projects...' })).toBeVisible();
   });
 
   test('has theme toggle button', async ({ page }) => {
@@ -71,8 +83,10 @@ test.describe('Task CRUD', () => {
     const taskDesc = `Automated test description ${ts}`;
     const id = await createTask(page, taskTitle, taskDesc);
     createdTaskIds.push(id);
+
+    await taskRow(page, taskTitle).click();
     await expect(page.getByRole('heading', { name: taskTitle })).toBeVisible();
-    await expect(page.getByText(taskDesc).first()).toBeVisible();
+    await expect(page.getByText(taskDesc)).toBeVisible();
   });
 
   test('create task dialog opens and closes', async ({ page }) => {
@@ -88,116 +102,54 @@ test.describe('Task CRUD', () => {
     await expect(createButton).toBeDisabled();
     await page.getByPlaceholder('What needs to be done?').fill('Valid Task');
     await expect(createButton).toBeEnabled();
-    // Close without submitting
     await page.getByRole('button', { name: 'Cancel' }).click();
   });
 
-  test('click task to open agent panel', async ({ page }) => {
+  test('click task to open the task detail panel', async ({ page }) => {
     const taskTitle = `Panel Task ${Date.now()}`;
     const taskId = await createTask(page, taskTitle);
     createdTaskIds.push(taskId);
 
-    await page.evaluate(async (id) => {
-      await fetch(`/api/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ columnId: 'in-progress' }),
-      });
-    }, taskId);
+    await taskRow(page, taskTitle).click();
+    await expect(page.getByRole('heading', { name: taskTitle })).toBeVisible();
+    await expect(page.locator('button', { hasText: 'Run Agent' })).toBeVisible({ timeout: 3_000 });
+    await expect(page.getByText('No events recorded yet.')).toBeVisible();
+  });
+
+  test('review tasks are grouped under Completed & Review', async ({ page, request }) => {
+    const taskTitle = `Review Group ${Date.now()}`;
+    const task = await createTaskViaApi(request, { title: taskTitle, columnId: 'in-progress' });
+    createdTaskIds.push(task.id);
+    const moved = await request.patch(`${API}/api/tasks/${task.id}`, { data: { columnId: 'review' } });
+    expect(moved.status()).toBe(200);
 
     await page.reload();
     await waitForBoard(page);
-    await page.getByRole('heading', { name: taskTitle }).click();
-    await expect(page.getByRole('button', { name: 'Run agent' })).toBeVisible({ timeout: 3_000 });
-    await expect(page.getByText('No agent activity yet')).toBeVisible();
+    await page.getByPlaceholder('Filter tasks (press / to focus)...').fill(taskTitle);
+    await expect(page.getByText('Completed & Review')).toBeVisible();
+    await expect(taskRow(page, taskTitle)).toBeVisible();
   });
 
-  test('Summary tab appears for review tasks and opens by default', async ({ page }) => {
-    const taskTitle = `Review Panel ${Date.now()}`;
-    const taskId = await createTask(page, taskTitle);
-    createdTaskIds.push(taskId);
-
-    // Move backlog -> in-progress -> review via valid transitions
-    await page.evaluate(async (id) => {
-      const patch = (body: unknown) =>
-        fetch(`/api/tasks/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      await patch({ columnId: 'in-progress' });
-      await patch({ columnId: 'review' });
-    }, taskId);
-
-    await page.reload();
-    await waitForBoard(page);
-    await page.getByRole('heading', { name: taskTitle }).click();
-
-    // Summary tab is present and selected by default (empty-state visible)
-    await expect(page.getByRole('button', { name: 'Summary', exact: true })).toBeVisible({ timeout: 3_000 });
-    await expect(page.getByText('No summary was provided for this task.')).toBeVisible();
-  });
-
-  test('Summary tab is hidden for in-progress tasks', async ({ page }) => {
-    const taskTitle = `Progress Panel ${Date.now()}`;
-    const taskId = await createTask(page, taskTitle);
-    createdTaskIds.push(taskId);
-
-    await page.evaluate(async (id) => {
-      await fetch(`/api/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ columnId: 'in-progress' }),
-      });
-    }, taskId);
-
-    await page.reload();
-    await waitForBoard(page);
-    await page.getByRole('heading', { name: taskTitle }).click();
-
-    await expect(page.getByRole('button', { name: 'Run agent' })).toBeVisible({ timeout: 3_000 });
-    await expect(page.getByRole('button', { name: 'Summary', exact: true })).toHaveCount(0);
-  });
-
-  test('dragging task to In Progress starts the agent', async ({ page }) => {
-    const taskTitle = `Drag Start Task ${Date.now()}`;
-    const taskId = await createTask(page, taskTitle);
-    createdTaskIds.push(taskId);
+  test('run button on a queued task requests an agent run', async ({ page, request }) => {
+    const taskTitle = `Run Start Task ${Date.now()}`;
+    const task = await createTaskViaApi(request, { title: taskTitle });
+    createdTaskIds.push(task.id);
 
     let runRequests = 0;
-    await page.route(`**/api/tasks/${taskId}/run`, async (route) => {
+    await page.route(`**/api/tasks/${task.id}/run`, async (route) => {
       runRequests += 1;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          id: taskId,
-          title: taskTitle,
-          description: 'Test description',
-          priority: 'medium',
-          columnId: 'in-progress',
-          agentStatus: 'planning',
-          agentType: 'copilot',
-          createdAt: Date.now(),
-        }),
+        body: JSON.stringify({ ...task, columnId: 'in-progress', agentStatus: 'planning', agentType: 'opencode' }),
       });
     });
 
-    const taskCard = page.locator('[data-column="backlog"] .group').filter({
-      has: page.getByRole('heading', { name: taskTitle }),
-    });
-    const targetColumn = page.locator('[data-column="in-progress"]');
-    await taskCard.scrollIntoViewIfNeeded();
-
-    const sourceBox = await taskCard.boundingBox();
-    const targetBox = await targetColumn.boundingBox();
-    expect(sourceBox).not.toBeNull();
-    expect(targetBox).not.toBeNull();
-
-    await page.mouse.move(sourceBox!.x + sourceBox!.width / 2, sourceBox!.y + sourceBox!.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + targetBox!.height / 2, { steps: 20 });
-    await page.mouse.up();
+    await page.reload();
+    await waitForBoard(page);
+    const row = taskRow(page, taskTitle);
+    await row.hover();
+    await row.getByRole('button', { name: 'Run Agent' }).click();
 
     await expect.poll(() => runRequests).toBe(1);
   });
@@ -213,53 +165,10 @@ test.describe('Theme Toggle', () => {
     const initialClass = await html.getAttribute('class');
 
     await themeButton.click();
-    await page.waitForTimeout(300);
-    const newClass = await html.getAttribute('class');
-    expect(newClass).not.toBe(initialClass);
+    await expect.poll(() => html.getAttribute('class')).not.toBe(initialClass);
 
     await themeButton.click();
-    await page.waitForTimeout(300);
-    const revertedClass = await html.getAttribute('class');
-    expect(revertedClass).toBe(initialClass);
-  });
-});
-
-test.describe('Task Edit', () => {
-  let createdTaskIds: string[] = [];
-
-  test.beforeEach(async ({ page }) => {
-    createdTaskIds = [];
-    await page.goto('/');
-    await waitForBoard(page);
-  });
-
-  test.afterEach(async ({ request }) => {
-    for (const id of createdTaskIds) {
-      await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
-    }
-    createdTaskIds = [];
-  });
-
-  test('edit button opens dialog with pre-populated data', async ({ page }) => {
-    const ts = Date.now();
-    const taskTitle = `Editable Task ${ts}`;
-    const taskId = await createTask(page, taskTitle, 'Original description');
-    createdTaskIds.push(taskId);
-
-    const taskCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: taskTitle }) });
-    await taskCard.hover();
-    await taskCard.getByRole('button', { name: 'Edit task' }).click();
-
-    await expect(page.getByRole('heading', { name: 'Edit Task' })).toBeVisible();
-    await expect(page.getByPlaceholder('What needs to be done?')).toHaveValue(taskTitle);
-    await expect(page.getByPlaceholder('Describe the task for the selected agent...')).toHaveValue('Original description');
-
-    const newTitle = `Edited Task ${ts}`;
-    await page.getByPlaceholder('What needs to be done?').fill(newTitle);
-    await page.getByRole('button', { name: 'Save Changes' }).click();
-
-    await expect(page.getByRole('heading', { name: 'Edit Task' })).not.toBeVisible({ timeout: 2_000 });
-    await expect(page.getByRole('heading', { name: newTitle })).toBeVisible({ timeout: 5_000 });
+    await expect.poll(() => html.getAttribute('class')).toBe(initialClass);
   });
 });
 
@@ -279,27 +188,17 @@ test.describe('Task Priority', () => {
     createdTaskIds = [];
   });
 
-  test('create task with high priority shows amber left border', async ({ page }) => {
-    const ts = Date.now();
-    const taskTitle = `Priority Task ${ts}`;
+  test('create task with high priority shows HIGH badge', async ({ page }) => {
+    const taskTitle = `Priority Task ${Date.now()}`;
 
     await openCreateDialog(page);
     await page.getByPlaceholder('What needs to be done?').fill(taskTitle);
-    // Local path is required
-    await fillLocalPath(page);
-
-    // Open priority dropdown within the dialog and select High
     const dialog = page.getByRole('dialog');
-    // The priority dropdown button contains the emoji and label as separate elements
-    // Click the button that currently shows "Medium" (the priority selector)
-    const priorityButton = dialog.locator('button', { hasText: 'Medium' }).first();
-    await priorityButton.click();
+    await dialog.locator('button', { hasText: 'Medium' }).first().click();
     await dialog.getByRole('button', { name: '🟠 High' }).click();
-
     await page.getByRole('button', { name: 'Create Task' }).click();
     await expect(page.getByRole('heading', { name: 'Create Task' })).not.toBeVisible({ timeout: 3_000 });
 
-    // Get the task ID for cleanup
     const id = await page.evaluate(async (t) => {
       const res = await fetch('/api/tasks');
       const tasks = await res.json();
@@ -307,47 +206,45 @@ test.describe('Task Priority', () => {
     }, taskTitle);
     createdTaskIds.push(id as string);
 
-    // Verify the task card has amber left border
-    const taskCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: taskTitle }) });
-    await expect(taskCard).toHaveClass(/border-l-amber-500/);
+    await expect(taskRow(page, taskTitle).getByText('HIGH', { exact: true })).toBeVisible();
   });
 
-  test('edit task priority updates the border color', async ({ page }) => {
-    const ts = Date.now();
-    const taskTitle = `Edit Priority ${ts}`;
-    const id = await createTask(page, taskTitle);
-    createdTaskIds.push(id);
+  test('editing priority in the detail panel persists and updates the badge', async ({ page, request }) => {
+    const taskTitle = `Edit Priority ${Date.now()}`;
+    const task = await createTaskViaApi(request, { title: taskTitle });
+    createdTaskIds.push(task.id);
 
-    // Default priority is medium — no visible border (medium is borderless)
-    const taskCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: taskTitle }) });
-    await expect(taskCard).not.toHaveClass(/border-l-4/);
+    await page.reload();
+    await waitForBoard(page);
+    const row = taskRow(page, taskTitle);
+    await expect(row.getByText('MED', { exact: true })).toBeVisible();
 
-    // Edit task and change priority to critical
-    await taskCard.hover();
-    await taskCard.getByRole('button', { name: 'Edit task' }).click();
-    await expect(page.getByRole('heading', { name: 'Edit Task' })).toBeVisible();
+    await row.click();
+    const priority = page.locator('select').filter({ has: page.locator('option[value="critical"]') }).last();
+    await priority.selectOption('critical');
 
-    // Open priority dropdown and select Critical
-    const dialog = page.getByRole('dialog');
-    const priorityButton = dialog.locator('button', { hasText: 'Medium' }).first();
-    await priorityButton.click();
-    await dialog.getByRole('button', { name: '🔴 Critical' }).click();
-
-    await page.getByRole('button', { name: 'Save Changes' }).click();
-    await expect(page.getByRole('heading', { name: 'Edit Task' })).not.toBeVisible({ timeout: 2_000 });
-
-    // Verify the task card now has red left border
-    await expect(taskCard).toHaveClass(/border-l-red-500/, { timeout: 3_000 });
+    await expect(row.getByText('CRITICAL', { exact: true })).toBeVisible({ timeout: 3_000 });
+    const tasks = await (await request.get(`${API}/api/tasks`)).json();
+    expect(tasks.find((t: any) => t.id === task.id)?.priority).toBe('critical');
   });
 });
 
-test.describe('Task Sorting', () => {
+test.describe('Task Sorting and Filtering', () => {
+  const prefix = `SortFilter ${Date.now()}`;
   let createdTaskIds: string[] = [];
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, request }) => {
     createdTaskIds = [];
+    for (const t of [
+      { title: `${prefix} Beta Low`, priority: 'low' },
+      { title: `${prefix} Alpha Critical`, priority: 'critical' },
+      { title: `${prefix} Gamma High`, priority: 'high' },
+    ]) {
+      createdTaskIds.push((await createTaskViaApi(request, t)).id);
+    }
     await page.goto('/');
     await waitForBoard(page);
+    await page.getByPlaceholder('Filter tasks (press / to focus)...').fill(prefix);
   });
 
   test.afterEach(async ({ request }) => {
@@ -357,93 +254,42 @@ test.describe('Task Sorting', () => {
     createdTaskIds = [];
   });
 
-  test('sort dropdown changes task order by priority', async ({ page, request }) => {
-    // Create tasks with different priorities via API
-    const tasks = [
-      { title: 'Sort Low Task', priority: 'low' },
-      { title: 'Sort Critical Task', priority: 'critical' },
-      { title: 'Sort High Task', priority: 'high' },
-    ];
-    for (const t of tasks) {
-      const res = await request.post(`${API}/api/tasks`, { data: { title: t.title, description: 'sort test', priority: t.priority } });
-      const created = await res.json();
-      createdTaskIds.push(created.id);
-    }
+  async function visibleTitles(page: Page): Promise<string[]> {
+    const titles = await page.locator('div.group span.truncate').allTextContents();
+    return titles.filter((t) => t.startsWith(prefix));
+  }
 
-    await page.reload();
-    await waitForBoard(page);
-
-    // Change sort to Priority ascending (critical first)
-    const sortSelect = page.locator('select');
-    await sortSelect.selectOption('priority');
-
-    // Get task titles in backlog column order
-    const backlog = page.locator('[data-column="backlog"]').first();
-    const headings = backlog.locator('h3');
-    const titles = await headings.allTextContents();
-
-    // Filter to just our test tasks (titles include priority emoji prefix)
-    const sortTitles = titles.filter(t => t.includes('Sort '));
-    expect(sortTitles[0]).toContain('Sort Critical Task');
-    expect(sortTitles[sortTitles.length - 1]).toContain('Sort Low Task');
-  });
-});
-
-test.describe('Filter Chips', () => {
-  let createdTaskIds: string[] = [];
-
-  test.beforeEach(async ({ page }) => {
-    createdTaskIds = [];
-    await page.goto('/');
-    await waitForBoard(page);
+  test('sort by priority puts critical first and low last', async ({ page }) => {
+    await page.locator('select').filter({ has: page.locator('option[value="title"]') }).selectOption('priority');
+    await expect.poll(() => visibleTitles(page)).toEqual([
+      `${prefix} Alpha Critical`,
+      `${prefix} Gamma High`,
+      `${prefix} Beta Low`,
+    ]);
   });
 
-  test.afterEach(async ({ request }) => {
-    for (const id of createdTaskIds) {
-      await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
-    }
-    createdTaskIds = [];
+  test('sort by title orders alphabetically', async ({ page }) => {
+    await page.locator('select').filter({ has: page.locator('option[value="title"]') }).selectOption('title');
+    await expect.poll(() => visibleTitles(page)).toEqual([
+      `${prefix} Alpha Critical`,
+      `${prefix} Beta Low`,
+      `${prefix} Gamma High`,
+    ]);
   });
 
-  test('filter by label shows only matching tasks', async ({ page, request }) => {
-    // Create tasks with different labels via API
-    const res1 = await request.post(`${API}/api/tasks`, { data: { title: 'Filter Frontend Task', description: 'test', labels: ['frontend'] } });
-    const res2 = await request.post(`${API}/api/tasks`, { data: { title: 'Filter Backend Task', description: 'test', labels: ['backend'] } });
-    createdTaskIds.push((await res1.json()).id, (await res2.json()).id);
+  test('priority filter shows only matching tasks and search narrows by title', async ({ page }) => {
+    await page.locator('select').filter({ has: page.locator('option[value="all"]', { hasText: 'All Priorities' }) }).selectOption('high');
+    await expect.poll(() => visibleTitles(page)).toEqual([`${prefix} Gamma High`]);
 
-    await page.reload();
-    await waitForBoard(page);
-
-    // Both tasks should be visible
-    await expect(page.getByRole('heading', { name: 'Filter Frontend Task' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Filter Backend Task' })).toBeVisible();
-
-    // Click Filter toggle then frontend filter chip
-    await page.getByLabel('Toggle filters').click();
-    await page.getByRole('button', { name: '#frontend', exact: true }).click();
-
-    // Only Frontend task should be visible
-    await expect(page.getByRole('heading', { name: 'Filter Frontend Task' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Filter Backend Task' })).not.toBeVisible({ timeout: 2_000 });
-
-    // Click Clear to reset
-    await page.getByRole('button', { name: 'Clear' }).click();
-
-    // Both visible again
-    await expect(page.getByRole('heading', { name: 'Filter Frontend Task' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Filter Backend Task' })).toBeVisible();
+    await page.locator('select').filter({ has: page.locator('option[value="all"]', { hasText: 'All Priorities' }) }).selectOption('all');
+    await page.getByPlaceholder('Filter tasks (press / to focus)...').fill(`${prefix} Beta`);
+    await expect.poll(() => visibleTitles(page)).toEqual([`${prefix} Beta Low`]);
   });
 });
 
 test.describe('Retry Failed Tasks', () => {
   let createdTaskIds: string[] = [];
 
-  test.beforeEach(async ({ page }) => {
-    createdTaskIds = [];
-    await page.goto('/');
-    await waitForBoard(page);
-  });
-
   test.afterEach(async ({ request }) => {
     for (const id of createdTaskIds) {
       await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
@@ -451,35 +297,21 @@ test.describe('Retry Failed Tasks', () => {
     createdTaskIds = [];
   });
 
-  test('retry button appears on failed tasks', async ({ page, request }) => {
-    // Create a task and set it to failed via API
-    const res = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Retry Test Task', description: 'test', columnId: 'in-progress' },
-    });
-    const task = await res.json();
+  test('failed tasks offer Run Agent to retry', async ({ page, request }) => {
+    const title = `Retry Test Task ${Date.now()}`;
+    const task = await createTaskViaApi(request, { title, columnId: 'in-progress' });
     createdTaskIds.push(task.id);
+    await request.patch(`${API}/api/tasks/${task.id}`, { data: { agentStatus: 'failed' } });
 
-    // Mark as failed
-    await request.patch(`${API}/api/tasks/${task.id}`, {
-      data: { agentStatus: 'failed' },
-    });
-
-    await page.reload();
+    await page.goto('/');
     await waitForBoard(page);
-
-    // Hover over the task card to reveal action buttons
-    const taskCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: 'Retry Test Task' }) });
-    await taskCard.hover();
-
-    // Retry button should be visible
-    await expect(taskCard.getByRole('button', { name: 'Retry task' })).toBeVisible();
+    await taskRow(page, title).click();
+    await expect(page.getByText('failed', { exact: true })).toBeVisible();
+    await expect(page.locator('button', { hasText: 'Run Agent' })).toBeVisible();
   });
 
   test('failed task can be re-claimed via the run endpoint', async ({ request }) => {
-    const res = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Reclaim Test Task', description: 'test', columnId: 'in-progress' },
-    });
-    const task = await res.json();
+    const task = await createTaskViaApi(request, { title: 'Reclaim Test Task', columnId: 'in-progress' });
     createdTaskIds.push(task.id);
 
     await request.patch(`${API}/api/tasks/${task.id}`, {
@@ -487,60 +319,13 @@ test.describe('Retry Failed Tasks', () => {
     });
 
     const run = await request.post(`${API}/api/tasks/${task.id}/run`);
-    expect(run.status()).not.toBe(409);
-  });
-});
-
-test.describe('OpenCode Session Button', () => {
-  let createdTaskIds: string[] = [];
-
-  test.beforeEach(async ({ page }) => {
-    createdTaskIds = [];
-    await page.goto('/');
-    await waitForBoard(page);
-  });
-
-  test.afterEach(async ({ request }) => {
-    for (const id of createdTaskIds) {
-      await request.delete(`${API}/api/tasks/${id}`).catch(() => {});
-    }
-    createdTaskIds = [];
-  });
-
-  test('shows the OpenCode session button for active in-progress tasks', async ({ page, request }) => {
-    const openCodeRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'OpenCode Session Task', description: 'test', columnId: 'in-progress', agentType: 'opencode' },
-    });
-    const openCodeTask = await openCodeRes.json();
-    createdTaskIds.push(openCodeTask.id);
-
-    const backlogRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Backlog Task', description: 'test', columnId: 'backlog', agentType: 'opencode' },
-    });
-    const backlogTask = await backlogRes.json();
-    createdTaskIds.push(backlogTask.id);
-
-    await page.reload();
-    await waitForBoard(page);
-
-    const openCodeCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: 'OpenCode Session Task' }) });
-    await openCodeCard.hover();
-    await expect(openCodeCard.getByRole('button', { name: 'Open OpenCode session' })).toBeVisible();
-
-    const backlogCard = page.locator('.group').filter({ has: page.getByRole('heading', { name: 'Backlog Task' }) });
-    await backlogCard.hover();
-    await expect(backlogCard.getByRole('button', { name: 'Open OpenCode session' })).toHaveCount(0);
+    expect(run.status()).toBe(200);
+    expect((await run.json()).agentStatus).toBe('planning');
   });
 });
 
 test.describe('Worker-owned task git actions', () => {
   let createdTaskIds: string[] = [];
-
-  test.beforeEach(async ({ page }) => {
-    createdTaskIds = [];
-    await page.goto('/');
-    await waitForBoard(page);
-  });
 
   test.afterEach(async ({ request }) => {
     for (const id of createdTaskIds) {
@@ -550,35 +335,26 @@ test.describe('Worker-owned task git actions', () => {
   });
 
   test('hides board-host merge/PR/cleanup buttons for worker-assigned tasks while retaining branch display', async ({ page, request }) => {
-    const taskTitle = `Worker Task ${Date.now()}`;
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: {
-        title: taskTitle,
-        description: 'worker owned task',
-        columnId: 'done',
-        agentStatus: 'complete',
-        agentType: 'copilot',
-        branchName: 'task/feature-branch',
-        baseBranch: 'main',
-        useWorktree: true,
-      },
-    });
-    const task = await createRes.json();
-    createdTaskIds.push(task.id);
+    const hostTitle = `Host Task ${Date.now()}`;
+    const workerTitle = `Worker Task ${Date.now()}`;
+    const branchFields = { columnId: 'in-progress', branchName: 'task/feature-branch', baseBranch: 'main', useWorktree: true };
+    const hostTask = await createTaskViaApi(request, { title: hostTitle, ...branchFields });
+    const workerTask = await createTaskViaApi(request, { title: workerTitle, ...branchFields });
+    createdTaskIds.push(hostTask.id, workerTask.id);
+    await request.patch(`${API}/api/tasks/${workerTask.id}`, { data: { assignedWorkerId: 'worker-1' } });
 
-    await request.patch(`${API}/api/tasks/${task.id}`, {
-      data: { assignedWorkerId: 'worker-1' },
-    });
-
-    await page.reload();
+    await page.goto('/');
     await waitForBoard(page);
 
-    await page.getByRole('heading', { name: taskTitle }).click();
+    await taskRow(page, hostTitle).click();
+    await expect(page.getByRole('button', { name: 'Create PR' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Merge Local' })).toBeVisible();
 
+    await taskRow(page, workerTitle).click();
+    await expect(page.getByRole('heading', { name: workerTitle })).toBeVisible();
     await expect(page.getByText('task/feature-branch')).toBeVisible();
-
     await expect(page.getByRole('button', { name: 'Create PR' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Merge to/i })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Clean up worktree' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Merge Local' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Clean Worktree' })).toHaveCount(0);
   });
 });

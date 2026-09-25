@@ -31,7 +31,7 @@ export async function createConfiguredTask(
 
   // Configure with worktree
   await request.post(`${API}/api/tasks/${task.id}/configure`, {
-    data: { repoPath: repo, branchName, baseBranch: 'main', useWorktree: true, agentType: 'copilot' },
+    data: { repoPath: repo, branchName, baseBranch: 'main', useWorktree: true, agentType: 'opencode' },
   });
 
   // Simulate what agent-manager does: create worktree, make a commit
@@ -71,6 +71,23 @@ export async function createConfiguredTask(
 
   const updated = await (await request.get(`${API}/api/tasks/${task.id}`)).json();
   return { task: updated, worktreePath };
+}
+
+// Board tasks are portable (no host repoPath) and run on remote workers, so
+// board-host git operations apply to repo-bound tasks created through the
+// orchestration API, which binds the project's repository and branch.
+async function createRepoTask(
+  request: APIRequestContext,
+  projectId: string,
+  title: string,
+  branchName: string,
+): Promise<any> {
+  const res = await request.post(`${API}/api/orchestrations`, {
+    headers: { 'Idempotency-Key': `git-ops-${branchName}` },
+    data: { project: projectId, agent: 'opencode', title, branchName, baseBranch: 'main', autoStart: false },
+  });
+  expect(res.status()).toBe(201);
+  return (await res.json()).task;
 }
 
 test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
@@ -139,15 +156,8 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
     const branchName = `feature/pr-test-${Date.now()}`;
 
     // Create and configure task
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'PR no remote test', priority: 'medium', projectId: testProject.id },
-    });
-    const task = await createRes.json();
+    const task = await createRepoTask(request, testProject.id, 'PR no remote test', branchName);
     createdTaskIds.push(task.id);
-
-    await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
-    });
 
     // Create the branch manually so git push has something to push
     git(['checkout', '-b', branchName], testRepo);
@@ -171,15 +181,8 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
     const branchName = `feature/merge-test-${Date.now()}`;
 
     // Create and configure task (no worktree for simplicity)
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Merge test', priority: 'medium', projectId: testProject.id },
-    });
-    const task = await createRes.json();
+    const task = await createRepoTask(request, testProject.id, 'Merge test', branchName);
     createdTaskIds.push(task.id);
-
-    await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
-    });
 
     // Create the branch and make changes
     git(['checkout', '-b', branchName], testRepo);
@@ -205,15 +208,8 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
   test('POST /merge-local aborts on conflict and leaves repo clean', async ({ request }) => {
     const branchName = `feature/conflict-${Date.now()}`;
 
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'Conflict test', priority: 'medium', projectId: testProject.id },
-    });
-    const task = await createRes.json();
+    const task = await createRepoTask(request, testProject.id, 'Conflict test', branchName);
     createdTaskIds.push(task.id);
-
-    await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
-    });
 
     // Create branch with a change
     git(['checkout', '-b', branchName], testRepo);
@@ -250,15 +246,8 @@ test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {
 
     const branchName = `feature/pr-push-${Date.now()}`;
 
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: { title: 'PR push test', priority: 'medium', projectId: testProject.id },
-    });
-    const task = await createRes.json();
+    const task = await createRepoTask(request, testProject.id, 'PR push test', branchName);
     createdTaskIds.push(task.id);
-
-    await request.post(`${API}/api/tasks/${task.id}/configure`, {
-      data: { branchName, baseBranch: 'main', useWorktree: false, agentType: 'copilot' },
-    });
 
     // Create branch with changes
     git(['checkout', '-b', branchName], testRepo);

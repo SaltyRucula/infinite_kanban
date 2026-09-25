@@ -505,14 +505,14 @@ test.describe('Projects API', () => {
     const project = await createProject(request, {
       name: 'Defaults Project',
       repoPath,
-      defaultAgentType: 'claude',
+      defaultAgentType: 'opencode',
       defaultPriority: 'high',
       defaultBaseBranch: 'develop',
       defaultUseWorktree: true,
     });
     createdProjectIds.push(project.id);
     expect(project).toMatchObject({
-      defaultAgentType: 'claude',
+      defaultAgentType: 'opencode',
       defaultPriority: 'high',
       defaultBaseBranch: 'develop',
       defaultUseWorktree: true,
@@ -525,7 +525,7 @@ test.describe('Projects API', () => {
     });
     createdTaskIds.push(inherited.id);
     expect(inherited).toMatchObject({
-      agentType: 'claude',
+      agentType: 'opencode',
       priority: 'high',
       baseBranch: 'develop',
       useWorktree: true,
@@ -535,14 +535,14 @@ test.describe('Projects API', () => {
     const overridden = await createTask(request, {
       title: 'Overrides Project Defaults',
       projectId: project.id,
-      agentType: 'copilot',
+      agentType: 'opencode',
       priority: 'low',
       baseBranch: 'main',
       useWorktree: false,
     });
     createdTaskIds.push(overridden.id);
     expect(overridden).toMatchObject({
-      agentType: 'copilot',
+      agentType: 'opencode',
       priority: 'low',
       baseBranch: 'main',
       useWorktree: false,
@@ -554,7 +554,7 @@ test.describe('Projects API', () => {
     const project = await createProject(request, {
       name: 'Defaults Patch Project',
       repoPath,
-      defaultAgentType: 'codex',
+      defaultAgentType: 'opencode',
       defaultUseWorktree: false,
     });
     createdProjectIds.push(project.id);
@@ -604,7 +604,7 @@ test.describe('Projects API', () => {
     const project = await createProject(request, {
       name: 'Group Defaults Project',
       repoPath,
-      defaultAgentType: 'claude',
+      defaultAgentType: 'opencode',
       defaultPriority: 'high',
       defaultBaseBranch: 'develop',
       defaultUseWorktree: false,
@@ -628,7 +628,7 @@ test.describe('Projects API', () => {
     createdGroupIds.push(inheritGroup.id);
     expect(inheritGroup).toMatchObject({ priority: 'high', baseBranch: 'develop' });
     for (const child of inheritGroup.children ?? []) {
-      expect(child).toMatchObject({ agentType: 'claude', priority: 'high', useWorktree: false });
+      expect(child).toMatchObject({ agentType: 'opencode', priority: 'high', useWorktree: false });
     }
 
     // Explicit values override the defaults
@@ -640,8 +640,8 @@ test.describe('Projects API', () => {
         baseBranch: 'main',
         maxConcurrency: 1,
         children: [
-          { title: 'Override child', agentType: 'copilot', useWorktree: true },
-          { title: 'Override child two', agentType: 'copilot', useWorktree: true },
+          { title: 'Override child', agentType: 'opencode', useWorktree: true },
+          { title: 'Override child two', agentType: 'opencode', useWorktree: true },
         ],
       },
     });
@@ -649,7 +649,7 @@ test.describe('Projects API', () => {
     const overrideGroup = await overrideRes.json() as TaskGroup;
     createdGroupIds.push(overrideGroup.id);
     expect(overrideGroup).toMatchObject({ priority: 'low', baseBranch: 'main' });
-    expect(overrideGroup.children?.[0]).toMatchObject({ agentType: 'copilot', useWorktree: true });
+    expect(overrideGroup.children?.[0]).toMatchObject({ agentType: 'opencode', useWorktree: true });
   });
 
   test('validates scheduled Jira import parameters in project creation and updates', async ({ request }) => {
@@ -733,14 +733,14 @@ test.describe('Projects page', () => {
 
     await projectCard.getByRole('button', { name: 'Open Project' }).click();
     await waitForBoard(page);
-    await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
+    await expect(page.getByRole('button', { name: projectName })).toBeVisible();
 
     await openNewTaskDialog(page);
     await expect(page.getByLabel(/Local Path/i)).toHaveCount(0);
     const taskTitle = `Project UI Task ${Date.now()}`;
     await page.getByPlaceholder('What needs to be done?').fill(taskTitle);
     await page.getByRole('button', { name: 'Create Task' }).click();
-    await expect(page.getByRole('heading', { name: taskTitle })).toBeVisible();
+    await expect(page.locator('div.group').filter({ hasText: taskTitle })).toBeVisible();
 
     const tasksRes = await request.get(`${API}/api/tasks?projectId=${createdProjectId}`);
     if (tasksRes.ok()) {
@@ -869,12 +869,13 @@ test.describe('Projects page', () => {
     await expect(page.getByLabel(/Local Path/i)).toHaveCount(0);
   });
 
-  test('prefills the task dialog agent from the project default', async ({ page, request }) => {
+  test('prefills the task dialog from the project defaults', async ({ page, request }) => {
     const repoPath = prepareTestRepo('projects-ui-default-agent', { clean: true });
     const project = await createProject(request, {
       name: `Default Agent Project ${Date.now()}`,
       repoPath,
-      defaultAgentType: 'claude',
+      defaultAgentType: 'opencode',
+      defaultPriority: 'high',
     });
     createdProjectIds.push(project.id);
 
@@ -885,8 +886,10 @@ test.describe('Projects page', () => {
     await waitForBoard(page);
 
     await openNewTaskDialog(page);
-    // Agent selector should default to the project's configured agent, not Copilot
-    await expect(page.getByRole('dialog').getByRole('button', { name: /Claude/ })).toBeVisible();
+    // OpenCode is the only engine; the project's default priority is prefilled.
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('OpenCode / Sisyphus Worker')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /High/ })).toBeVisible();
   });
 
   test('persists project task defaults set through the project dialog', async ({ page, request }) => {
@@ -899,7 +902,7 @@ test.describe('Projects page', () => {
     await expect(page.getByRole('heading', { name: 'Create Project' })).toBeVisible();
     await page.getByLabel('Project Name').fill(projectName);
     await page.getByLabel('Local Path').fill(repoPath);
-    await page.getByLabel('Default Agent').selectOption('codex');
+    await page.getByLabel('Default Agent').selectOption('opencode');
     await page.getByLabel('Default Priority').selectOption('high');
     await page.getByLabel('Default Base Branch').fill('develop');
     await page.getByLabel('Default Worktree').selectOption('true');
@@ -915,7 +918,7 @@ test.describe('Projects page', () => {
     createdProjectIds.push(createdProjectId);
 
     expect(created).toMatchObject({
-      defaultAgentType: 'codex',
+      defaultAgentType: 'opencode',
       defaultPriority: 'high',
       defaultBaseBranch: 'develop',
       defaultUseWorktree: true,
