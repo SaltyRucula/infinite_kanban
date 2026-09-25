@@ -432,6 +432,8 @@ export function toWorkerTaskAssignment(task: Task): WorkerTaskAssignment {
     ...(task.timeoutMinutes === undefined ? {} : { timeoutMinutes: task.timeoutMinutes }),
     labels: task.labels ?? [],
     ...(task.agentPreference === undefined ? {} : { agentPreference: task.agentPreference }),
+    // A run started from Review validates the existing work instead of re-implementing it.
+    ...(task.columnId === 'review' ? { mode: 'review' as const } : {}),
   };
 }
 

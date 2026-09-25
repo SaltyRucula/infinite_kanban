@@ -281,6 +281,7 @@ async function executeTask(
         status: result.status,
         ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
         ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
+        ...(result.reviewVerdict ? { reviewVerdict: result.reviewVerdict } : {}),
       }),
     });
   } finally {

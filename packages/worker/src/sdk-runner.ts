@@ -11,6 +11,7 @@ import type {
   WorkerTaskAssignment,
 } from '@ai-agent-board/shared/types.js';
 import { isValidAgentType } from '@ai-agent-board/shared/constants.js';
+import { buildReviewPrompt, isReviewRun, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 const SESSION_ERROR_GRACE_MS = 250;
 
@@ -22,6 +23,7 @@ export type SdkRunResult = {
   readonly status: 'complete' | 'failed';
   readonly summary?: string;
   readonly error?: string;
+  readonly reviewVerdict?: 'pass' | 'changes_requested';
 };
 
 export type RunningAgentSdkTask = {
@@ -161,12 +163,19 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   let resolveSessionError: (message: string) => void = () => {};
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
+  const review = isReviewRun(input.task);
+  // Output streams as deltas or whole-part snapshots, so this can repeat text;
+  // it is only scanned for the review verdict line.
+  let outputText = '';
+
   const session = await provider.createSession({
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
     systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
+      + (review ? `${REVIEW_SYSTEM_PROMPT} ` : '')
       + `Task title: ${input.task.title}`,
     onEvent: (event: CoreEvent) => {
+      if (event.type === 'output') outputText += event.content;
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {
         id: event.id || uuid(),
@@ -196,7 +205,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
 
   const done = (async (): Promise<SdkRunResult> => {
     try {
-      const result = await session.execute(`${input.task.title}\n\n${input.task.description}`);
+      const result = await session.execute(review ? buildReviewPrompt(input.task) : `${input.task.title}\n\n${input.task.description}`);
       if (result.status === 'complete') {
         const late = await Promise.race([
           sessionErrorSignal.then((message) => ({ message })),
@@ -205,6 +214,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
         if (late) {
           return { status: 'failed', summary: 'Agent SDK task failed', error: late.message };
         }
+        if (review) return reviewResult(outputText, input.workingDirectory);
         return {
           status: 'complete',
           summary: 'Agent SDK task completed',
