@@ -8,6 +8,10 @@ node_modules
 **/dist
 shared/dist
 packages/*/dist
+# tsc -b incremental state: if a stale copy leaks into the build context, tsc
+# treats the project as already-built and skips emitting dist/, producing an
+# image whose workspace packages have no compiled output. Never ship it.
+**/*.tsbuildinfo
 **/data
 data
 *.log
