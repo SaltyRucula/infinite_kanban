@@ -88,23 +88,24 @@ async function settleReviewRun(
     updates = { columnId: 'review' };
     content = `Review passed.\n\n${completed.summary ?? ''}`.trim();
   } else if (status === 'complete' && verdict === 'changes_requested') {
-    // completeWorkerTask() clears run_claimed_at/worker_claim_token_hash but
-    // intentionally leaves run_requested_at alone (a normal complete/failed
-    // run may still want it re-evaluated elsewhere), and update() below would
-    // otherwise re-persist the stale run_requested_at from the row it reads.
-    // Without this, the task exactly matches getWorkerAssignments' predicate
-    // (run_requested_at set, agent_status idle, no claim) and a worker
-    // re-claims it within one poll, silently starting an unattended
-    // implementation run. Clear it before update() re-reads the row.
-    await tasks.clearRun(completed.id);
+    // completeWorkerTask() already clears run_requested_at/run_claimed_at/
+    // worker_claim_token_hash on every completion (see its comment in
+    // sqlite.ts/postgres.ts — that is the actual fix for the unattended
+    // re-run root cause), so update() below re-reading and re-persisting
+    // `completed`'s fields can't resurrect a stale run_requested_at here.
+    // Moving to 'idle' is therefore safe: nothing left on the row makes this
+    // task match getWorkerAssignments' predicate until a human re-runs it.
     updates = { columnId: 'in-progress', agentStatus: 'idle', startedAt: undefined, completedAt: undefined };
     content = `Review requested changes; task moved back to In Progress.\n\n${completed.summary ?? ''}`.trim();
   } else {
     // status === 'failed' (a verdict was still reported, e.g. alongside a
     // partial-failure report). completeWorkerTask() already wrote agent_status
     // = 'failed' directly, so re-asserting it here is a same-state write, not
-    // a transition — it never goes through 'complete' first, so this can't
-    // hit the disallowed complete -> failed hop in VALID_AGENT_STATUS_TRANSITIONS.
+    // a transition — it never goes through 'complete' first. (Note:
+    // VALID_AGENT_STATUS_TRANSITIONS/canTransitionAgentStatus are not actually
+    // enforced anywhere at runtime — canTransitionAgentStatus is currently
+    // unused — so this is a design invariant we maintain by convention, not
+    // a guard the code would otherwise reject.)
     const reason = 'Review failed.';
     updates = { columnId: 'review', agentStatus: 'failed', summary: completed.summary ? `${reason}\n\n${completed.summary}` : reason };
     content = updates.summary ?? reason;
@@ -386,6 +387,26 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     const settled = reviewVerdict !== undefined
       ? await settleReviewRun(tasks, completed, req.body.status, reviewVerdict)
       : completed;
+    // SHOULD-FIX 6: a compliant worker never sends {status:'complete'} for a
+    // review run without a reviewVerdict (see review-mode.ts's reviewResult),
+    // but nothing here stops a buggy/misbehaving worker from doing so. Left
+    // unflagged, the task would land as agentStatus 'complete' with the
+    // worker's raw summary sitting in Review — visually indistinguishable
+    // from a genuine pass. columnId is only a best-effort signal (see the
+    // comment above), so this is a defensive warning, not a settlement.
+    if (req.body.status === 'complete' && reviewVerdict === undefined && completed.columnId === 'review') {
+      const warning: AgentEvent = {
+        id: uuid(),
+        taskId: completed.id,
+        type: 'error',
+        content: 'This run completed without a REVIEW_VERDICT while the task was in the Review column. '
+          + 'If this was a review run, it was NOT settled as a pass — the summary above should not be treated as a verdict.',
+        timestamp: Date.now(),
+      };
+      await tasks.insertEvent(warning);
+      const { broadcast } = await import('../websocket.js');
+      broadcast({ type: 'agent_event', payload: warning });
+    }
     broadcastTaskUpdate(settled);
     res.json({ task: toWorkerTaskAssignment(settled) });
   }));

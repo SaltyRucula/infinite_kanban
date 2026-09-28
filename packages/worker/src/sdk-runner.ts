@@ -11,7 +11,7 @@ import type {
   WorkerTaskAssignment,
 } from '@ai-agent-board/shared/types.js';
 import { isValidAgentType } from '@ai-agent-board/shared/constants.js';
-import { buildReviewPrompt, isReviewRun, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
+import { buildReviewPrompt, isReviewRun, neutralizeVerdictMarker, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 const SESSION_ERROR_GRACE_MS = 250;
 
@@ -58,7 +58,10 @@ const VALID_EVENT_TYPES: ReadonlySet<AgentEventType> = new Set([
 ]);
 
 function sanitizeLocalText(content: string, workspacePath: string): string {
-  return content.replaceAll(workspacePath, '[local workspace]');
+  // Guard against an empty workspacePath: String.replaceAll('', x) inserts x
+  // between every character instead of doing nothing (see the identical
+  // guard in reviewResult, review-mode.ts).
+  return workspacePath ? content.replaceAll(workspacePath, '[local workspace]') : content;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -140,17 +143,36 @@ function coerceEventType(candidate: string): AgentEventType {
   return VALID_EVENT_TYPES.has(candidate as AgentEventType) ? candidate as AgentEventType : 'output';
 }
 
-// Tool/file activity between assistant messages marks a turn boundary: text
-// produced before it (e.g. the model reciting the task description, which may
-// contain injected marker text — see review-mode.ts's neutralizeVerdictMarker)
-// belongs to an earlier turn and must not be scanned for the review verdict
-// alongside the final message. Resetting on these keeps `outputText` scoped
-// to the assistant's current/final message, mirroring the "final response
-// text parts only" scoping local-runner.ts gets for free from its per-prompt
-// HTTP response.
-const TURN_BOUNDARY_EVENT_TYPES: ReadonlySet<AgentEventType> = new Set([
-  'tool_call', 'file_read', 'file_write', 'file_edit', 'command', 'command_output', 'test_result',
-]);
+// The vendored CoreEvent shape gives no message/part identity to key on (see
+// mapOpenCodeEvent in @codewithdan/agent-sdk-core: every event gets a fresh
+// random uuid, and tool state completions never carry the id of the text
+// part they may race with), so the accumulated `outputText` below spans the
+// entire single-turn run — mirroring what local-runner.ts gets "for free"
+// from the raw HTTP response's parts array (which also includes every text
+// part emitted during the turn, not just a literal last fragment). An
+// earlier version of this scoped the scan by resetting on any tool/file
+// event, but tool "completed" state and `patch` events (message
+// finalization) can legitimately arrive AFTER the final assistant text —
+// resetting on those wiped a real verdict and reintroduced the original
+// "no verdict" failure through a new mechanism. Never resetting is safe here
+// because the actual injection vector this was guarding against (raw task
+// title/labels echoed into the prompt) is now neutralized at the source
+// (see review-mode.ts's neutralizeVerdictMarker and its callers), and
+// extractReviewVerdict's conflict handling (see review-mode.ts) is fail-safe
+// against a stray marker-shaped line appearing earlier in the same turn.
+function mergeOutput(current: string, incoming: string): string {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  // The real duplication source: `content: delta || part.text` can emit a
+  // full-text snapshot instead of a true delta (e.g. the fallback path when
+  // SSE delivers no incremental delta for a part). Detect a
+  // growing/duplicate snapshot — incoming already contains everything
+  // accumulated so far — and replace rather than concatenate, so the same
+  // text is never doubled into the buffer.
+  if (incoming.startsWith(current)) return incoming;
+  if (current.endsWith(incoming)) return current;
+  return current + incoming;
+}
 
 export async function runAgentSdkTask(input: RunAgentSdkTaskInput): Promise<SdkRunResult> {
   const running = await startAgentSdkTask(input);
@@ -176,12 +198,8 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
   const review = isReviewRun(input.task);
-  // Scoped to the assistant's current/final message only (reset at each turn
-  // boundary — see TURN_BOUNDARY_EVENT_TYPES) so an earlier turn can't leak a
-  // stray/injected verdict-like line into the scan. Within a turn, output can
-  // still arrive as incremental deltas or whole-message snapshots; prefer the
-  // latest snapshot over concatenating it onto what came before (metadata
-  // .replace signals a snapshot), which also avoids duplicated findings text.
+  // See mergeOutput's comment above for why this accumulates across the
+  // whole turn instead of resetting at tool/file event boundaries.
   let outputText = '';
 
   const session = await provider.createSession({
@@ -189,13 +207,23 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     workingDirectory: input.workingDirectory,
     systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
       + (review ? `${REVIEW_SYSTEM_PROMPT} ` : '')
-      + `Task title: ${input.task.title}`,
+      // On the review path the title is untrusted task text (e.g. Jira
+      // import) interpolated into the system prompt itself; neutralize it
+      // the same way buildReviewPrompt neutralizes title/description/labels
+      // in the user prompt, or an injected marker here could be echoed back
+      // by the model and picked up by the verdict scan.
+      + `Task title: ${review ? neutralizeVerdictMarker(input.task.title) : input.task.title}`,
     onEvent: (event: CoreEvent) => {
       const type = coerceEventType(event.type);
-      if (type === 'output') {
-        outputText = event.metadata?.replace ? event.content : outputText + event.content;
-      } else if (TURN_BOUNDARY_EVENT_TYPES.has(type)) {
-        outputText = '';
+      // Only accumulate genuine 'output' events into the verdict-scanned
+      // buffer, checked against the raw (uncoerced) event.type. Widening an
+      // unrecognized/off-spec type to 'output' is a reasonable default for
+      // *display* purposes (below), but doing the same for the buffer that
+      // feeds the review verdict scan would be backwards: an off-spec event
+      // should be excluded from scanning, not folded in as if it were real
+      // assistant text.
+      if (event.type === 'output') {
+        outputText = event.metadata?.replace ? event.content : mergeOutput(outputText, event.content);
       }
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {

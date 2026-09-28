@@ -96,7 +96,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function sanitizeLocalText(content: string, workspacePath: string): string {
-  return content.replaceAll(workspacePath, '[local workspace]');
+  // Guard against an empty workspacePath: String.replaceAll('', x) inserts x
+  // between every character instead of doing nothing (see the identical
+  // guard in reviewResult, review-mode.ts).
+  return workspacePath ? content.replaceAll(workspacePath, '[local workspace]') : content;
 }
 
 function sanitizeMetadata(
