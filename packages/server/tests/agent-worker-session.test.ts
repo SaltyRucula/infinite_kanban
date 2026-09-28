@@ -75,6 +75,9 @@ class FakeWorkerRepo implements WorkerRepository {
     return { ...this.worker(), tokenHash: hash };
   }
   async list(): Promise<Worker[]> { return [this.worker()]; }
+  async setStatus(): Promise<Worker> { return this.worker(); }
+  async delete(): Promise<boolean> { return true; }
+  async rotateToken(): Promise<Worker> { return this.worker(); }
   async markOffline(): Promise<Worker[]> { return []; }
   async registerTaskSession(taskId: string, sessionId: string, baseUrl: string, updatedAt: number): Promise<void> {
     this.sessions.push({ taskId, sessionId, baseUrl, updatedAt });

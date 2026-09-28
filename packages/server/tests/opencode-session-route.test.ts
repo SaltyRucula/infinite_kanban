@@ -53,6 +53,9 @@ function createWorkerRepo(baseUrl: string): WorkerRepository {
     async getById(): Promise<never> { throw new Error('not implemented'); },
     async getByTokenHash(): Promise<never> { throw new Error('not implemented'); },
     async list(): Promise<never> { throw new Error('not implemented'); },
+    async setStatus(): Promise<never> { throw new Error('not implemented'); },
+    async delete(): Promise<never> { throw new Error('not implemented'); },
+    async rotateToken(): Promise<never> { throw new Error('not implemented'); },
     async markOffline(): Promise<never> { throw new Error('not implemented'); },
     async registerTaskSession(): Promise<void> {},
     async getTaskSessions(): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> {

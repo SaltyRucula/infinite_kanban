@@ -171,7 +171,7 @@ export class PostgresTaskRepository implements TaskRepository {
   async getPendingRuns(staleBefore=Date.now()-30_000) { const {rows}=await this.pool.query<TaskRow>("SELECT * FROM tasks WHERE assigned_worker_id IS NULL AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < $1) AND agent_status IN ('idle','planning') ORDER BY run_requested_at",[staleBefore]); return rows.map(rowToTask); }
 
   async assignToWorker(id: string, workerId: string | null): Promise<Task | undefined> {
-    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET assigned_worker_id = $1, worker_claim_token_hash = NULL, worker_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = $2 AND worker_claim_token_hash IS NULL AND agent_status IN ('idle','planning') RETURNING *`, [workerId, id]);
+    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET assigned_worker_id = $1, worker_claim_token_hash = NULL, worker_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = $2 AND worker_claim_token_hash IS NULL AND agent_status IN ('idle','planning') AND ($1 IS NULL OR EXISTS (SELECT 1 FROM workers WHERE id = $1 AND status <> 'disabled')) RETURNING *`, [workerId, id]);
     return rows[0] ? rowToTask(rows[0]) : undefined;
   }
 
@@ -260,6 +260,26 @@ export class PostgresTaskRepository implements TaskRepository {
         agent_status IN ('planning','executing')
         OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
       )`, [workerIds]);
+    return rows.map(rowToTask);
+  }
+
+  async revokeWorkerAssignments(workerId: string, at: number): Promise<Task[]> {
+    const { rows } = await this.pool.query<TaskRow>(`WITH released AS (
+      UPDATE tasks SET
+      assigned_worker_id=NULL, run_requested_at=NULL, run_claimed_at=NULL,
+      worker_claim_token_hash=NULL, worker_claimed_at=NULL, worker_lease_expires_at=NULL,
+      agent_status=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'failed' ELSE agent_status END,
+      completed_at=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN $1 ELSE completed_at END,
+      summary=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'worker_revoked' ELSE summary END,
+      clarification_request=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_request END,
+      clarification_answer=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_answer END,
+      column_id=CASE WHEN agent_status = 'awaiting_clarification' AND column_id = 'pending' THEN 'in-progress' ELSE column_id END
+      WHERE assigned_worker_id=$2 RETURNING *
+    ), cleared_sessions AS (
+      DELETE FROM worker_task_sessions WHERE task_id IN (SELECT id FROM released)
+    ), cleared_commands AS (
+      DELETE FROM worker_task_commands WHERE task_id IN (SELECT id FROM released)
+    ) SELECT * FROM released`, [at, workerId]);
     return rows.map(rowToTask);
   }
 

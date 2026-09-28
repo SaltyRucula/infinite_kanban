@@ -32,8 +32,11 @@ export interface WorkerRepository {
   register(input: WorkerRegistration): Promise<Worker>;
   heartbeat(id: string, at: number): Promise<Worker | undefined>;
   getById(id: string): Promise<Worker | undefined>;
-  getByTokenHash(tokenHash: string): Promise<(Worker & { readonly tokenHash: string }) | undefined>;
+  getByTokenHash(tokenHash: string): Promise<(Worker & { readonly tokenHash: string; readonly tokenIssuedAt?: number }) | undefined>;
   list(): Promise<Worker[]>;
+  setStatus(id: string, status: 'online' | 'disabled', at: number): Promise<Worker | undefined>;
+  delete(id: string): Promise<boolean>;
+  rotateToken(id: string, currentTokenHash: string, nextTokenHash: string, at: number): Promise<Worker | undefined>;
   markOffline(cutoff: number, at: number): Promise<Worker[]>;
   registerTaskSession(taskId: string, sessionId: string, baseUrl: string, updatedAt: number): Promise<void>;
   getTaskSessions(taskId: string): Promise<readonly RegisteredWorkerOpenCodeSession[]>;

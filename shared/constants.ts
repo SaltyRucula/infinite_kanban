@@ -96,3 +96,4 @@ export const WORKER_ASSIGNMENT_POLL_INTERVAL_MS = 5_000;
 // abandoned by that worker and failed (worker_offline), not silently retried.
 export const WORKER_TASK_LEASE_MS = 60_000;
 export const WORKER_MAX_NAME_LENGTH = 100;
+export const WORKER_TOKEN_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;

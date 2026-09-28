@@ -160,6 +160,55 @@ test.describe('Single-call task creation + autoRun', () => {
   });
 });
 
+test.describe('Worker token lifecycle', () => {
+  test('disabling, rotating, and deleting a worker revokes prior credentials', async ({ request }) => {
+    const worker = await registerWorker(request, `lifecycle-worker-${Date.now()}`);
+    const oldHeaders = { Authorization: `Bearer ${worker.token}` };
+    const assignedTaskResponse = await request.post(`${API}/api/tasks`, {
+      data: { title: 'Lifecycle assigned task', columnId: 'in-progress', agentType: 'opencode' },
+    });
+    const assignedTask = await assignedTaskResponse.json() as { id: string };
+    expect((await request.post(`${API}/api/tasks/${assignedTask.id}/assign`, { data: { workerId: worker.id } })).status()).toBe(200);
+
+    const disabled = await request.patch(`${API}/api/workers/${worker.id}/status`, {
+      data: { status: 'disabled' },
+    });
+    expect(disabled.status()).toBe(200);
+    expect((await disabled.json()).status).toBe('disabled');
+
+    const disabledAuth = await request.get(`${API}/api/workers/me/assignments`, { headers: oldHeaders });
+    expect(disabledAuth.status()).toBe(401);
+    const blockedAssignment = await request.post(`${API}/api/tasks/${assignedTask.id}/assign`, { data: { workerId: worker.id } });
+    expect(blockedAssignment.status()).toBe(409);
+
+    const enabled = await request.patch(`${API}/api/workers/${worker.id}/status`, {
+      data: { status: 'online' },
+    });
+    expect(enabled.status()).toBe(200);
+    const releasedAssignments = await request.get(`${API}/api/workers/me/assignments`, { headers: oldHeaders });
+    expect((await releasedAssignments.json() as { tasks: Array<{ id: string }> }).tasks.map((task) => task.id)).not.toContain(assignedTask.id);
+
+    const rotated = await request.post(`${API}/api/workers/me/rotate`, { headers: oldHeaders });
+    expect(rotated.status()).toBe(200);
+    const { token } = await rotated.json() as { token: string };
+    expect(token).not.toBe(worker.token);
+
+    const oldToken = await request.get(`${API}/api/workers/me/assignments`, { headers: oldHeaders });
+    expect(oldToken.status()).toBe(401);
+
+    const newHeaders = { Authorization: `Bearer ${token}` };
+    const newToken = await request.get(`${API}/api/workers/me/assignments`, { headers: newHeaders });
+    expect(newToken.status()).toBe(200);
+
+    const deleted = await request.delete(`${API}/api/workers/${worker.id}`);
+    expect(deleted.status()).toBe(204);
+
+    const deletedToken = await request.get(`${API}/api/workers/me/assignments`, { headers: newHeaders });
+    expect(deletedToken.status()).toBe(401);
+    await deleteTaskViaAPI(request, assignedTask.id);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Item 3: GET /api/tasks/:id/status
 // ---------------------------------------------------------------------------

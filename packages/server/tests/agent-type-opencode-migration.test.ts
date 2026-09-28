@@ -68,12 +68,13 @@ test('sqlite migration rewrites legacy persisted agent types to opencode', async
     const taskAgentType = migratedDb.prepare('SELECT agent_type FROM tasks WHERE id = ?').get('task-1') as { agent_type: string };
     const templateAgentType = migratedDb.prepare('SELECT agent_type FROM templates WHERE id = ?').get('tpl-1') as { agent_type: string };
     const projectAgentType = migratedDb.prepare('SELECT default_agent_type FROM projects WHERE id = ?').get('default') as { default_agent_type: string | null };
-    const workerAgentTypes = migratedDb.prepare('SELECT agent_types_json FROM workers WHERE id = ?').get('worker-1') as { agent_types_json: string };
+    const workerAgentTypes = migratedDb.prepare('SELECT agent_types_json, token_issued_at FROM workers WHERE id = ?').get('worker-1') as { agent_types_json: string; token_issued_at: number };
 
     assert.equal(taskAgentType.agent_type, 'opencode');
     assert.equal(templateAgentType.agent_type, 'opencode');
     assert.equal(projectAgentType.default_agent_type, 'opencode');
     assert.equal(workerAgentTypes.agent_types_json, '["opencode"]');
+    assert.equal(workerAgentTypes.token_issued_at, 1);
   } finally {
     migratedDb.close();
     rmSync(tempDir, { recursive: true, force: true });
@@ -131,6 +132,8 @@ test('postgres migration includes opencode normalization for persisted agent-typ
   assert.ok(executedSql.some((sql) => /UPDATE\s+templates\s+SET\s+agent_type\s*=\s*'opencode'/i.test(sql)), 'expected templates migration normalization query');
   assert.ok(executedSql.some((sql) => /UPDATE\s+projects\s+SET\s+default_agent_type\s*=\s*'opencode'/i.test(sql)), 'expected project migration normalization query');
   assert.ok(executedSql.some((sql) => /UPDATE\s+workers\s+SET\s+agent_types_json\s*=\s*'\["opencode"\]'/i.test(sql)), 'expected worker migration normalization query');
+  assert.ok(executedSql.some((sql) => /ALTER TABLE workers ADD COLUMN token_issued_at BIGINT/i.test(sql)), 'expected workers token issuance migration column');
+  assert.ok(executedSql.some((sql) => /UPDATE\s+workers\s+SET\s+token_issued_at\s*=\s*registered_at\s+WHERE\s+token_issued_at\s+IS NULL/i.test(sql)), 'expected workers token issuance backfill');
 });
 
 test('postgres repositories normalize invalid persisted agent types to opencode', async () => {

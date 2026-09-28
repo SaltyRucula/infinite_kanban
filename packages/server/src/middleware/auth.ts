@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 
-export type ServiceScope = 'projects:read' | 'agents:read' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register';
-const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register'];
+export type ServiceScope = 'projects:read' | 'agents:read' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register' | 'workers:manage';
+const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'];
 
 interface Credential { token?: string; sha256?: string; scopes: ServiceScope[] }
 
@@ -33,6 +33,7 @@ function requiredScope(req: Request): ServiceScope | undefined {
   if (p === '/health') return undefined;
   if (p.startsWith('/workers/me')) return undefined;
   if (p === '/workers/register' && method === 'POST') return 'workers:register';
+  if (/^\/workers\/[^/]+(?:\/status)?$/.test(p) && (method === 'PATCH' || method === 'DELETE')) return 'workers:manage';
   if (p === '/workers') return undefined;
   if (p === '/agents') return undefined;
   if (p === '/agents/refresh') return 'agents:read';
