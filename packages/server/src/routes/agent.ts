@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import type { Task } from '../types.js';
-import { isValidAgentType, VALID_AGENT_TYPES } from '@ai-agent-board/shared/constants.js';
+import { isValidAgentType, MAX_DESCRIPTION_LENGTH, VALID_AGENT_TYPES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
@@ -25,11 +25,20 @@ export function createAgentRouter(
 ): Router {
   const router = Router();
 
+  const hasLiveOpenCodeSession = (task: Task): boolean => {
+    return task.workerLeaseExpiresAt != null && task.workerLeaseExpiresAt >= Date.now();
+  };
+
   const hasActiveWorkerLease = (task: Task): boolean => {
     if (task.assignedWorkerId == null) return false;
-    if (task.agentStatus === 'planning' || task.agentStatus === 'executing') return true;
-    // A worker that reports a blocking question releases its claim, so a
-    // Pending worker task only has a live session while the lease is valid.
+    // A worker's claim is only "active" while its lease is genuinely live —
+    // for planning/executing that lease is renewed on every heartbeat; for
+    // awaiting_clarification a worker that reports a blocking question
+    // releases its claim, so a Pending worker task only has a live session
+    // while the lease is valid too. Requiring hasLiveOpenCodeSession
+    // uniformly here (rather than trusting planning/executing status alone)
+    // means callers never need to re-check the lease themselves.
+    if (task.agentStatus === 'planning' || task.agentStatus === 'executing') return hasLiveOpenCodeSession(task);
     return task.agentStatus === 'awaiting_clarification' && hasLiveOpenCodeSession(task);
   };
 
@@ -38,10 +47,6 @@ export function createAgentRouter(
       && task.agentStatus === 'awaiting_clarification'
       && !hasActiveWorkerLease(task)
       && !agentManager.isRunning(task.id);
-  };
-
-  const hasLiveOpenCodeSession = (task: Task): boolean => {
-    return task.workerLeaseExpiresAt != null && task.workerLeaseExpiresAt >= Date.now();
   };
 
   const hasMatchingWorkerSession = async (workerSessions: WorkerRepository, task: Task): Promise<boolean> => {
@@ -180,8 +185,16 @@ export function createAgentRouter(
       startedAt: Date.now(),
       completedAt: undefined,
     };
-    if (task.columnId === 'backlog') {
+    if (task.columnId === 'backlog' || task.columnId === 'pending') {
       updates.columnId = 'in-progress';
+    }
+    // A re-run of a parked task must not carry a stale clarification request
+    // or answer into the fresh run (SHOULD-FIX 3 in the review): otherwise the
+    // task keeps rendering in Pending while executing, and any leftover
+    // resume payload would be handed to the worker for unrelated work.
+    if (task.clarificationRequest || task.clarificationAnswer) {
+      updates.clarificationRequest = null;
+      updates.clarificationAnswer = null;
     }
     const updated = await repo.update(task.id, updates);
     if (!updated) {
@@ -243,8 +256,10 @@ export function createAgentRouter(
       return;
     }
     if (isParkedWorkerQuestion(task)) {
+      await repo.clearRun(task.id);
       const updated = await repo.update(task.id, {
         agentStatus: 'failed',
+        completedAt: Date.now(),
         columnId: 'in-progress',
         clarificationRequest: null,
         clarificationAnswer: null,
@@ -360,6 +375,16 @@ export function createAgentRouter(
     const sessionId = typeof req.body.sessionId === 'string' ? req.body.sessionId : '';
     const answer = typeof req.body.answer === 'string' ? req.body.answer : '';
 
+    // Bound lengths comparable to `question` (capped at MAX_DESCRIPTION_LENGTH
+    // in workers.ts) — sessionId and answer were previously unbounded.
+    if (sessionId.length > MAX_DESCRIPTION_LENGTH || answer.length > MAX_DESCRIPTION_LENGTH) {
+      res.status(400).json({
+        error: `sessionId and answer must be at most ${MAX_DESCRIPTION_LENGTH} characters`,
+        code: 'invalid_request',
+      });
+      return;
+    }
+
     if (await enqueueWorkerCommand(task, {
       type: 'clarification',
       requestId,
@@ -465,7 +490,9 @@ export function createAgentRouter(
       return;
     }
     const workerSessions = workerRepo;
-    if (!hasActiveWorkerLease(task) || !hasLiveOpenCodeSession(task) || !await hasMatchingWorkerSession(workerSessions, task)) {
+    // hasActiveWorkerLease already requires a live lease (hasLiveOpenCodeSession)
+    // for every worker-active status, so no separate lease check is needed here.
+    if (!hasActiveWorkerLease(task) || !await hasMatchingWorkerSession(workerSessions, task)) {
       res.status(404).json({ error: 'no OpenCode session found for this task' });
       return;
     }

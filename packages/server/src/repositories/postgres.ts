@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import type { Task, Priority, ColumnId, AgentStatus, AgentEvent } from '../types.js';
+import type { Task, Priority, ColumnId, AgentStatus, AgentEvent, TaskClarificationRequest } from '../types.js';
 import type { TaskRepository } from './types.js';
 import { isValidPriority, isValidColumnId, isValidAgentStatus, coerceAgentType, CLAIMABLE_AGENT_STATUS_SQL_LIST } from '@ai-agent-board/shared/constants.js';
 import { errorMessage } from '../utils.js';
@@ -195,19 +195,65 @@ export class PostgresTaskRepository implements TaskRepository {
     return rows.length > 0;
   }
 
-  async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed' | 'awaiting_clarification', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
-    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET agent_status = $1, completed_at = $2, summary = $3, run_claimed_at = NULL, worker_claim_token_hash = NULL, worker_lease_expires_at = NULL WHERE id = $4 AND assigned_worker_id = $5 AND worker_claim_token_hash = $6 AND worker_lease_expires_at >= $2 RETURNING *`, [status, completedAt, summary ?? error ?? null, id, workerId, claimTokenHash]);
+  async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
+    // Single atomic write: agent_status, completed_at/summary, the resulting
+    // column (review on completion; pending -> in-progress otherwise so a
+    // failure never leaves the task stranded in Pending), and clearing any
+    // stale clarification request/answer all land together — see the SQLite
+    // implementation for the rationale.
+    const { rows } = await this.pool.query<TaskRow>(
+      `UPDATE tasks SET
+         agent_status = $1,
+         completed_at = $2,
+         summary = $3,
+         column_id = CASE WHEN $1 = 'complete' THEN 'review' WHEN column_id = 'pending' THEN 'in-progress' ELSE column_id END,
+         clarification_request = NULL,
+         clarification_answer = NULL,
+         run_claimed_at = NULL,
+         worker_claim_token_hash = NULL,
+         worker_lease_expires_at = NULL
+       WHERE id = $4 AND assigned_worker_id = $5 AND worker_claim_token_hash = $6 AND worker_lease_expires_at >= $2
+       RETURNING *`,
+      [status, completedAt, summary ?? error ?? null, id, workerId, claimTokenHash],
+    );
+    return rows[0] ? rowToTask(rows[0]) : undefined;
+  }
+
+  async parkWorkerTaskForClarification(id: string, workerId: string, claimTokenHash: string, now: number, clarificationRequest: TaskClarificationRequest): Promise<Task | undefined> {
+    // Single atomic write — see the SQLite implementation for the rationale.
+    const { rows } = await this.pool.query<TaskRow>(
+      `UPDATE tasks SET
+         agent_status = 'awaiting_clarification',
+         column_id = 'pending',
+         completed_at = NULL,
+         clarification_request = $1,
+         clarification_answer = NULL,
+         run_claimed_at = NULL,
+         worker_claim_token_hash = NULL,
+         worker_lease_expires_at = NULL
+       WHERE id = $2 AND assigned_worker_id = $3 AND worker_claim_token_hash = $4 AND worker_lease_expires_at >= $5
+       RETURNING *`,
+      [JSON.stringify(clarificationRequest), id, workerId, claimTokenHash, now],
+    );
     return rows[0] ? rowToTask(rows[0]) : undefined;
   }
 
   async getExpiredWorkerTasks(now: number): Promise<Task[]> {
-    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id IS NOT NULL AND worker_lease_expires_at IS NOT NULL AND worker_lease_expires_at < $1 AND agent_status IN ('planning','executing')`, [now]);
+    // Defense in depth: also recover a task stranded in awaiting_clarification
+    // with no clarification_request — see the SQLite implementation.
+    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id IS NOT NULL AND (
+        (worker_lease_expires_at IS NOT NULL AND worker_lease_expires_at < $1 AND agent_status IN ('planning','executing'))
+        OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
+      )`, [now]);
     return rows.map(rowToTask);
   }
 
   async getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]> {
     if (workerIds.length === 0) return [];
-    const { rows } = await this.pool.query<TaskRow>('SELECT * FROM tasks WHERE assigned_worker_id = ANY($1) AND agent_status IN (\'planning\',\'executing\')', [workerIds]);
+    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id = ANY($1) AND (
+        agent_status IN ('planning','executing')
+        OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
+      )`, [workerIds]);
     return rows.map(rowToTask);
   }
 

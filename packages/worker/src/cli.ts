@@ -7,6 +7,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import {
   isValidAgentType,
+  MAX_DESCRIPTION_LENGTH,
   VALID_AGENT_TYPES,
   WORKER_ASSIGNMENT_POLL_INTERVAL_MS,
   WORKER_HEARTBEAT_INTERVAL_MS,
@@ -77,6 +78,15 @@ async function loadConfig(): Promise<Config> {
 function safeWorkerError(error: unknown, workspacePath: string): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replaceAll(workspacePath, '[local workspace]');
+}
+
+// The server rejects an `awaiting_input` completion whose question exceeds
+// MAX_DESCRIPTION_LENGTH with a 400, which the worker's catch-all then turns
+// into a `failed` task — losing the question AND the work summary. Truncate
+// here, worker-side, before POSTing so a runaway extraction (see
+// extractInputRequest) can never trigger that failure path.
+export function truncateQuestion(question: string): string {
+  return question.length > MAX_DESCRIPTION_LENGTH ? question.slice(0, MAX_DESCRIPTION_LENGTH) : question;
 }
 
 async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string; readonly runner: RunnerProfile }> {
@@ -284,7 +294,7 @@ async function executeTask(
         status: result.status,
         ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
         ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
-        ...(result.question ? { question: safeWorkerError(result.question, workspacePath) } : {}),
+        ...(result.question ? { question: truncateQuestion(safeWorkerError(result.question, workspacePath)) } : {}),
         ...(sessionId ? { sessionId } : {}),
       }),
     });

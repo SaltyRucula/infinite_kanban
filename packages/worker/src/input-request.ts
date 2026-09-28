@@ -15,11 +15,27 @@ export const INPUT_REQUEST_INSTRUCTIONS = [
   'will then continue from where you stopped.',
 ].join(' ');
 
-/** Returns the question after the last marker in the agent's final text, if any. */
+/**
+ * Returns the question after the marker if — and only if — the marker
+ * anchors the START of the FINAL non-empty line of the given text. The
+ * marker text is also present verbatim in `INPUT_REQUEST_INSTRUCTIONS` (the
+ * system prompt every agent is handed), so a model that recaps its own
+ * instructions mid-run would otherwise false-positive park already-finished
+ * work — and because `lastIndexOf` used to take *everything after* that
+ * occurrence as the "question", the resulting text could be many KB,
+ * exceeding MAX_DESCRIPTION_LENGTH and 400ing the completion POST. Anchoring
+ * to the start of the last line matches the instructions given to the agent
+ * ("end your response with a final line that starts with the marker") and
+ * bounds the question to that single line.
+ */
 export function extractInputRequest(text: string): string | undefined {
-  const index = text.lastIndexOf(INPUT_REQUEST_MARKER);
+  const lines = text.split('\n');
+  let index = lines.length - 1;
+  while (index >= 0 && lines[index].trim() === '') index -= 1;
   if (index < 0) return undefined;
-  const question = text.slice(index + INPUT_REQUEST_MARKER.length).trim();
+  const lastLine = lines[index].trim();
+  if (!lastLine.startsWith(INPUT_REQUEST_MARKER)) return undefined;
+  const question = lastLine.slice(INPUT_REQUEST_MARKER.length).trim();
   return question || undefined;
 }
 

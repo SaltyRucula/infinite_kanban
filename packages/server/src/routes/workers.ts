@@ -309,32 +309,20 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(400).json({ error: `awaiting_input requires a question of at most ${MAX_DESCRIPTION_LENGTH} characters` });
       return;
     }
+    if (sessionId.length > MAX_DESCRIPTION_LENGTH) {
+      res.status(400).json({ error: `sessionId must be at most ${MAX_DESCRIPTION_LENGTH} characters` });
+      return;
+    }
     const claim = claimTokenHash(req);
     if (!claim) {
       res.status(409).json({ error: 'task claim is invalid' });
       return;
     }
     const now = Date.now();
-    const completed = await tasks.completeWorkerTask(
-      task.id,
-      worker.id,
-      claim,
-      status === 'awaiting_input' ? 'awaiting_clarification' : status,
-      now,
-      typeof req.body.summary === 'string' ? req.body.summary : undefined,
-      typeof req.body.error === 'string' ? req.body.error : undefined,
-    );
-    if (!completed) {
-      res.status(409).json({ error: 'task claim is expired or invalid' });
-      return;
-    }
-    await workers.clearTaskSessions(task.id);
-    await workers.clearTaskCommands(task.id);
 
     // Mirror the in-process lifecycle (makeStatusCallback): finished work goes
     // to Review, a blocking question parks the task in Pending, and a failure
     // never leaves it stranded in Pending.
-    let updates: Partial<Task>;
     if (status === 'awaiting_input') {
       const clarificationRequest = {
         requestId: uuid(),
@@ -344,7 +332,18 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
         prompt: question,
         timestamp: now,
       };
-      updates = { columnId: 'pending', completedAt: undefined, clarificationRequest, clarificationAnswer: null };
+      // Single atomic write: agent_status, column_id, and clarification_request
+      // land together, so a mid-write failure can never strand the row in
+      // awaiting_clarification with no clarification_request (see BLOCKER 1
+      // in the review: that state is invisible to every recovery predicate
+      // and un-answerable via /clarification/resume).
+      const parked = await tasks.parkWorkerTaskForClarification(task.id, worker.id, claim, now, clarificationRequest);
+      if (!parked) {
+        res.status(409).json({ error: 'task claim is expired or invalid' });
+        return;
+      }
+      await workers.clearTaskSessions(task.id);
+      await workers.clearTaskCommands(task.id);
       const event: AgentEvent = {
         id: uuid(),
         taskId: task.id,
@@ -356,14 +355,28 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       await tasks.insertEvent(event);
       const { broadcast } = await import('../websocket.js');
       broadcast({ type: 'agent_event', payload: event });
-    } else {
-      updates = { clarificationRequest: null, clarificationAnswer: null };
-      if (status === 'complete') updates.columnId = 'review';
-      else if (completed.columnId === 'pending') updates.columnId = 'in-progress';
+      broadcastTaskUpdate(parked);
+      res.json({ task: toWorkerTaskAssignment(parked) });
+      return;
     }
-    const updated = await tasks.update(task.id, updates) ?? completed;
-    broadcastTaskUpdate(updated);
-    res.json({ task: toWorkerTaskAssignment(updated) });
+
+    const completed = await tasks.completeWorkerTask(
+      task.id,
+      worker.id,
+      claim,
+      status,
+      now,
+      typeof req.body.summary === 'string' ? req.body.summary : undefined,
+      typeof req.body.error === 'string' ? req.body.error : undefined,
+    );
+    if (!completed) {
+      res.status(409).json({ error: 'task claim is expired or invalid' });
+      return;
+    }
+    await workers.clearTaskSessions(task.id);
+    await workers.clearTaskCommands(task.id);
+    broadcastTaskUpdate(completed);
+    res.json({ task: toWorkerTaskAssignment(completed) });
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {

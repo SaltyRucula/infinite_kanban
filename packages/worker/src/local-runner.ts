@@ -272,7 +272,19 @@ async function resolveSession(
   if (task.resume) {
     // OpenCode persists sessions on disk, so the paused conversation is
     // usually still available even if the server that ran it has exited.
-    const existing = await client.session.get({ path: { id: task.resume.sessionId } }).catch(() => undefined);
+    // client.session.get is reached through an `as unknown as` cast in
+    // defaultCreateClient, so an installed SDK that lacks the method throws
+    // SYNCHRONOUSLY rather than rejecting — a bare `.catch()` never sees a
+    // synchronous throw, which used to fail the whole task instead of
+    // falling back to a fresh session below. Wrap the whole lookup in
+    // try/catch so any failure (missing method or a rejected promise) falls
+    // through to creating a new session.
+    let existing: { data?: { id: string } } | undefined;
+    try {
+      existing = await client.session.get({ path: { id: task.resume.sessionId } });
+    } catch {
+      existing = undefined;
+    }
     if (existing?.data?.id) {
       return { sessionId: existing.data.id, firstPrompt: buildResumeAnswerPrompt(task.resume) };
     }

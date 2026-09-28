@@ -163,9 +163,17 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   let resolveSessionError: (message: string) => void = () => {};
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
-  // Output streams as deltas or whole-part snapshots, so this can repeat text;
-  // it is only scanned for the input-request marker, never shown to anyone.
+  // Output streams as deltas or whole-part snapshots for a single evolving
+  // assistant message, so this can repeat text within one message — it is
+  // only scanned for the input-request marker, never shown to anyone. Any
+  // OTHER event type between bursts of 'output' events (tool call, thinking,
+  // etc.) marks the end of that message, so the buffer is reset there too:
+  // otherwise it would accumulate every assistant message across the whole
+  // run, and the marker text baked into this session's own system prompt
+  // (INPUT_REQUEST_INSTRUCTIONS) could be picked up from an earlier turn that
+  // merely recapped it, false-parking already-finished work.
   let outputText = '';
+  let lastEventType: CoreEvent['type'] | undefined;
 
   const session = await provider.createSession({
     contextId: input.task.id,
@@ -174,7 +182,11 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
       + `${INPUT_REQUEST_INSTRUCTIONS} `
       + `Task title: ${input.task.title}`,
     onEvent: (event: CoreEvent) => {
-      if (event.type === 'output') outputText += event.content;
+      if (event.type === 'output') {
+        if (lastEventType !== undefined && lastEventType !== 'output') outputText = '';
+        outputText += event.content;
+      }
+      lastEventType = event.type;
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {
         id: event.id || uuid(),

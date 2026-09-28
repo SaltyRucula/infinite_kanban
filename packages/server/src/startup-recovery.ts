@@ -11,8 +11,17 @@ export function shouldRecoverGroupChildToIdle(status: Task['agentStatus']): bool
   return status === 'planning';
 }
 
-export function shouldRecoverStandaloneTaskAsFailed(status: Task['agentStatus']): boolean {
-  return status === 'planning' || status === 'executing';
+export function shouldRecoverStandaloneTaskAsFailed(status: Task['agentStatus'], hasClarificationRequest = true): boolean {
+  if (status === 'planning' || status === 'executing') return true;
+  // Defense in depth: a park write that fails partway through (see BLOCKER 1
+  // in the review — completeWorkerTask + a second tasks.update writing
+  // clarification_request used to be two non-atomic writes) can leave a row
+  // stuck in awaiting_clarification with no clarification_request. That state
+  // is invisible to getWorkerAssignments/getExpiredWorkerTasks/
+  // getAssignedWorkerTasks/getPendingRuns and un-answerable via
+  // /clarification/resume, so treat it as failed/recoverable too.
+  if (status === 'awaiting_clarification' && !hasClarificationRequest) return true;
+  return false;
 }
 
 /**

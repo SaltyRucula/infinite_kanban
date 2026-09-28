@@ -356,3 +356,38 @@ test('startOpenCodeServerTask carries the question and answer into a new session
   assert.match(state.prompts[0]?.text ?? '', /Your question: Which API version\?/);
   assert.match(state.prompts[0]?.text ?? '', /Answer: Use v2/);
 });
+
+// SHOULD-FIX 5 regression: defaultCreateClient reaches client.session.get
+// through an `as unknown as OpenCodeClientLike` cast, so an installed SDK
+// version that lacks the method (or otherwise throws synchronously when
+// invoked, e.g. a TypeError from calling a non-function) throws BEFORE a
+// bare `.catch()` on its return value can ever see it. That used to reject
+// resolveSession's promise and fail the whole task instead of falling back
+// to creating a fresh session.
+test('startOpenCodeServerTask falls back to a fresh session when client.session.get throws synchronously', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+  const client = createFakeClient(state);
+  const syncThrowingClient: typeof client = {
+    ...client,
+    session: {
+      ...client.session,
+      get: () => { throw new TypeError('client.session.get is not a function'); },
+    },
+  };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, resume: { sessionId: 'ses_paused', question: 'Which API version?', answer: 'Use v2' } },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => syncThrowingClient,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'complete');
+  assert.equal(live.sessionId, 'ses_worker_1');
+  assert.deepEqual(state.sessionCreates, ['Implement local runner seam']);
+  assert.match(state.prompts[0]?.text ?? '', /Your question: Which API version\?/);
+  assert.match(state.prompts[0]?.text ?? '', /Answer: Use v2/);
+});

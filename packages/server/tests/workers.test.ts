@@ -69,6 +69,7 @@ class FakeTaskRepository implements TaskRepository {
   async renewWorkerLease(): Promise<boolean> { return this.claimed; }
   async isWorkerClaimValid(): Promise<boolean> { return this.claimed; }
   async completeWorkerTask(): Promise<Task | undefined> { return this.claimed ? task : undefined; }
+  async parkWorkerTaskForClarification(): Promise<Task | undefined> { return this.claimed ? task : undefined; }
   async getExpiredWorkerTasks(): Promise<Task[]> { return []; }
   async getAssignedWorkerTasks(): Promise<Task[]> { return []; }
   async update(): Promise<Task | undefined> { return undefined; }

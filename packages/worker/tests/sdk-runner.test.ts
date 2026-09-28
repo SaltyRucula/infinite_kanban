@@ -76,7 +76,7 @@ test('startAgentSdkTask reports complete when execute() resolves complete with n
 test('startAgentSdkTask reports awaiting_input when the agent output ends with a blocking question', async () => {
   const provider = createFakeProvider([
     { id: 'e1', contextId: 'task-1', type: 'output', content: 'Checked the repo. ', timestamp: Date.now() },
-    { id: 'e2', contextId: 'task-1', type: 'output', content: 'NEEDS_INPUT: Should the review cover tests too?', timestamp: Date.now() },
+    { id: 'e2', contextId: 'task-1', type: 'output', content: '\nNEEDS_INPUT: Should the review cover tests too?', timestamp: Date.now() },
   ]);
 
   const live = await startAgentSdkTask({
@@ -89,6 +89,31 @@ test('startAgentSdkTask reports awaiting_input when the agent output ends with a
 
   assert.equal(result.status, 'awaiting_input');
   assert.equal(result.question, 'Should the review cover tests too?');
+});
+
+// SHOULD-FIX 2 regression: the marker text ('NEEDS_INPUT:') is baked into
+// every session's own system prompt (INPUT_REQUEST_INSTRUCTIONS), and
+// sdk-runner accumulates every 'output' event across the whole run. A model
+// that recaps those instructions mid-run — without genuinely being blocked —
+// must not park already-finished work, and a subsequent unrelated event type
+// (e.g. a tool call) must reset the buffer so it reflects only the LATEST
+// assistant message, not the whole run's output history.
+test('startAgentSdkTask does not park when an earlier turn recaps the marker instructions but the run finishes normally', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'Understood — if truly blocked I will end with a line starting with NEEDS_INPUT: and a clear question.', timestamp: Date.now() },
+    { id: 'e2', contextId: 'task-1', type: 'tool_call', content: 'ran the test suite', timestamp: Date.now() },
+    { id: 'e3', contextId: 'task-1', type: 'output', content: 'All tests pass; feature implemented successfully.', timestamp: Date.now() },
+  ]);
+
+  const live = await startAgentSdkTask({
+    task,
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'complete');
 });
 
 test('startAgentSdkTask carries a resumed question and answer into the prompt', async () => {
