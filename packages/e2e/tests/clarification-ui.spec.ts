@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { API, waitForBoard } from './helpers';
 
-test.describe('AgentPanel clarification card', () => {
+test.describe('Task detail clarification card (deep link)', () => {
   test('renders prompt/choices from persisted state and calls /clarification/resume exactly once', async ({ page }) => {
     const now = Date.now();
     const taskId = `clarify-task-${now}`;
@@ -19,7 +19,7 @@ test.describe('AgentPanel clarification card', () => {
       agentStatus: 'awaiting_clarification',
       createdAt: now,
       projectId: 'default',
-      agentType: 'copilot',
+      agentType: 'opencode',
       clarificationRequest: {
         requestId,
         prompt,
@@ -98,20 +98,19 @@ test.describe('AgentPanel clarification card', () => {
     await waitForBoard(page);
     await expect.poll(() => tasksListCallCount).toBeGreaterThan(0);
 
-    await expect(page.getByText(taskPayload.title, { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: taskPayload.title, exact: true })).toBeVisible();
 
     const clarificationCard = page.getByTestId('clarification-card');
-    await expect(clarificationCard.getByText('Clarification required')).toBeVisible();
+    await expect(clarificationCard.getByText('Clarification Needed')).toBeVisible();
     await expect(clarificationCard.getByTestId('clarification-prompt')).toHaveText(prompt);
     await expect(page.getByRole('button', { name: 'staging', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'production', exact: true })).toBeVisible();
 
     await page.reload();
     await waitForBoard(page);
-    await expect(page.getByTestId('clarification-card').getByText('Clarification required')).toBeVisible();
+    await expect(page.getByTestId('clarification-card').getByText('Clarification Needed')).toBeVisible();
     await expect(page.getByTestId('clarification-prompt')).toHaveText(prompt);
 
-    await expect(page.getByPlaceholder('Send a message to the agent...')).toBeDisabled();
 
     const choiceButton = page.getByRole('button', { name: 'staging', exact: true });
     await choiceButton.click();

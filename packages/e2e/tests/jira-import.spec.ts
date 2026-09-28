@@ -89,7 +89,8 @@ test.describe('Jira Import Flow', () => {
     await closeButton.click();
     await expect(dialog).not.toBeVisible();
 
-    await expect(page.getByRole('heading', { name: taskTitle })).toBeVisible();
+    // The imported task is merged into the current project's task queue.
+    await expect(page.locator('div.group').filter({ hasText: taskTitle })).toBeVisible();
   });
 
   test('sends the selected alternate Jira project and keeps it off the current board', async ({ page, request }) => {
@@ -145,7 +146,7 @@ test.describe('Jira Import Flow', () => {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dialog).not.toBeVisible();
 
-    await expect(page.getByText(taskTitle, { exact: true })).toHaveCount(0);
+    await expect(page.locator('div.group').filter({ hasText: taskTitle })).toHaveCount(0);
   });
 
   test('handles Jira import error and loading disabled state', async ({ page }) => {

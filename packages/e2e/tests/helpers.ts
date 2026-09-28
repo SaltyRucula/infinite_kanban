@@ -115,6 +115,52 @@ export async function createTaskViaAPI(request: any, overrides: Record<string, a
   return res.json();
 }
 
+/**
+ * Start a task on the board host's in-process agent manager via the
+ * orchestration API. Board tasks otherwise run on remote workers; the E2E
+ * harness backs the in-process `opencode` agent with a deterministic
+ * clarification provider (it asks "Which branch should I target?").
+ */
+export async function startInProcessRun(
+  request: any,
+  title: string,
+): Promise<{ taskId: string; projectId: string; cleanup: () => Promise<void> }> {
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const repoPath = prepareTestRepo(`in-process-${stamp}`, { clean: true });
+  const projectRes = await request.post(`${API}/api/projects`, {
+    data: { name: `In-process ${stamp}`, repoPath, defaultAgentType: 'opencode' },
+  });
+  expect(projectRes.status()).toBe(201);
+  const projectId = String((await projectRes.json()).id);
+
+  const runRes = await request.post(`${API}/api/orchestrations`, {
+    headers: { 'Idempotency-Key': `in-process-${stamp}` },
+    data: { project: projectId, agent: 'opencode', title, description: title, autoStart: true },
+  });
+  expect(runRes.status()).toBe(201);
+  const taskId = String((await runRes.json()).task.id);
+
+  return {
+    taskId,
+    projectId,
+    cleanup: async () => {
+      await request.post(`${API}/api/tasks/${taskId}/stop`).catch(() => {});
+      await request.delete(`${API}/api/tasks/${taskId}`).catch(() => {});
+      await request.delete(`${API}/api/projects/${projectId}`).catch(() => {});
+    },
+  };
+}
+
+/** Register a worker via the worker API and return its id and token. */
+export async function registerWorker(request: any, name: string): Promise<{ id: string; token: string }> {
+  const res = await request.post(`${API}/api/workers/register`, {
+    data: { name, agentTypes: ['opencode'], maxConcurrentTasks: 1, hostname: `${name}-host` },
+  });
+  expect(res.ok()).toBeTruthy();
+  const body = await res.json();
+  return { id: body.worker.id, token: body.token };
+}
+
 /** Delete a task by ID via the REST API (cleanup). */
 export async function deleteTaskViaAPI(request: any, id: string): Promise<void> {
   await request.delete(`${API}/api/tasks/${id}`);
