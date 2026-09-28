@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   X,
   Play,
@@ -49,6 +49,8 @@ export function TaskDetailPanel({
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [clarificationAnswer, setClarificationAnswer] = useState('');
   const [submittingAnswer, setSubmittingAnswer] = useState(false);
+  const [localSubmission, setLocalSubmission] = useState<{ requestId: string; answer: string } | null>(null);
+  const submitInFlightRef = useRef(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -106,22 +108,38 @@ export function TaskDetailPanel({
   if (!isOpen || !task) return null;
 
   const isRunning = task.agentStatus === 'executing' || task.agentStatus === 'planning';
+  // Worker-owned branches live on the worker host, so board-host git actions
+  // (PR, local merge, worktree cleanup) would act on the wrong checkout.
+  const isWorkerOwned = !!task.assignedWorkerId;
+  const requestId = task.clarificationRequest?.requestId;
+  const submittedAnswer = requestId && task.clarificationAnswer?.requestId === requestId
+    ? task.clarificationAnswer.answer
+    : requestId && localSubmission?.requestId === requestId
+      ? localSubmission.answer
+      : null;
+  const canAnswerClarification = task.agentStatus === 'awaiting_clarification' && !submittedAnswer;
 
   const handleClarificationSubmit = async (answerText?: string) => {
     const textToSubmit = answerText ?? clarificationAnswer;
     if (!task.clarificationRequest || !textToSubmit.trim()) return;
 
+    if (submitInFlightRef.current || !canAnswerClarification) return;
+    submitInFlightRef.current = true;
     setSubmittingAnswer(true);
     try {
-      await onResumeClarification(task.id, {
+      const result = await onResumeClarification(task.id, {
         requestId: task.clarificationRequest.requestId,
         sessionId: task.clarificationRequest.sessionId,
         answer: textToSubmit.trim(),
       });
+      if (result !== undefined) {
+        setLocalSubmission({ requestId: task.clarificationRequest.requestId, answer: textToSubmit.trim() });
+      }
       setClarificationAnswer('');
     } catch (err) {
       console.error('Failed to submit clarification:', err);
     } finally {
+      submitInFlightRef.current = false;
       setSubmittingAnswer(false);
     }
   };
@@ -278,19 +296,19 @@ export function TaskDetailPanel({
         </div>
 
         {task.clarificationRequest && (
-          <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] space-y-2">
+          <div data-testid="clarification-card" className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] space-y-2">
             <div className="flex items-center gap-1.5 font-semibold text-amber-400">
               <HelpCircle className="w-4 h-4 shrink-0" />
               <span>Clarification Needed</span>
             </div>
-            <p className="text-amber-200">{task.clarificationRequest.prompt}</p>
+            <p data-testid="clarification-prompt" className="text-amber-200">{task.clarificationRequest.prompt}</p>
 
             {task.clarificationRequest.choices && task.clarificationRequest.choices.length > 0 ? (
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {task.clarificationRequest.choices.map((choice) => (
                   <button
                     key={choice}
-                    disabled={submittingAnswer}
+                    disabled={submittingAnswer || !canAnswerClarification}
                     onClick={() => void handleClarificationSubmit(choice)}
                     className="px-2.5 py-1 rounded text-[11px] bg-amber-500/20 hover:bg-amber-500/40 text-amber-100 border border-amber-500/40 transition-colors"
                   >
@@ -302,19 +320,24 @@ export function TaskDetailPanel({
               <div className="flex gap-2 pt-1">
                 <input
                   type="text"
+                  disabled={!canAnswerClarification}
                   value={clarificationAnswer}
                   onChange={(e) => setClarificationAnswer(e.target.value)}
                   placeholder="Type your response..."
                   className="flex-1 bg-[#08090c] border border-amber-500/40 rounded px-2.5 py-1 text-[11px] text-white focus:outline-none focus:border-amber-400"
                 />
                 <button
-                  disabled={submittingAnswer || !clarificationAnswer.trim()}
+                  disabled={submittingAnswer || !canAnswerClarification || !clarificationAnswer.trim()}
                   onClick={() => void handleClarificationSubmit()}
+                  aria-label="Submit clarification reply"
                   className="px-3 py-1 bg-amber-500 text-slate-950 font-semibold rounded text-[11px] hover:bg-amber-400 disabled:opacity-50"
                 >
                   <Send className="w-3.5 h-3.5" />
                 </button>
               </div>
+            )}
+            {submittedAnswer && (
+              <p className="text-[11px] text-amber-100/80">Submitted: {submittedAnswer}</p>
             )}
           </div>
         )}
@@ -352,7 +375,7 @@ export function TaskDetailPanel({
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-1">
+          {!isWorkerOwned && <div className="flex flex-wrap gap-2 pt-1">
             <button
               onClick={() => void handlePR()}
               disabled={actionLoading === 'pr'}
@@ -381,7 +404,7 @@ export function TaskDetailPanel({
                 Clean Worktree
               </button>
             )}
-          </div>
+          </div>}
         </div>
 
         <div className="space-y-1.5">

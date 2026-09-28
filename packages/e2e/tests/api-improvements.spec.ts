@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import WebSocket from 'ws';
-import { API, deleteTaskViaAPI, prepareTestRepo, waitForBoard } from './helpers';
+import { API, deleteTaskViaAPI, registerWorker, startInProcessRun, waitForBoard } from './helpers';
 
 /**
  * E2E tests for the API Improvements (Items 1–5):
@@ -77,21 +77,51 @@ test.describe('Single-call task creation + autoRun', () => {
     await deleteTaskViaAPI(request, task.id);
   });
 
-  test('POST /api/tasks with autoRun=true and columnId=in-progress requests run', async ({ request }) => {
+  test('POST /api/tasks with autoRun=true does not dispatch without an assigned worker', async ({ request }) => {
+    // Board tasks execute on remote workers. Creation cannot assign a worker
+    // (assignment goes through POST /api/tasks/:id/assign), so autoRun on its
+    // own records no run request and never starts an in-process agent.
     const res = await request.post(`${API}/api/tasks`, {
       data: {
         title: 'Auto-run task',
-        description: 'Should auto-start the agent',
+        description: 'Should not start without a worker',
         columnId: 'in-progress',
         agentType: 'opencode',
-        assignedWorkerId: 'worker-1',
         autoRun: true,
       },
     });
     expect(res.status()).toBe(201);
     const task = await res.json();
     expect(task.columnId).toBe('in-progress');
-    expect(task.runRequestedAt).toBeDefined();
+    expect(task.agentStatus).toBe('idle');
+    expect(task.runRequestedAt).toBeUndefined();
+
+    await deleteTaskViaAPI(request, task.id);
+  });
+
+  test('assigning a registered worker and running dispatches the task to that worker', async ({ request }) => {
+    const worker = await registerWorker(request, `autorun-worker-${Date.now()}`);
+    const res = await request.post(`${API}/api/tasks`, {
+      data: { title: 'Worker dispatch task', columnId: 'in-progress', agentType: 'opencode' },
+    });
+    const task = await res.json();
+
+    const assign = await request.post(`${API}/api/tasks/${task.id}/assign`, { data: { workerId: worker.id } });
+    expect(assign.status()).toBe(200);
+    expect((await assign.json()).assignedWorkerId).toBe(worker.id);
+
+    const run = await request.post(`${API}/api/tasks/${task.id}/run`);
+    expect(run.status()).toBe(200);
+    const running = await run.json();
+    expect(running.agentStatus).toBe('planning');
+    expect(running.runRequestedAt).toBeDefined();
+
+    const assignments = await request.get(`${API}/api/workers/me/assignments`, {
+      headers: { Authorization: `Bearer ${worker.token}` },
+    });
+    expect(assignments.status()).toBe(200);
+    const assigned = (await assignments.json()).tasks as Array<{ id: string }>;
+    expect(assigned.map((t) => t.id)).toContain(task.id);
 
     await deleteTaskViaAPI(request, task.id);
   });
@@ -235,7 +265,7 @@ test.describe('Batch create endpoint', () => {
     expect(res.status()).toBe(400);
   });
 
-  test('POST /api/tasks/batch with autoRun creates tasks and requests run', async ({ request }) => {
+  test('POST /api/tasks/batch with autoRun creates tasks without dispatching unassigned ones', async ({ request }) => {
     const res = await request.post(`${API}/api/tasks/batch`, {
       data: {
         tasks: [
@@ -243,7 +273,6 @@ test.describe('Batch create endpoint', () => {
             title: 'Batch autoRun',
             columnId: 'in-progress',
             agentType: 'opencode',
-            assignedWorkerId: 'worker-1',
             autoRun: true,
           },
           {
@@ -257,7 +286,9 @@ test.describe('Batch create endpoint', () => {
     const body = await res.json();
     expect(body.tasks).toHaveLength(2);
 
-    expect(body.tasks[0].runRequestedAt).toBeDefined();
+    expect(body.tasks[0].columnId).toBe('in-progress');
+    expect(body.tasks[0].agentStatus).toBe('idle');
+    expect(body.tasks[0].runRequestedAt).toBeUndefined();
     expect(body.tasks[1].agentStatus).toBe('idle');
 
     for (const t of body.tasks) {
@@ -290,20 +321,15 @@ test.describe('agent_complete WebSocket event', () => {
       }
     });
 
-    // 2. Create a task with autoRun — agent will start executing
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: {
-        title: 'WS complete test',
-        description: 'Agent will be stopped to trigger agent_complete',
-        columnId: 'in-progress',
-        agentType: 'opencode',
-        autoRun: true,
-      },
-    });
-    const task = await createRes.json();
+    // 2. Start an in-process run and wait until the agent is live
+    const run = await startInProcessRun(request, 'WS complete test');
+    const task = { id: run.taskId };
+    await expect(async () => {
+      const status = await (await request.get(`${API}/api/tasks/${task.id}/status`)).json();
+      expect(status.agentStatus).toBe('awaiting_clarification');
+    }).toPass({ timeout: 15_000, intervals: [250] });
 
-    // 3. Wait briefly for the agent to start, then stop it
-    await new Promise(r => setTimeout(r, 3_000));
+    // 3. Stop it
     await request.post(`${API}/api/tasks/${task.id}/stop`);
 
     // 4. Wait for agent_complete to arrive via WS
@@ -320,7 +346,7 @@ test.describe('agent_complete WebSocket event', () => {
 
     // Cleanup
     ws.close();
-    await deleteTaskViaAPI(request, task.id);
+    await run.cleanup();
   });
 });
 
@@ -332,20 +358,13 @@ test.describe('Task result summary events', () => {
   test('events include structured summary with metadata on completion', async ({ request }) => {
     test.setTimeout(60_000);
 
-    // Create a task with autoRun — agent starts executing
-    const createRes = await request.post(`${API}/api/tasks`, {
-      data: {
-        title: 'Summary event test',
-        description: 'Should generate summary event',
-        columnId: 'in-progress',
-        agentType: 'opencode',
-        autoRun: true,
-      },
-    });
-    const task = await createRes.json();
-
-    // Wait for agent to start, then stop it to force a clean termination
-    await new Promise(r => setTimeout(r, 3_000));
+    // Start an in-process run, wait for it to be live, then stop it to force a clean termination
+    const run = await startInProcessRun(request, 'Summary event test');
+    const task = { id: run.taskId };
+    await expect(async () => {
+      const status = await (await request.get(`${API}/api/tasks/${task.id}/status`)).json();
+      expect(status.agentStatus).toBe('awaiting_clarification');
+    }).toPass({ timeout: 15_000, intervals: [250] });
     await request.post(`${API}/api/tasks/${task.id}/stop`);
 
     // Wait for agent status to reach a terminal state
@@ -368,10 +387,10 @@ test.describe('Task result summary events', () => {
     }).toPass({ timeout: 10_000, intervals: [500] });
 
     expect(typeof summaryEvent.metadata.duration).toBe('number');
-    expect(summaryEvent.metadata.agentType).toBe('copilot');
+    expect(summaryEvent.metadata.agentType).toBe('opencode');
 
     // Cleanup
-    await deleteTaskViaAPI(request, task.id);
+    await run.cleanup();
   });
 });
 

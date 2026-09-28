@@ -110,7 +110,8 @@ export function TaskQueuePanel({
 
     return [...list].sort((a, b) => {
       if (sortBy === 'priority') {
-        return (PRIORITY_WEIGHT[b.priority] ?? 2) - (PRIORITY_WEIGHT[a.priority] ?? 2);
+        // Lower weight = more urgent (critical is 0), so critical sorts first.
+        return (PRIORITY_WEIGHT[a.priority] ?? 2) - (PRIORITY_WEIGHT[b.priority] ?? 2);
       }
       if (sortBy === 'created') {
         return b.createdAt - a.createdAt;
