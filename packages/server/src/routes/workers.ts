@@ -70,14 +70,16 @@ function commandPollLimit(req: Request): number {
 /**
  * A run started from Review is a review, not an implementation. A pass keeps
  * the task in Review with the findings as its summary; requested changes send
- * it back to In Progress (idle) so the next run implements them; a review that
- * reports no verdict is never treated as a pass.
+ * it back to In Progress (idle) so the next run implements them. The caller
+ * only invokes this once a reviewVerdict has actually been reported — a
+ * review that fails to produce one is settled as an ordinary completion, not
+ * routed here (see the reviewVerdict-presence check where this is called).
  */
 async function settleReviewRun(
   tasks: TaskRepository,
   completed: Task,
   status: 'complete' | 'failed',
-  verdict: 'pass' | 'changes_requested' | undefined,
+  verdict: 'pass' | 'changes_requested',
 ): Promise<Task> {
   const now = Date.now();
   let updates: Partial<Task>;
@@ -86,14 +88,28 @@ async function settleReviewRun(
     updates = { columnId: 'review' };
     content = `Review passed.\n\n${completed.summary ?? ''}`.trim();
   } else if (status === 'complete' && verdict === 'changes_requested') {
+    // completeWorkerTask() clears run_claimed_at/worker_claim_token_hash but
+    // intentionally leaves run_requested_at alone (a normal complete/failed
+    // run may still want it re-evaluated elsewhere), and update() below would
+    // otherwise re-persist the stale run_requested_at from the row it reads.
+    // Without this, the task exactly matches getWorkerAssignments' predicate
+    // (run_requested_at set, agent_status idle, no claim) and a worker
+    // re-claims it within one poll, silently starting an unattended
+    // implementation run. Clear it before update() re-reads the row.
+    await tasks.clearRun(completed.id);
     updates = { columnId: 'in-progress', agentStatus: 'idle', startedAt: undefined, completedAt: undefined };
     content = `Review requested changes; task moved back to In Progress.\n\n${completed.summary ?? ''}`.trim();
   } else {
-    const reason = status === 'complete' ? 'Review finished without a verdict.' : 'Review failed.';
+    // status === 'failed' (a verdict was still reported, e.g. alongside a
+    // partial-failure report). completeWorkerTask() already wrote agent_status
+    // = 'failed' directly, so re-asserting it here is a same-state write, not
+    // a transition — it never goes through 'complete' first, so this can't
+    // hit the disallowed complete -> failed hop in VALID_AGENT_STATUS_TRANSITIONS.
+    const reason = 'Review failed.';
     updates = { columnId: 'review', agentStatus: 'failed', summary: completed.summary ? `${reason}\n\n${completed.summary}` : reason };
     content = updates.summary ?? reason;
   }
-  const event: AgentEvent = { id: uuid(), taskId: completed.id, type: status === 'failed' || !verdict ? 'error' : 'output', content, timestamp: now };
+  const event: AgentEvent = { id: uuid(), taskId: completed.id, type: status === 'failed' ? 'error' : 'output', content, timestamp: now };
   await tasks.insertEvent(event);
   const { broadcast } = await import('../websocket.js');
   broadcast({ type: 'agent_event', payload: event });
@@ -359,7 +375,15 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     await workers.clearTaskSessions(task.id);
     await workers.clearTaskCommands(task.id);
-    const settled = task.columnId === 'review'
+    // A run's mode (review vs. implementation) is decided at assignment/claim
+    // time from the task's columnId then, but re-deriving it here from the
+    // task's CURRENT columnId is not stable: the card can move columns via an
+    // unrelated request while the run is in flight. A worker only ever
+    // includes reviewVerdict when it actually ran in review mode (mirroring
+    // the columnId it was handed at claim time), so its presence — not the
+    // possibly-drifted live columnId — is the authoritative signal that this
+    // completion is a review settlement.
+    const settled = reviewVerdict !== undefined
       ? await settleReviewRun(tasks, completed, req.body.status, reviewVerdict)
       : completed;
     broadcastTaskUpdate(settled);

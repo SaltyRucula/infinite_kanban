@@ -52,6 +52,7 @@ type Harness = {
   complete(claimToken: string, body: Record<string, unknown>): Promise<Response>;
   task(): Promise<Task>;
   events(): Promise<string[]>;
+  moveColumn(columnId: ColumnId): Promise<void>;
 };
 
 async function withHarness(columnId: ColumnId, callback: (harness: Harness) => Promise<void>): Promise<void> {
@@ -128,6 +129,11 @@ async function withHarness(columnId: ColumnId, callback: (harness: Harness) => P
     async events() {
       return (await tasks.getEventsByTaskId(taskId)).map((event) => event.content);
     },
+    async moveColumn(columnId) {
+      // Bypasses PATCH /api/tasks validation deliberately: simulates a
+      // concurrent column move racing an in-flight worker run.
+      await tasks.update(taskId, { columnId });
+    },
   };
 
   try {
@@ -185,17 +191,68 @@ test('a review that requests changes moves the task back to In Progress with the
   });
 });
 
+test('a changes_requested settlement does not leave the task self-claimable (BLOCKER: unattended auto-run)', async () => {
+  await withHarness('review', async (h) => {
+    await h.run();
+    const { claimToken } = await h.claim();
+
+    const done = await h.complete(claimToken, {
+      status: 'complete',
+      reviewVerdict: 'changes_requested',
+      summary: 'Retry count is 2, expected 3.',
+    });
+    assert.equal(done.status, 200);
+
+    // completeWorkerTask() clears the claim but a stale run_requested_at
+    // combined with agentStatus 'idle' exactly matches the worker-assignment
+    // predicate, letting the same task be re-claimed and re-run unattended
+    // within one poll cycle. It must not reappear until a human re-runs it.
+    assert.deepEqual(await h.assignments(), []);
+  });
+});
+
+// A compliant worker's reviewResult() never sends {status: 'complete'} without
+// a reviewVerdict — a missing verdict is always reported as {status: 'failed'}
+// (see review-mode.ts). That realistic payload is used here; reviewVerdict
+// presence (not columnId) now decides whether a completion is settled as a
+// review (see the SHOULD-FIX-4 test below for why columnId can't be used).
 test('a review without a verdict fails instead of silently passing', async () => {
   await withHarness('review', async (h) => {
     await h.run();
     const { claimToken } = await h.claim();
 
-    assert.equal((await h.complete(claimToken, { status: 'complete' })).status, 200);
+    assert.equal((await h.complete(claimToken, {
+      status: 'failed',
+      summary: 'Review finished without a verdict',
+      error: 'review did not end with a REVIEW_VERDICT: line; the result cannot be treated as a pass',
+    })).status, 200);
 
     const task = await h.task();
     assert.equal(task.columnId, 'review');
     assert.equal(task.agentStatus, 'failed');
     assert.match(task.summary ?? '', /without a verdict/);
+  });
+});
+
+test('an implementation run completing while the task sits in Review is not misfiled as a review (SHOULD-FIX: stable settlement discriminator)', async () => {
+  await withHarness('in-progress', async (h) => {
+    await h.run();
+    const { task, claimToken } = await h.claim();
+    assert.equal(task.mode, undefined);
+
+    // Simulate the card being dragged to Review by a human while the worker
+    // is still executing the (ordinary, non-review) run it was assigned.
+    await h.moveColumn('review');
+
+    const done = await h.complete(claimToken, { status: 'complete', summary: 'Added retry with 3 attempts.' });
+    assert.equal(done.status, 200);
+
+    const settled = await h.task();
+    // The real implementation summary must survive: it must not be
+    // overwritten with "Review finished without a verdict" just because the
+    // card now happens to sit in the Review column.
+    assert.equal(settled.agentStatus, 'complete');
+    assert.equal(settled.summary, 'Added retry with 3 attempts.');
   });
 });
 

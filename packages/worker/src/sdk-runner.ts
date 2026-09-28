@@ -140,6 +140,18 @@ function coerceEventType(candidate: string): AgentEventType {
   return VALID_EVENT_TYPES.has(candidate as AgentEventType) ? candidate as AgentEventType : 'output';
 }
 
+// Tool/file activity between assistant messages marks a turn boundary: text
+// produced before it (e.g. the model reciting the task description, which may
+// contain injected marker text — see review-mode.ts's neutralizeVerdictMarker)
+// belongs to an earlier turn and must not be scanned for the review verdict
+// alongside the final message. Resetting on these keeps `outputText` scoped
+// to the assistant's current/final message, mirroring the "final response
+// text parts only" scoping local-runner.ts gets for free from its per-prompt
+// HTTP response.
+const TURN_BOUNDARY_EVENT_TYPES: ReadonlySet<AgentEventType> = new Set([
+  'tool_call', 'file_read', 'file_write', 'file_edit', 'command', 'command_output', 'test_result',
+]);
+
 export async function runAgentSdkTask(input: RunAgentSdkTaskInput): Promise<SdkRunResult> {
   const running = await startAgentSdkTask(input);
   return running.done;
@@ -164,8 +176,12 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
   const review = isReviewRun(input.task);
-  // Output streams as deltas or whole-part snapshots, so this can repeat text;
-  // it is only scanned for the review verdict line.
+  // Scoped to the assistant's current/final message only (reset at each turn
+  // boundary — see TURN_BOUNDARY_EVENT_TYPES) so an earlier turn can't leak a
+  // stray/injected verdict-like line into the scan. Within a turn, output can
+  // still arrive as incremental deltas or whole-message snapshots; prefer the
+  // latest snapshot over concatenating it onto what came before (metadata
+  // .replace signals a snapshot), which also avoids duplicated findings text.
   let outputText = '';
 
   const session = await provider.createSession({
@@ -175,12 +191,17 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
       + (review ? `${REVIEW_SYSTEM_PROMPT} ` : '')
       + `Task title: ${input.task.title}`,
     onEvent: (event: CoreEvent) => {
-      if (event.type === 'output') outputText += event.content;
+      const type = coerceEventType(event.type);
+      if (type === 'output') {
+        outputText = event.metadata?.replace ? event.content : outputText + event.content;
+      } else if (TURN_BOUNDARY_EVENT_TYPES.has(type)) {
+        outputText = '';
+      }
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {
         id: event.id || uuid(),
         taskId: input.task.id,
-        type: coerceEventType(event.type),
+        type,
         content: sanitizeLocalText(event.content, input.workingDirectory),
         timestamp: event.timestamp,
         ...(metadata ? { metadata } : {}),

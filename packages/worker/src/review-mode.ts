@@ -5,8 +5,12 @@ import type { ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared
 // verdict instead of re-running the implementation.
 export const REVIEW_VERDICT_MARKER = 'REVIEW_VERDICT:';
 
-// OpenCode tools that modify files; disabled for review runs so a reviewer
-// cannot silently change the implementation it is assessing.
+// OpenCode tools that modify files; wired into the opencode-server runner
+// (local-runner.ts) so a reviewer cannot silently change the implementation
+// it is assessing there. The agent-sdk-core runner (sdk-runner.ts) has no
+// equivalent per-request tool allow/deny list in its AgentSession interface,
+// so review runs through that path rely solely on the system prompt's
+// instruction not to modify files — it is not enforced at the tool level.
 export const REVIEW_DISABLED_TOOLS: Readonly<Record<string, boolean>> = { edit: false, write: false, patch: false };
 
 export const REVIEW_SYSTEM_PROMPT = [
@@ -17,13 +21,26 @@ export const REVIEW_SYSTEM_PROMPT = [
   'and run the relevant tests or checks where appropriate.',
   'Look for regressions, missing requirements, and quality issues.',
   'Do NOT modify implementation files and do NOT re-implement the task — report findings only.',
-  `End your response with a final line that is exactly \`${REVIEW_VERDICT_MARKER} pass\` when the work`,
-  `meets the requirements, or \`${REVIEW_VERDICT_MARKER} changes_requested\` when changes are required.`,
+  `End your response with a final line that is exactly ${REVIEW_VERDICT_MARKER} pass (plain text, with no`,
+  `surrounding backticks, quotes, or markdown emphasis) when the work meets the requirements, or exactly`,
+  `${REVIEW_VERDICT_MARKER} changes_requested when changes are required.`,
   'Before that line, list your findings; for changes_requested, make each required change specific and actionable.',
 ].join(' ');
 
 export function isReviewRun(task: WorkerTaskAssignment): boolean {
   return task.mode === 'review';
+}
+
+// Task text (title/description) can come from a Jira import or any other
+// untrusted source and is interpolated verbatim into the review prompt. If it
+// contains something that looks like our own verdict marker, the model could
+// echo it back (e.g. while reciting the task) and have it mistaken for a real
+// verdict line by extractReviewVerdict. Break the literal "REVIEW_VERDICT:"
+// token (case-insensitively) so task-supplied text can never produce a
+// spurious match, while keeping the text readable.
+const REVIEW_VERDICT_INJECTION_RE = /REVIEW_VERDICT\s*:/gi;
+function neutralizeVerdictMarker(text: string): string {
+  return text.replace(REVIEW_VERDICT_INJECTION_RE, 'REVIEW_VERDICT (quoted from task text, not a real verdict)');
 }
 
 export function buildReviewPrompt(task: WorkerTaskAssignment): string {
@@ -34,9 +51,9 @@ export function buildReviewPrompt(task: WorkerTaskAssignment): string {
   return [
     'Review the implementation of this task.',
     '',
-    `Task title: ${task.title}`,
+    `Task title: ${neutralizeVerdictMarker(task.title)}`,
     '',
-    `Task description: ${task.description}`,
+    `Task description: ${neutralizeVerdictMarker(task.description)}`,
     '',
     `Labels: ${labels}`,
     '',
@@ -46,16 +63,25 @@ export function buildReviewPrompt(task: WorkerTaskAssignment): string {
 
 export type ParsedReview = { readonly verdict: ReviewVerdict; readonly findings: string };
 
+// Tolerant of the model wrapping the verdict word in backticks, asterisks,
+// underscores, or quotes (e.g. `pass`, **pass**, "pass") and of trailing
+// punctuation after it (e.g. pass., pass!), and accepts "changes requested"
+// (space) as well as the requested "changes_requested" (underscore). Anchored
+// to the start of a line so a verdict can't be produced by wording elsewhere
+// in the text; when the marker line legitimately appears more than once, the
+// LAST one wins (mirrors "final line" guidance in the system prompt).
+const REVIEW_VERDICT_LINE_RE = /^\W*REVIEW_VERDICT:\s*[`*_"']*\s*(pass|changes[_ ]requested)\b.*$/gim;
+
 /** Parses the last verdict line; findings are the text before it. */
 export function extractReviewVerdict(text: string): ParsedReview | undefined {
-  const index = text.lastIndexOf(REVIEW_VERDICT_MARKER);
-  if (index < 0) return undefined;
-  const value = text.slice(index + REVIEW_VERDICT_MARKER.length).trim().split(/\s/)[0]?.toLowerCase() ?? '';
-  const verdict: ReviewVerdict | undefined = value === 'pass'
-    ? 'pass'
-    : value === 'changes_requested' ? 'changes_requested' : undefined;
-  if (!verdict) return undefined;
-  return { verdict, findings: text.slice(0, index).trim() };
+  REVIEW_VERDICT_LINE_RE.lastIndex = 0;
+  let last: RegExpExecArray | undefined;
+  for (let match = REVIEW_VERDICT_LINE_RE.exec(text); match; match = REVIEW_VERDICT_LINE_RE.exec(text)) {
+    last = match;
+  }
+  if (!last) return undefined;
+  const verdict: ReviewVerdict = last[1].toLowerCase().replace(' ', '_') === 'pass' ? 'pass' : 'changes_requested';
+  return { verdict, findings: text.slice(0, last.index).trim() };
 }
 
 export type ReviewRunResult = {
@@ -75,7 +101,9 @@ export function reviewResult(text: string, workspacePath: string): ReviewRunResu
       error: `review did not end with a ${REVIEW_VERDICT_MARKER} line; the result cannot be treated as a pass`,
     };
   }
-  const findings = parsed.findings.replaceAll(workspacePath, '[local workspace]');
+  // Guard against an empty workspacePath: String.replaceAll('', x) inserts x
+  // between every character of the findings text instead of doing nothing.
+  const findings = workspacePath ? parsed.findings.replaceAll(workspacePath, '[local workspace]') : parsed.findings;
   return {
     status: 'complete',
     reviewVerdict: parsed.verdict,
