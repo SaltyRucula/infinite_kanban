@@ -67,6 +67,56 @@ function commandPollLimit(req: Request): number {
   return Math.min(parsed, COMMAND_POLL_LIMIT_MAX);
 }
 
+/**
+ * A run started from Review is a review, not an implementation. A pass keeps
+ * the task in Review with the findings as its summary; requested changes send
+ * it back to In Progress (idle) so the next run implements them. The caller
+ * only invokes this once a reviewVerdict has actually been reported — a
+ * review that fails to produce one is settled as an ordinary completion, not
+ * routed here (see the reviewVerdict-presence check where this is called).
+ */
+async function settleReviewRun(
+  tasks: TaskRepository,
+  completed: Task,
+  status: 'complete' | 'failed',
+  verdict: 'pass' | 'changes_requested',
+): Promise<Task> {
+  const now = Date.now();
+  let updates: Partial<Task>;
+  let content: string;
+  if (status === 'complete' && verdict === 'pass') {
+    updates = { columnId: 'review' };
+    content = `Review passed.\n\n${completed.summary ?? ''}`.trim();
+  } else if (status === 'complete' && verdict === 'changes_requested') {
+    // completeWorkerTask() already clears run_requested_at/run_claimed_at/
+    // worker_claim_token_hash on every completion (see its comment in
+    // sqlite.ts/postgres.ts — that is the actual fix for the unattended
+    // re-run root cause), so update() below re-reading and re-persisting
+    // `completed`'s fields can't resurrect a stale run_requested_at here.
+    // Moving to 'idle' is therefore safe: nothing left on the row makes this
+    // task match getWorkerAssignments' predicate until a human re-runs it.
+    updates = { columnId: 'in-progress', agentStatus: 'idle', startedAt: undefined, completedAt: undefined };
+    content = `Review requested changes; task moved back to In Progress.\n\n${completed.summary ?? ''}`.trim();
+  } else {
+    // status === 'failed' (a verdict was still reported, e.g. alongside a
+    // partial-failure report). completeWorkerTask() already wrote agent_status
+    // = 'failed' directly, so re-asserting it here is a same-state write, not
+    // a transition — it never goes through 'complete' first. (Note:
+    // VALID_AGENT_STATUS_TRANSITIONS/canTransitionAgentStatus are not actually
+    // enforced anywhere at runtime — canTransitionAgentStatus is currently
+    // unused — so this is a design invariant we maintain by convention, not
+    // a guard the code would otherwise reject.)
+    const reason = 'Review failed.';
+    updates = { columnId: 'review', agentStatus: 'failed', summary: completed.summary ? `${reason}\n\n${completed.summary}` : reason };
+    content = updates.summary ?? reason;
+  }
+  const event: AgentEvent = { id: uuid(), taskId: completed.id, type: status === 'failed' ? 'error' : 'output', content, timestamp: now };
+  await tasks.insertEvent(event);
+  const { broadcast } = await import('../websocket.js');
+  broadcast({ type: 'agent_event', payload: event });
+  return await tasks.update(completed.id, updates) ?? completed;
+}
+
 export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository): Router {
   const router = Router();
   const taskId = (req: Request): string => {
@@ -301,6 +351,11 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(400).json({ error: 'status must be complete or failed' });
       return;
     }
+    const reviewVerdict = req.body.reviewVerdict;
+    if (reviewVerdict !== undefined && reviewVerdict !== 'pass' && reviewVerdict !== 'changes_requested') {
+      res.status(400).json({ error: 'reviewVerdict must be pass or changes_requested' });
+      return;
+    }
     const claim = claimTokenHash(req);
     if (!claim) {
       res.status(409).json({ error: 'task claim is invalid' });
@@ -321,8 +376,39 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     await workers.clearTaskSessions(task.id);
     await workers.clearTaskCommands(task.id);
-    broadcastTaskUpdate(completed);
-    res.json({ task: toWorkerTaskAssignment(completed) });
+    // A run's mode (review vs. implementation) is decided at assignment/claim
+    // time from the task's columnId then, but re-deriving it here from the
+    // task's CURRENT columnId is not stable: the card can move columns via an
+    // unrelated request while the run is in flight. A worker only ever
+    // includes reviewVerdict when it actually ran in review mode (mirroring
+    // the columnId it was handed at claim time), so its presence — not the
+    // possibly-drifted live columnId — is the authoritative signal that this
+    // completion is a review settlement.
+    const settled = reviewVerdict !== undefined
+      ? await settleReviewRun(tasks, completed, req.body.status, reviewVerdict)
+      : completed;
+    // SHOULD-FIX 6: a compliant worker never sends {status:'complete'} for a
+    // review run without a reviewVerdict (see review-mode.ts's reviewResult),
+    // but nothing here stops a buggy/misbehaving worker from doing so. Left
+    // unflagged, the task would land as agentStatus 'complete' with the
+    // worker's raw summary sitting in Review — visually indistinguishable
+    // from a genuine pass. columnId is only a best-effort signal (see the
+    // comment above), so this is a defensive warning, not a settlement.
+    if (req.body.status === 'complete' && reviewVerdict === undefined && completed.columnId === 'review') {
+      const warning: AgentEvent = {
+        id: uuid(),
+        taskId: completed.id,
+        type: 'error',
+        content: 'This run completed without a REVIEW_VERDICT while the task was in the Review column. '
+          + 'If this was a review run, it was NOT settled as a pass — the summary above should not be treated as a verdict.',
+        timestamp: Date.now(),
+      };
+      await tasks.insertEvent(warning);
+      const { broadcast } = await import('../websocket.js');
+      broadcast({ type: 'agent_event', payload: warning });
+    }
+    broadcastTaskUpdate(settled);
+    res.json({ task: toWorkerTaskAssignment(settled) });
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {

@@ -11,6 +11,7 @@ import type {
   WorkerTaskAssignment,
 } from '@ai-agent-board/shared/types.js';
 import { isValidAgentType } from '@ai-agent-board/shared/constants.js';
+import { buildReviewPrompt, isReviewRun, neutralizeVerdictMarker, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 const SESSION_ERROR_GRACE_MS = 250;
 
@@ -22,6 +23,7 @@ export type SdkRunResult = {
   readonly status: 'complete' | 'failed';
   readonly summary?: string;
   readonly error?: string;
+  readonly reviewVerdict?: 'pass' | 'changes_requested';
 };
 
 export type RunningAgentSdkTask = {
@@ -56,7 +58,10 @@ const VALID_EVENT_TYPES: ReadonlySet<AgentEventType> = new Set([
 ]);
 
 function sanitizeLocalText(content: string, workspacePath: string): string {
-  return content.replaceAll(workspacePath, '[local workspace]');
+  // Guard against an empty workspacePath: String.replaceAll('', x) inserts x
+  // between every character instead of doing nothing (see the identical
+  // guard in reviewResult, review-mode.ts).
+  return workspacePath ? content.replaceAll(workspacePath, '[local workspace]') : content;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -138,6 +143,37 @@ function coerceEventType(candidate: string): AgentEventType {
   return VALID_EVENT_TYPES.has(candidate as AgentEventType) ? candidate as AgentEventType : 'output';
 }
 
+// The vendored CoreEvent shape gives no message/part identity to key on (see
+// mapOpenCodeEvent in @codewithdan/agent-sdk-core: every event gets a fresh
+// random uuid, and tool state completions never carry the id of the text
+// part they may race with), so the accumulated `outputText` below spans the
+// entire single-turn run — mirroring what local-runner.ts gets "for free"
+// from the raw HTTP response's parts array (which also includes every text
+// part emitted during the turn, not just a literal last fragment). An
+// earlier version of this scoped the scan by resetting on any tool/file
+// event, but tool "completed" state and `patch` events (message
+// finalization) can legitimately arrive AFTER the final assistant text —
+// resetting on those wiped a real verdict and reintroduced the original
+// "no verdict" failure through a new mechanism. Never resetting is safe here
+// because the actual injection vector this was guarding against (raw task
+// title/labels echoed into the prompt) is now neutralized at the source
+// (see review-mode.ts's neutralizeVerdictMarker and its callers), and
+// extractReviewVerdict's conflict handling (see review-mode.ts) is fail-safe
+// against a stray marker-shaped line appearing earlier in the same turn.
+function mergeOutput(current: string, incoming: string): string {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  // The real duplication source: `content: delta || part.text` can emit a
+  // full-text snapshot instead of a true delta (e.g. the fallback path when
+  // SSE delivers no incremental delta for a part). Detect a
+  // growing/duplicate snapshot — incoming already contains everything
+  // accumulated so far — and replace rather than concatenate, so the same
+  // text is never doubled into the buffer.
+  if (incoming.startsWith(current)) return incoming;
+  if (current.endsWith(incoming)) return current;
+  return current + incoming;
+}
+
 export async function runAgentSdkTask(input: RunAgentSdkTaskInput): Promise<SdkRunResult> {
   const running = await startAgentSdkTask(input);
   return running.done;
@@ -161,17 +197,39 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   let resolveSessionError: (message: string) => void = () => {};
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
+  const review = isReviewRun(input.task);
+  // See mergeOutput's comment above for why this accumulates across the
+  // whole turn instead of resetting at tool/file event boundaries.
+  let outputText = '';
+
   const session = await provider.createSession({
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
     systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
-      + `Task title: ${input.task.title}`,
+      + (review ? `${REVIEW_SYSTEM_PROMPT} ` : '')
+      // On the review path the title is untrusted task text (e.g. Jira
+      // import) interpolated into the system prompt itself; neutralize it
+      // the same way buildReviewPrompt neutralizes title/description/labels
+      // in the user prompt, or an injected marker here could be echoed back
+      // by the model and picked up by the verdict scan.
+      + `Task title: ${review ? neutralizeVerdictMarker(input.task.title) : input.task.title}`,
     onEvent: (event: CoreEvent) => {
+      const type = coerceEventType(event.type);
+      // Only accumulate genuine 'output' events into the verdict-scanned
+      // buffer, checked against the raw (uncoerced) event.type. Widening an
+      // unrecognized/off-spec type to 'output' is a reasonable default for
+      // *display* purposes (below), but doing the same for the buffer that
+      // feeds the review verdict scan would be backwards: an off-spec event
+      // should be excluded from scanning, not folded in as if it were real
+      // assistant text.
+      if (event.type === 'output') {
+        outputText = event.metadata?.replace ? event.content : mergeOutput(outputText, event.content);
+      }
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {
         id: event.id || uuid(),
         taskId: input.task.id,
-        type: coerceEventType(event.type),
+        type,
         content: sanitizeLocalText(event.content, input.workingDirectory),
         timestamp: event.timestamp,
         ...(metadata ? { metadata } : {}),
@@ -196,7 +254,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
 
   const done = (async (): Promise<SdkRunResult> => {
     try {
-      const result = await session.execute(`${input.task.title}\n\n${input.task.description}`);
+      const result = await session.execute(review ? buildReviewPrompt(input.task) : `${input.task.title}\n\n${input.task.description}`);
       if (result.status === 'complete') {
         const late = await Promise.race([
           sessionErrorSignal.then((message) => ({ message })),
@@ -205,6 +263,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
         if (late) {
           return { status: 'failed', summary: 'Agent SDK task failed', error: late.message };
         }
+        if (review) return reviewResult(outputText, input.workingDirectory);
         return {
           status: 'complete',
           summary: 'Agent SDK task completed',

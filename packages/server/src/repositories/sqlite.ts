@@ -232,7 +232,15 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
-    const result = this.db.prepare(`UPDATE tasks SET agent_status = ?, completed_at = ?, summary = ?, run_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`).run(status, completedAt, summary ?? (error ? error : null), id, workerId, claimTokenHash, completedAt);
+    // Clearing run_requested_at (not just run_claimed_at/worker_claim_token_hash)
+    // is the real fix for the unattended-re-run root cause: leaving it set
+    // meant a completed task still matched getWorkerAssignments' predicate
+    // (run_requested_at set, no live claim) the instant anything reset
+    // agent_status back to 'idle' — e.g. PATCH /api/tasks/:id moving the card
+    // from Review/Done back to In Progress unconditionally sets agentStatus
+    // 'idle' and update() re-persists the untouched run_requested_at. A human
+    // dragging the card then silently re-triggers a worker run.
+    const result = this.db.prepare(`UPDATE tasks SET agent_status = ?, completed_at = ?, summary = ?, run_requested_at = NULL, run_claimed_at = NULL, worker_claim_token_hash = NULL, worker_lease_expires_at = NULL WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`).run(status, completedAt, summary ?? (error ? error : null), id, workerId, claimTokenHash, completedAt);
     return result.changes ? this.getById(id) : undefined;
   }
 
@@ -273,7 +281,6 @@ export class SqliteTaskRepository implements TaskRepository {
         clarification_request: merged.clarificationRequest ? JSON.stringify(merged.clarificationRequest) : null,
           clarification_answer: merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
            assigned_worker_id: merged.assignedWorkerId ?? null,
-           worker_attempt: 0,
            labels: JSON.stringify(merged.labels ?? []),
            agent_preference: merged.agentPreference ?? null,
       });

@@ -88,7 +88,15 @@ export interface WorkerTaskAssignment {
   timeoutMinutes?: number | null;
   labels: string[];
   agentPreference?: string;
+  /**
+   * `review` when the run was started from the Review column: the agent
+   * validates the existing implementation and reports a verdict instead of
+   * re-implementing the task. Absent for normal implementation runs.
+   */
+  mode?: 'review';
 }
+
+export type ReviewVerdict = 'pass' | 'changes_requested';
 
 export interface ClarificationRequestPayload {
   requestId: string;
