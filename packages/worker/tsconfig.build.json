@@ -2,5 +2,5 @@
   "extends": "./tsconfig.json",
   "compilerOptions": { "noEmit": false, "allowImportingTsExtensions": false, "outDir": "dist", "rootDir": "src", "declaration": true },
   "include": ["src"],
-  "references": [{ "path": "../../shared" }]
+  "references": [{ "path": "../../shared" }, { "path": "../opencode-compat/tsconfig.build.json" }]
 }

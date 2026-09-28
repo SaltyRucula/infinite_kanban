@@ -1,0 +1,78 @@
+data: {"id":"evt_0e8626d010011jNGdlFpLM0h8G","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e86270fa002iM8IJiKEwKYJlo","created":1790605160698,"type":"session.inbox.enqueued","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"inboxID":"msg_0e86270fa001he8iTZmT63iIzo","sessionID":"ses_f179da749ffexqJx2khqtd099J","item":{"type":"user","payload":{"text":"Create a new file named notes.md with the single line: Hello Spike. Then edit that same file to change Hello Spike to Hello Spike v2 using your edit tool. Report success in one sentence."},"delivery":"steer"}},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":1,"version":1}}
+
+data: {"id":"evt_0e86270fd001H3R9GHBGun9rri","created":1790605160701,"type":"session.execution.started","data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":2,"version":1}}
+
+data: {"id":"evt_0e8627102001fN00X4Qe346jN2","created":1790605160706,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","delta":{"core/environment":"ce7d4a0e92ae45ab240b27440b9cf603ea03a08eb48fe5f077ebb02bb8b5b832","core/date":"bf08b8486572ab3eef677a3c9ee12468e411ae41a8f4d2fb6cf02a6ca73f1986","core/codemode":"071d8a4709c1e22c3c798c86ce2ac9f6ac314ce40c61b706d90deb9e4b40fb15","core/skill-guidance":"2bdcbef7e86beba800140c686651138c596d51bdbc714492011bad41433e4ded"}},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":3,"version":2}}
+
+data: {"id":"evt_0e8627103001x34meO6aDJmD7I","created":1790605160707,"type":"session.inbox.delivered","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","inboxID":"msg_0e86270fa001he8iTZmT63iIzo"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":4,"version":1}}
+
+data: {"id":"evt_0e86275c6001PBjnrP0Tt0dM4u","created":1790605161926,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","agent":"orchestrator","model":{"id":"claude-sonnet-5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr","snapshot":"8dfacd70f833de2506ce51b129d10fbfd05eea85","started":1790605160763},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":5,"version":1}}
+
+data: {"id":"evt_0e86275c90012tIHgoeVrMJyJc","created":1790605161929,"type":"session.tool.input.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr","id":"toolu_01Fa9LPW1dqoz4WSEYXZkAqp","name":"write"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":6,"version":1}}
+
+data: {"id":"evt_0e86276e4001z8fps03FOKn37R","created":1790605162212,"type":"session.tool.input.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr","id":"toolu_01Fa9LPW1dqoz4WSEYXZkAqp","text":"{\"path\": \"notes.md\", \"content\": \"Hello Spike\\n\"}"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":7,"version":1}}
+
+data: {"id":"evt_0e86276e7001CUbsJRomPywDtH","created":1790605162215,"type":"session.tool.called","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr","id":"toolu_01Fa9LPW1dqoz4WSEYXZkAqp","input":{"path":"notes.md","content":"Hello Spike\n"},"executed":false},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":8,"version":1}}
+
+data: {"id":"evt_0e86276e8001zPay482lKINy5u","created":1790605162216,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":9,"version":1}}
+
+data: {"id":"evt_0e86276f4001bNai04FHI1lWoe","created":1790605162228,"type":"session.tool.success","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr","id":"toolu_01Fa9LPW1dqoz4WSEYXZkAqp","content":[{"type":"text","text":"Created file successfully: notes.md"}],"metadata":{"truncated":false},"executed":false},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":10,"version":2}}
+
+data: {"id":"evt_0e8627745001hOBwyJtf1bYiNL","created":1790605162309,"type":"session.step.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627106001BWIOpJHiELQHFr","finish":"tool-calls","rawFinish":"tool_use","cost":0.0021266,"tokens":{"input":2,"output":75,"reasoning":0,"cache":{"read":6863,"write":13498}},"snapshot":"57aa7eb3e1f4924c38c27e123bef670393370fa3","files":["notes.md"]},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":11,"version":1}}
+
+data: {"id":"evt_0e8627746001vElyPyBVslp58p","created":1790605162310,"type":"session.usage.updated","data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","cost":0.0021266,"tokens":{"input":2,"output":75,"reasoning":0,"cache":{"read":6863,"write":13498}}}}
+
+data: {"id":"evt_0e8627ce8001g3meKViQxQ60md","created":1790605163752,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","agent":"orchestrator","model":{"id":"claude-sonnet-5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R","snapshot":"57aa7eb3e1f4924c38c27e123bef670393370fa3","started":1790605162340},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":12,"version":1}}
+
+data: {"id":"evt_0e8627ceb001klGggpKT2ud4PM","created":1790605163755,"type":"session.tool.input.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R","id":"toolu_01CbLm9wneaTMs6c7coaMhBD","name":"edit"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":13,"version":1}}
+
+data: {"id":"evt_0e8627ea3001x1yf45SR42o8Ms","created":1790605164195,"type":"session.tool.input.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R","id":"toolu_01CbLm9wneaTMs6c7coaMhBD","text":"{\"path\": \"notes.md\", \"oldString\": \"Hello Spike\", \"newString\": \"Hello Spike v2\"}"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":14,"version":1}}
+
+data: {"id":"evt_0e8627ea7001IMrom08ls9AQps","created":1790605164199,"type":"session.tool.called","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R","id":"toolu_01CbLm9wneaTMs6c7coaMhBD","input":{"path":"notes.md","oldString":"Hello Spike","newString":"Hello Spike v2"},"executed":false},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":15,"version":1}}
+
+data: {"id":"evt_0e8627eaa001U5dpx6swi6210k","created":1790605164202,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":16,"version":1}}
+
+data: {"id":"evt_0e8627eb6001Cat3lefjulxU61","created":1790605164214,"type":"session.tool.success","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R","id":"toolu_01CbLm9wneaTMs6c7coaMhBD","content":[{"type":"text","text":"Edited notes.md (1 replacement)"}],"metadata":{"files":[{"file":"notes.md","patch":"Index: notes.md\n===================================================================\n--- notes.md\n+++ notes.md\n@@ -1,1 +1,1 @@\n-Hello Spike\n+Hello Spike v2\n","status":"modified","additions":1,"deletions":1}],"truncated":false},"executed":false},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":17,"version":2}}
+
+data: {"id":"evt_0e8627f09001YK74JIvFzoysj1","created":1790605164297,"type":"session.step.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e862774a001cSGaQzozPWG97R","finish":"tool-calls","rawFinish":"tool_use","cost":0.0051362000000000005,"tokens":{"input":2,"output":106,"reasoning":0,"cache":{"read":20361,"write":91}},"snapshot":"f5b577c1984b9683a5801881f9c898dfce5f2f26","files":["notes.md"]},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":18,"version":1}}
+
+data: {"id":"evt_0e8627f0a001G5NnO8XUXryEYF","created":1790605164298,"type":"session.usage.updated","data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","cost":0.007262800000000001,"tokens":{"input":4,"output":181,"reasoning":0,"cache":{"read":27224,"write":13589}}}}
+
+data: {"id":"evt_0e862853c001SzgRhO6Vhvpf9A","created":1790605165884,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","agent":"orchestrator","model":{"id":"claude-sonnet-5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw","snapshot":"f5b577c1984b9683a5801881f9c898dfce5f2f26","started":1790605164328},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":19,"version":1}}
+
+data: {"id":"evt_0e8628540001NVItA46lyi9WMf","created":1790605165888,"type":"session.text.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw","ordinal":0},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":20,"version":1}}
+
+data: {"id":"evt_0e86285a60011w4EwjAkvScpUU","created":1790605165990,"type":"session.text.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw","ordinal":0,"delta":"Created"}}
+
+data: {"id":"evt_0e86285fd001MyYFOXajMADPD8","created":1790605166077,"type":"session.text.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw","ordinal":0,"delta":" notes.md with \"Hello Spike\" and successfully edited it to \"Hello Spike v2\"."}}
+
+data: {"id":"evt_0e86285fe001G6mDKK0ZBu35Sp","created":1790605166078,"type":"session.text.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw","ordinal":0,"text":"Created notes.md with \"Hello Spike\" and successfully edited it to \"Hello Spike v2\"."},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":21,"version":1}}
+
+data: {"id":"evt_0e8628602001Lw7h4Ekf31FoPa","created":1790605166082,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":22,"version":1}}
+
+data: {"id":"evt_0e862862e001LE4DJF9iIB2IWB","created":1790605166126,"type":"session.step.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","assistantMessageID":"msg_0e8627f0d001858pQ1C4UdeNjw","finish":"stop","rawFinish":"end_turn","cost":0.004444399999999999,"tokens":{"input":2,"output":35,"reasoning":0,"cache":{"read":20452,"write":125}},"snapshot":"f5b577c1984b9683a5801881f9c898dfce5f2f26","files":[]},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":23,"version":1}}
+
+data: {"id":"evt_0e862862f0010O1DUgewExJIx6","created":1790605166127,"type":"session.usage.updated","data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J","cost":0.011707200000000001,"tokens":{"input":6,"output":216,"reasoning":0,"cache":{"read":47676,"write":13714}}}}
+
+data: {"id":"evt_0e8628630001GLl4o4uXUx1DJK","created":1790605166128,"type":"session.execution.succeeded","data":{"sessionID":"ses_f179da749ffexqJx2khqtd099J"},"durable":{"aggregateID":"ses_f179da749ffexqJx2khqtd099J","seq":24,"version":1}}
+
+data: {"id":"evt_0e862a479001sOVYdeKU7u0nfL","created":1790605173881,"type":"provider.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+data: {"id":"evt_0e862a4800010i7NaTmhmbNaO4","created":1790605173888,"type":"model.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+

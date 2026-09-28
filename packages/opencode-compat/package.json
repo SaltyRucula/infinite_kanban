@@ -1,19 +1,18 @@
 {
-  "name": "@ai-agent-board/worker",
+  "name": "@ai-agent-board/opencode-compat",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/cli.ts run",
     "build": "tsc -b tsconfig.build.json",
     "test": "node --import tsx/esm --test tests/*.test.ts"
   },
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "dependencies": {
-    "@ai-agent-board/shared": "*",
-    "@ai-agent-board/opencode-compat": "*",
     "@codewithdan/agent-sdk-core": "^0.7.0",
     "@opencode-ai/sdk": "^1.17.7"
-    ,"uuid": "^11.0.0"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
