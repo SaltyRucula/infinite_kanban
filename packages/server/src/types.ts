@@ -25,7 +25,7 @@ export type {
   AgentEventImportance,
   JiraImportResult,
   WSMessage,
-} from '../../../shared/types.js';
+} from '@ai-agent-board/shared/types.js';
 
 export {
   VALID_TRANSITIONS,
@@ -37,6 +37,6 @@ export {
   canTransitionAgentStatus,
   MAX_GROUP_CHILDREN,
   MIN_GROUP_CHILDREN,
-} from '../../../shared/constants.js';
+} from '@ai-agent-board/shared/constants.js';
 
-export { classifyAgentEventImportance } from '../../../shared/types.js';
+export { classifyAgentEventImportance } from '@ai-agent-board/shared/types.js';
