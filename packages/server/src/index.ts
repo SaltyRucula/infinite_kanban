@@ -39,9 +39,9 @@ import { WORKER_HEARTBEAT_INTERVAL_MS, WORKER_STALE_AFTER_MS } from '@ai-agent-b
 import {
   shouldRecoverGroupChildAsFailed,
   shouldRecoverGroupChildToIdle,
-  shouldRecoverStandaloneTaskAsFailed,
   getAllTasksAcrossProjects,
   getAllGroupsAcrossProjects,
+  recoverOrphanedStandaloneTasks,
 } from './startup-recovery.js';
 import {
   registerE2EClarificationProvider,
@@ -251,16 +251,12 @@ const agentManager = new AgentManager();
   // Recover standalone tasks orphaned by a previous server restart.
   // Skip group children (already handled above with group-aware recovery).
   const allTasks = await getAllTasksAcrossProjects(projectRepo, taskRepo);
-  const orphaned = allTasks.filter((t) => shouldRecoverStandaloneTaskAsFailed(t.agentStatus, !!t.clarificationRequest) && !groupChildIds.has(t.id) && !recoveredRunIds.has(t.id));
-  for (const task of orphaned) {
-    await taskRepo.update(task.id, {
-      agentStatus: 'failed',
-      completedAt: Date.now(),
-    });
-    await taskRepo.clearRun(task.id);
-    await workerRepo.clearTaskSessions(task.id);
-    console.warn(`[server] recovered orphaned task ${task.id} "${task.title}" (was ${task.agentStatus})`);
-  }
+  const excludeFromStandaloneRecovery = new Set<string>([...groupChildIds, ...recoveredRunIds]);
+  await recoverOrphanedStandaloneTasks(allTasks, excludeFromStandaloneRecovery, {
+    taskRepo,
+    workerRepo,
+    onRecovered: (task) => console.warn(`[server] recovered orphaned task ${task.id} "${task.title}" (was ${task.agentStatus})`),
+  });
 
   // Reclaim stale dispatch leases continuously, not only after a restart.
   const dispatchInterval = setInterval(() => {

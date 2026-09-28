@@ -200,7 +200,10 @@ export class PostgresTaskRepository implements TaskRepository {
     // column (review on completion; pending -> in-progress otherwise so a
     // failure never leaves the task stranded in Pending), and clearing any
     // stale clarification request/answer all land together — see the SQLite
-    // implementation for the rationale.
+    // implementation for the rationale. run_requested_at/run_claimed_at are
+    // also cleared here: see the SQLite implementation for why a surviving
+    // run_requested_at would let a worker silently re-run a task that a
+    // human merely dragged to In Progress via PATCH.
     const { rows } = await this.pool.query<TaskRow>(
       `UPDATE tasks SET
          agent_status = $1,
@@ -209,6 +212,7 @@ export class PostgresTaskRepository implements TaskRepository {
          column_id = CASE WHEN $1 = 'complete' THEN 'review' WHEN column_id = 'pending' THEN 'in-progress' ELSE column_id END,
          clarification_request = NULL,
          clarification_answer = NULL,
+         run_requested_at = NULL,
          run_claimed_at = NULL,
          worker_claim_token_hash = NULL,
          worker_lease_expires_at = NULL
@@ -220,7 +224,8 @@ export class PostgresTaskRepository implements TaskRepository {
   }
 
   async parkWorkerTaskForClarification(id: string, workerId: string, claimTokenHash: string, now: number, clarificationRequest: TaskClarificationRequest): Promise<Task | undefined> {
-    // Single atomic write — see the SQLite implementation for the rationale.
+    // Single atomic write — see the SQLite implementation for the rationale,
+    // including why run_requested_at is cleared here too.
     const { rows } = await this.pool.query<TaskRow>(
       `UPDATE tasks SET
          agent_status = 'awaiting_clarification',
@@ -228,6 +233,7 @@ export class PostgresTaskRepository implements TaskRepository {
          completed_at = NULL,
          clarification_request = $1,
          clarification_answer = NULL,
+         run_requested_at = NULL,
          run_claimed_at = NULL,
          worker_claim_token_hash = NULL,
          worker_lease_expires_at = NULL

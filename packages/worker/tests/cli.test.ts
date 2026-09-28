@@ -115,3 +115,26 @@ test('truncateQuestion caps a question at MAX_DESCRIPTION_LENGTH', () => {
   assert.equal(truncated.length, MAX_DESCRIPTION_LENGTH);
   assert.equal(truncated, long.slice(0, MAX_DESCRIPTION_LENGTH));
 });
+
+// NIT (round 2): `.slice(0, MAX_DESCRIPTION_LENGTH)` truncates by UTF-16 code
+// unit and can land mid-surrogate-pair, producing a lone surrogate that
+// renders as U+FFFD. Truncation must land on a whole character boundary.
+test('truncateQuestion never splits a surrogate pair (multibyte-safe truncation)', () => {
+  const emoji = '\u{1F600}'; // U+1F600 GRINNING FACE — a surrogate pair, .length === 2
+  assert.equal(emoji.length, 2);
+  // Pad so the emoji straddles exactly the MAX_DESCRIPTION_LENGTH boundary:
+  // one code unit before the limit, the emoji's low surrogate would land
+  // exactly at index MAX_DESCRIPTION_LENGTH under a naive .slice().
+  const question = 'x'.repeat(MAX_DESCRIPTION_LENGTH - 1) + emoji + 'y'.repeat(10);
+  const truncated = truncateQuestion(question);
+
+  assert.ok(truncated.length <= MAX_DESCRIPTION_LENGTH, 'must not exceed the server length limit');
+  // A naive slice(0, MAX_DESCRIPTION_LENGTH) would end with a lone leading
+  // surrogate (charCodeAt within the high-surrogate range); assert the
+  // result contains no unpaired surrogate at all.
+  assert.equal(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(truncated), false, 'result must not contain an unpaired surrogate');
+  // The emoji itself must not have been split: either fully included or
+  // fully excluded, never half.
+  const emojiCount = (truncated.match(/\u{1F600}/gu) ?? []).length;
+  assert.ok(emojiCount === 0 || emojiCount === 1);
+});

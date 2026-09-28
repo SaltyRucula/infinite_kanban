@@ -30,12 +30,56 @@ test('extractInputRequest ignores a mid-text recap of the marker when the final 
   assert.equal(extractInputRequest(recap), undefined);
 });
 
-test('extractInputRequest ignores an earlier line that happens to start with the marker', () => {
-  const text = `${INPUT_REQUEST_MARKER} This was just an example format.\nAnyway, implementation complete, no real question here.`;
+test('extractInputRequest ignores an earlier line that happens to start with the marker, even one line further back than the sign-off tolerance', () => {
+  const text = [
+    `${INPUT_REQUEST_MARKER} This was just an example format.`,
+    'I went ahead and implemented the requested change anyway.',
+    'Anyway, implementation complete, no real question here.',
+  ].join('\n');
   assert.equal(extractInputRequest(text), undefined);
 });
 
 test('extractInputRequest requires the marker at the very start of the last line, not merely present in it', () => {
   const text = `Some context here, then a mention of ${INPUT_REQUEST_MARKER} mid-sentence on the final line.`;
   assert.equal(extractInputRequest(text), undefined);
+});
+
+// SHOULD-FIX (round 2): the system prompt wraps the marker in backticks
+// (`` `NEEDS_INPUT:` ``), so an echoed backtick is plausible, and models
+// commonly use markdown decoration (bold, list, blockquote) around a
+// sign-posted line. These must still be recognized as a genuine blocking
+// question, not silently dropped (which loses the question and completes
+// the task as if it were done).
+test('extractInputRequest recognizes the marker wrapped in bold markdown', () => {
+  const text = '**NEEDS_INPUT:** Which environment should this target?';
+  assert.equal(extractInputRequest(text), 'Which environment should this target?');
+});
+
+test('extractInputRequest recognizes the marker wrapped in inline code backticks', () => {
+  const text = '`NEEDS_INPUT:` Which environment should this target?';
+  assert.equal(extractInputRequest(text), 'Which environment should this target?');
+});
+
+test('extractInputRequest recognizes the marker on a markdown list line', () => {
+  const text = '- NEEDS_INPUT: Which environment should this target?';
+  assert.equal(extractInputRequest(text), 'Which environment should this target?');
+});
+
+test('extractInputRequest recognizes the marker on a markdown blockquote line', () => {
+  const text = '> NEEDS_INPUT: Which environment should this target?';
+  assert.equal(extractInputRequest(text), 'Which environment should this target?');
+});
+
+test('extractInputRequest strips a trailing decoration character that wraps the whole line', () => {
+  const text = '`NEEDS_INPUT: Which environment should this target?`';
+  assert.equal(extractInputRequest(text), 'Which environment should this target?');
+});
+
+test('extractInputRequest tolerates a trailing sign-off line after the marker line', () => {
+  const text = [
+    'Investigated the repo.',
+    'NEEDS_INPUT: Which environment should this target?',
+    'Thanks for clarifying in advance!',
+  ].join('\n');
+  assert.equal(extractInputRequest(text), 'Which environment should this target?');
 });

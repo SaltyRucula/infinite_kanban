@@ -172,8 +172,21 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   // run, and the marker text baked into this session's own system prompt
   // (INPUT_REQUEST_INSTRUCTIONS) could be picked up from an earlier turn that
   // merely recapped it, false-parking already-finished work.
+  //
+  // The provider's execute() resolves on a synthetic 'complete' event, and
+  // sdk-runner then waits SESSION_ERROR_GRACE_MS before reading the buffer —
+  // but the SSE event stream can lag that resolution by a beat (documented
+  // in local-runner.ts's own grace-period handling around the same race), so
+  // an unrelated trailing 'output' fragment can arrive AFTER the real final
+  // message's burst already closed and was evaluated. If that straggler
+  // doesn't itself contain the marker, resetting to it and reading only the
+  // final buffer would silently lose the genuine question that was already
+  // detected in the previous, now-discarded burst. lastDetectedQuestion
+  // remembers the last NON-EMPTY per-burst extraction result so a later,
+  // unrelated empty burst can never erase it.
   let outputText = '';
   let lastEventType: CoreEvent['type'] | undefined;
+  let lastDetectedQuestion: string | undefined;
 
   const session = await provider.createSession({
     contextId: input.task.id,
@@ -183,7 +196,11 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
       + `Task title: ${input.task.title}`,
     onEvent: (event: CoreEvent) => {
       if (event.type === 'output') {
-        if (lastEventType !== undefined && lastEventType !== 'output') outputText = '';
+        if (lastEventType !== undefined && lastEventType !== 'output') {
+          const question = extractInputRequest(outputText);
+          if (question) lastDetectedQuestion = question;
+          outputText = '';
+        }
         outputText += event.content;
       }
       lastEventType = event.type;
@@ -229,7 +246,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
         if (late) {
           return { status: 'failed', summary: 'Agent SDK task failed', error: late.message };
         }
-        const question = extractInputRequest(outputText);
+        const question = extractInputRequest(outputText) ?? lastDetectedQuestion;
         if (question) {
           return {
             status: 'awaiting_input',
@@ -264,6 +281,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     done,
     sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
       outputText = '';
+      lastDetectedQuestion = undefined;
       await session.send(message);
     },
     abort: async () => {

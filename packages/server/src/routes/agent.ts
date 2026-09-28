@@ -31,13 +31,27 @@ export function createAgentRouter(
 
   const hasActiveWorkerLease = (task: Task): boolean => {
     if (task.assignedWorkerId == null) return false;
-    // A worker's claim is only "active" while its lease is genuinely live —
-    // for planning/executing that lease is renewed on every heartbeat; for
-    // awaiting_clarification a worker that reports a blocking question
-    // releases its claim, so a Pending worker task only has a live session
-    // while the lease is valid too. Requiring hasLiveOpenCodeSession
-    // uniformly here (rather than trusting planning/executing status alone)
-    // means callers never need to re-check the lease themselves.
+    // Requiring a genuinely live lease here (rather than trusting
+    // planning/executing status alone) means a task whose worker lease has
+    // already lapsed — but the periodic sweep hasn't caught up yet — is no
+    // longer treated as having an active worker session. That changes two
+    // call sites' behavior at the margin: POST /:id/stop falls through past
+    // enqueueWorkerCommand to agentManager.stopAgent (409s "no running agent"
+    // instead of cancelling+failing via a queued command nobody will ever
+    // poll for), and POST /:id/message falls through to the "requeue as a
+    // fresh run" branch instead of queuing a command into the same dead
+    // void. Both are more correct than silently trusting a stale lease.
+    //
+    // The awaiting_clarification arm below is NOT reachable via
+    // parkWorkerTaskForClarification (that atomic write always NULLs
+    // worker_lease_expires_at, so a task it parks never has a live lease).
+    // It is kept for the pre-existing "clarification queued to a still-live
+    // worker session" contract this file's test suite already pins (see
+    // agent-worker-session.test.ts) — some other path may still leave a
+    // worker-assigned task in awaiting_clarification with a live lease, and
+    // treating that as "no active lease" would incorrectly fall through to
+    // isParkedWorkerQuestion's stop/resume handling for a task whose worker
+    // session is, in fact, still alive.
     if (task.agentStatus === 'planning' || task.agentStatus === 'executing') return hasLiveOpenCodeSession(task);
     return task.agentStatus === 'awaiting_clarification' && hasLiveOpenCodeSession(task);
   };
@@ -335,6 +349,12 @@ export function createAgentRouter(
         startedAt: Date.now(),
         completedAt: undefined,
         summary: undefined,
+        // This starts a brand-new run from a human follow-up message, not a
+        // clarification answer — any leftover clarificationRequest/Answer
+        // from an earlier cycle must not survive, or workerResume() would
+        // inject stale Q&A into this unrelated run.
+        clarificationRequest: null,
+        clarificationAnswer: null,
       });
       if (!updated) {
         res.status(404).json({ error: 'task not found' });

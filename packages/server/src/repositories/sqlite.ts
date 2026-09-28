@@ -238,6 +238,15 @@ export class SqliteTaskRepository implements TaskRepository {
     // stale clarification request/answer all land together — a partial write
     // here could otherwise leave a terminal task with a leftover
     // clarification payload that leaks into an unrelated future run.
+    // run_requested_at/run_claimed_at MUST also be cleared here: a completed
+    // task still carries assigned_worker_id, and PATCH /:id {columnId:
+    // 'in-progress'} resets agentStatus to 'idle' without touching either —
+    // if run_requested_at survived, that idle+assigned+run-requested row
+    // would immediately match getWorkerAssignments/claimWorkerTask and the
+    // worker would silently re-run it with no explicit Run action. Every
+    // legitimate re-dispatch path (groups.ts, orchestrations.ts, agent.ts's
+    // requeue branches, jira import-execution.ts) calls requestRun() again
+    // before re-running, so nothing depends on this surviving completion.
     const result = this.db.prepare(`UPDATE tasks SET
         agent_status = ?,
         completed_at = ?,
@@ -245,6 +254,7 @@ export class SqliteTaskRepository implements TaskRepository {
         column_id = CASE WHEN ? = 'complete' THEN 'review' WHEN column_id = 'pending' THEN 'in-progress' ELSE column_id END,
         clarification_request = NULL,
         clarification_answer = NULL,
+        run_requested_at = NULL,
         run_claimed_at = NULL,
         worker_claim_token_hash = NULL,
         worker_lease_expires_at = NULL
@@ -261,12 +271,18 @@ export class SqliteTaskRepository implements TaskRepository {
     // /clarification/resume). completed_at is cleared because parking is not
     // a terminal state; the worker claim is released the same way completion
     // releases it, so the task is not claimable again until answered.
+    // run_requested_at is cleared for the same reason as completeWorkerTask:
+    // a human dragging a parked task straight to In Progress (instead of
+    // answering) resets agentStatus to 'idle' via PATCH without touching it,
+    // which would otherwise make the row immediately re-claimable by the
+    // worker with no explicit Run action.
     const result = this.db.prepare(`UPDATE tasks SET
         agent_status = 'awaiting_clarification',
         column_id = 'pending',
         completed_at = NULL,
         clarification_request = ?,
         clarification_answer = NULL,
+        run_requested_at = NULL,
         run_claimed_at = NULL,
         worker_claim_token_hash = NULL,
         worker_lease_expires_at = NULL

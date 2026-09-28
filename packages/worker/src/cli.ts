@@ -86,7 +86,19 @@ function safeWorkerError(error: unknown, workspacePath: string): string {
 // here, worker-side, before POSTing so a runaway extraction (see
 // extractInputRequest) can never trigger that failure path.
 export function truncateQuestion(question: string): string {
-  return question.length > MAX_DESCRIPTION_LENGTH ? question.slice(0, MAX_DESCRIPTION_LENGTH) : question;
+  if (question.length <= MAX_DESCRIPTION_LENGTH) return question;
+  // .slice() truncates by UTF-16 code unit and can split a surrogate pair
+  // (e.g. an emoji), leaving a lone surrogate that renders as a replacement
+  // character. Iterate by Unicode code point instead (the string iterator is
+  // surrogate-pair aware) so truncation always lands on a whole character
+  // boundary, while still keeping the result within MAX_DESCRIPTION_LENGTH
+  // UTF-16 units — the same unit the server's length check uses.
+  let result = '';
+  for (const char of question) {
+    if (result.length + char.length > MAX_DESCRIPTION_LENGTH) break;
+    result += char;
+  }
+  return result;
 }
 
 async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string; readonly runner: RunnerProfile }> {
