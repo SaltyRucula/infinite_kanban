@@ -57,6 +57,7 @@ type FakeClientState = {
   readonly aborts: string[];
   readonly existingSessions?: readonly string[];
   readonly replyText?: string;
+  readonly bodies?: Array<{ system?: string; tools?: Readonly<Record<string, boolean>> }>;
 };
 
 function emptyAsyncGenerator<T>(): AsyncGenerator<T, void, unknown> {
@@ -83,6 +84,7 @@ function createFakeClient(
         const first = body?.parts[0];
         const text = first?.type === 'text' ? first.text : '';
         state.prompts.push({ sessionId: path.id, agent: body?.agent, text });
+        state.bodies?.push({ system: body?.system, tools: body?.tools });
         return { data: { info: {}, parts: state.replyText ? [{ type: 'text', text: state.replyText }] : [] } };
       },
       abort: async ({ path }) => {
@@ -390,4 +392,49 @@ test('startOpenCodeServerTask falls back to a fresh session when client.session.
   assert.deepEqual(state.sessionCreates, ['Implement local runner seam']);
   assert.match(state.prompts[0]?.text ?? '', /Your question: Which API version\?/);
   assert.match(state.prompts[0]?.text ?? '', /Answer: Use v2/);
+});
+
+test('startOpenCodeServerTask runs a review task as a read-only reviewer and reports the verdict', async () => {
+  const state: FakeClientState = {
+    sessionCreates: [],
+    prompts: [],
+    aborts: [],
+    bodies: [],
+    replyText: 'Retry count is 2, expected 3.\nREVIEW_VERDICT: changes_requested',
+  };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, mode: 'review', branchName: 'feature/seam', baseBranch: 'main' },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  const result = await live.done;
+
+  assert.match(state.prompts[0]?.text ?? '', /Review the implementation of this task/);
+  assert.match(state.bodies?.[0]?.system ?? '', /REVIEWER/);
+  assert.equal(state.bodies?.[0]?.tools?.edit, false);
+  assert.equal(state.bodies?.[0]?.tools?.write, false);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.reviewVerdict, 'changes_requested');
+  assert.equal(result.summary, 'Retry count is 2, expected 3.');
+});
+
+test('startOpenCodeServerTask fails a review that ends without a verdict', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [], replyText: 'Looks fine to me.' };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, mode: 'review' },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reviewVerdict, undefined);
 });

@@ -94,6 +94,12 @@ export interface WorkerTaskAssignment {
    * still available) with the human's `answer` instead of starting over.
    */
   resume?: WorkerTaskResume;
+  /**
+   * `review` when the run was started from the Review column: the agent
+   * validates the existing implementation and reports a verdict instead of
+   * re-implementing the task. Absent for normal implementation runs.
+   */
+  mode?: 'review';
 }
 
 export interface WorkerTaskResume {
@@ -101,6 +107,8 @@ export interface WorkerTaskResume {
   question: string;
   answer: string;
 }
+
+export type ReviewVerdict = 'pass' | 'changes_requested';
 
 export interface ClarificationRequestPayload {
   requestId: string;

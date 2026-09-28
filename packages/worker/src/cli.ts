@@ -308,6 +308,7 @@ async function executeTask(
         ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
         ...(result.question ? { question: truncateQuestion(safeWorkerError(result.question, workspacePath)) } : {}),
         ...(sessionId ? { sessionId } : {}),
+        ...(result.reviewVerdict ? { reviewVerdict: result.reviewVerdict } : {}),
       }),
     });
   } finally {

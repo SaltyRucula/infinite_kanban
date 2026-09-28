@@ -339,7 +339,6 @@ export class SqliteTaskRepository implements TaskRepository {
         clarification_request: merged.clarificationRequest ? JSON.stringify(merged.clarificationRequest) : null,
           clarification_answer: merged.clarificationAnswer ? JSON.stringify(merged.clarificationAnswer) : null,
            assigned_worker_id: merged.assignedWorkerId ?? null,
-           worker_attempt: 0,
            labels: JSON.stringify(merged.labels ?? []),
            agent_preference: merged.agentPreference ?? null,
       });

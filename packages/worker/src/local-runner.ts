@@ -3,8 +3,9 @@ import { v4 as uuid } from 'uuid';
 import { mapOpenCodeEvent, type AgentEvent as CoreEvent } from '@codewithdan/agent-sdk-core';
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk';
-import type { AgentEvent, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import type { AgentEvent, ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { buildResumeAnswerPrompt, buildResumeContext, extractInputRequest, INPUT_REQUEST_INSTRUCTIONS } from './input-request.js';
+import { buildReviewPrompt, isReviewRun, REVIEW_DISABLED_TOOLS, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 export type AgentSdkRunnerProfile = { readonly kind: 'agent-sdk' };
 export type OpenCodeServerRunnerProfile = { readonly kind: 'opencode-server'; readonly agent: string };
@@ -15,6 +16,7 @@ export type OpenCodeRunResult = {
   readonly summary?: string;
   readonly error?: string;
   readonly question?: string;
+  readonly reviewVerdict?: ReviewVerdict;
 };
 
 export type LiveOpenCodeServerTask = {
@@ -97,7 +99,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function sanitizeLocalText(content: string, workspacePath: string): string {
-  return content.replaceAll(workspacePath, '[local workspace]');
+  // Guard against an empty workspacePath: String.replaceAll('', x) inserts x
+  // between every character instead of doing nothing (see the identical
+  // guard in reviewResult, review-mode.ts).
+  return workspacePath ? content.replaceAll(workspacePath, '[local workspace]') : content;
 }
 
 function sanitizeMetadata(
@@ -443,12 +448,13 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
 
   const done = (async (): Promise<OpenCodeRunResult> => {
     try {
+      const review = isReviewRun(input.task);
       const response = await promptWithStallRecovery({
         agent: input.runner.agent,
-        system: HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
+        system: review ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}` : HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
         model: headlessModel(),
-        tools: HEADLESS_DISABLED_TOOLS,
-        parts: [{ type: 'text', text: firstPrompt }],
+        tools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
+        parts: [{ type: 'text', text: review ? buildReviewPrompt(input.task) : firstPrompt }],
       });
       if (aborted) {
         return { status: 'failed', error: 'opencode session cancelled', summary: 'Cancelled OpenCode session task' };
@@ -463,6 +469,7 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
       if (late) {
         return { status: 'failed', error: late.message, summary: 'OpenCode server task failed' };
       }
+      if (review) return reviewResult(responseText(response), input.workspacePath);
       const question = extractInputRequest(responseText(response));
       if (question) {
         return {
