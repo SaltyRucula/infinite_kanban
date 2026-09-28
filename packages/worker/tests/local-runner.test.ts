@@ -12,6 +12,7 @@ import {
   type OpenCodeProcess,
   type OpenCodeSpawn,
 } from '../src/local-runner.js';
+import { INPUT_REQUEST_MARKER } from '../src/input-request.js';
 
 const task: WorkerTaskAssignment = {
   id: 'task-1',
@@ -437,4 +438,71 @@ test('startOpenCodeServerTask fails a review that ends without a verdict', async
 
   assert.equal(result.status, 'failed');
   assert.equal(result.reviewVerdict, undefined);
+});
+
+// SHOULD-FIX regression: INPUT_REQUEST_INSTRUCTIONS was included in the
+// system prompt on every run, including review runs, giving a reviewer two
+// contradictory "end your response with this final line" instructions
+// (REVIEW_VERDICT: ... and NEEDS_INPUT: ...). A review run's system prompt
+// must never contain the clarification instructions.
+test('startOpenCodeServerTask does not include the clarification instructions in a review run\'s system prompt', async () => {
+  const state: FakeClientState = {
+    sessionCreates: [], prompts: [], aborts: [], bodies: [],
+    replyText: 'Looks fine.\nREVIEW_VERDICT: pass',
+  };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, mode: 'review' },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  await live.done;
+
+  assert.equal(state.bodies?.[0]?.system?.includes(INPUT_REQUEST_MARKER), false);
+  assert.match(state.bodies?.[0]?.system ?? '', /REVIEWER/);
+});
+
+test('startOpenCodeServerTask still includes the clarification instructions on a non-review run', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [], bodies: [] };
+
+  const live = await startOpenCodeServerTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  await live.done;
+
+  assert.equal(state.bodies?.[0]?.system?.includes(INPUT_REQUEST_MARKER), true);
+});
+
+// NIT regression: resolveSession would happily resume a paused session for a
+// review-mode task even though startOpenCodeServerTaskWithClient always
+// sends buildReviewPrompt (not the resume answer prompt) into a review run —
+// silently discarding the resume answer and sending a review prompt into a
+// session that was reopened to receive a clarification answer. Unreachable
+// today (INPUT_REQUEST_INSTRUCTIONS, the only thing that can make a run ask
+// for `resume`, is now gated on `!review`), but this must fail loudly rather
+// than silently resuming the wrong session if that invariant is ever broken.
+test('startOpenCodeServerTask fails loudly instead of resuming a paused session when a review-mode task carries a resume payload (NIT)', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [], existingSessions: ['ses_paused'] };
+
+  await assert.rejects(
+    () => startOpenCodeServerTask({
+      task: { ...task, mode: 'review', resume: { sessionId: 'ses_paused', question: 'Which API version?', answer: 'Use v2' } },
+      workspacePath: '/tmp/workspace',
+      runner: { kind: 'opencode-server', agent: 'sisyphus' },
+      baseUrl: 'http://127.0.0.1:4096',
+      sendEvent: async () => {},
+      createClient: () => createFakeClient(state),
+    }),
+    /task\.resume must never be set on a review-mode task/,
+  );
+  // The paused session must never be touched (no prompt sent into it).
+  assert.deepEqual(state.prompts, []);
 });

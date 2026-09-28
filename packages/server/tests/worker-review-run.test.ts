@@ -343,6 +343,43 @@ test('a {status: complete} review completion with no verdict is flagged, not sil
   });
 });
 
+// BLOCKER regression (merge of the reviewer-role feature into this branch):
+// this branch's completeWorkerTask unconditionally forces column_id to
+// 'review' whenever status='complete' (see the SQL comment on
+// completeWorkerTask), so reading `completed.columnId` — the row state
+// AFTER completeWorkerTask ran — to decide whether to emit the defensive
+// "completed without a REVIEW_VERDICT while the task was in the Review
+// column" warning made the condition true for every successful
+// implementation-run completion, not just genuine review-column
+// completions. A normal implementation run finishing from In Progress must
+// never emit this warning. This test fails against the pre-fix code (which
+// reads completed.columnId) and passes once the check reads the
+// pre-completion task.columnId instead.
+test('a normal implementation run completing from In Progress emits no defensive REVIEW_VERDICT warning (BLOCKER regression)', async () => {
+  await withHarness('in-progress', async (h) => {
+    await h.run();
+    const { task, claimToken } = await h.claim();
+    assert.equal(task.mode, undefined);
+
+    const done = await h.complete(claimToken, { status: 'complete', summary: 'Added retry with 3 attempts.' });
+    assert.equal(done.status, 200);
+
+    const settled = await h.task();
+    assert.equal(settled.agentStatus, 'complete');
+    // completeWorkerTask forces column_id to 'review' on every successful
+    // completion, so this assertion alone does not discriminate the bug —
+    // it documents that behavior. The real assertion is on events below.
+    assert.equal(settled.columnId, 'review');
+
+    const events = await h.events();
+    assert.equal(
+      events.some((content) => content.includes('completed without a REVIEW_VERDICT')),
+      false,
+      'a normal implementation-run completion must not emit the review-settlement defensive warning',
+    );
+  });
+});
+
 test('an implementation run completing while the task sits in Review is not misfiled as a review (SHOULD-FIX: stable settlement discriminator)', async () => {
   await withHarness('in-progress', async (h) => {
     await h.run();

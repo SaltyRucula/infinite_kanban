@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { AgentEvent as CoreEvent, AgentProvider, AgentSession, AgentSessionConfig } from '@codewithdan/agent-sdk-core';
 import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { startAgentSdkTask } from '../src/sdk-runner.js';
+import { INPUT_REQUEST_MARKER } from '../src/input-request.js';
 
 const task: WorkerTaskAssignment = {
   id: 'task-1',
@@ -354,4 +355,158 @@ test('startAgentSdkTask prefers the latest output snapshot over concatenating it
   assert.equal(result.status, 'complete');
   assert.equal(result.reviewVerdict, 'pass');
   assert.equal(result.summary, 'Full findings.');
+});
+
+// SHOULD-FIX regression: INPUT_REQUEST_INSTRUCTIONS was included in the
+// system prompt on every run, including review runs, giving a reviewer two
+// contradictory "end your response with this final line" instructions
+// (REVIEW_VERDICT: ... and NEEDS_INPUT: ...). A review run's system prompt
+// must never contain the clarification instructions.
+test('startAgentSdkTask does not include the clarification instructions in a review run\'s system prompt', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'All requirements met.\nREVIEW_VERDICT: pass', timestamp: Date.now() },
+  ]);
+  let systemPrompt = '';
+  const createSession = provider.createSession.bind(provider);
+  provider.createSession = async (config) => {
+    systemPrompt = config.systemPrompt;
+    return createSession(config);
+  };
+
+  const live = await startAgentSdkTask({
+    task: { ...task, mode: 'review' },
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  await live.done;
+
+  assert.equal(systemPrompt.includes(INPUT_REQUEST_MARKER), false);
+  assert.equal(systemPrompt.includes('blocked by a genuinely unknown requirement'), false);
+  assert.match(systemPrompt, /REVIEWER/);
+});
+
+test('startAgentSdkTask still includes the clarification instructions on a non-review run', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'did the work', timestamp: Date.now() },
+  ]);
+  let systemPrompt = '';
+  const createSession = provider.createSession.bind(provider);
+  provider.createSession = async (config) => {
+    systemPrompt = config.systemPrompt;
+    return createSession(config);
+  };
+
+  const live = await startAgentSdkTask({
+    task,
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  await live.done;
+
+  assert.equal(systemPrompt.includes(INPUT_REQUEST_MARKER), true);
+});
+
+// NIT regression: sendMessage used to reset verdictText, discarding an
+// already-emitted verdict when a review run receives a `/message`
+// follow-up. verdictText accumulates across the WHOLE turn by design (see
+// its declaration comment in sdk-runner.ts) and must survive a sendMessage
+// call — only the clarification-scan state (burstText/lastDetectedQuestion)
+// resets there.
+test('startAgentSdkTask keeps an already-detected verdict across a sendMessage follow-up (NIT)', async () => {
+  let resolveExecute: (value: { status: 'complete' }) => void = () => {};
+  const executeDone = new Promise<{ status: 'complete' }>((resolve) => { resolveExecute = resolve; });
+  let sendCalls = 0;
+
+  const provider: AgentProvider = {
+    name: 'opencode',
+    displayName: 'Fake',
+    model: 'fake-model',
+    async start() {},
+    async stop() {},
+    async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return {
+        sessionId: 'ses_1',
+        async execute() {
+          config.onEvent({
+            id: 'e1', contextId: 'task-1', type: 'output',
+            content: 'All requirements met.\nREVIEW_VERDICT: pass', timestamp: Date.now(),
+          });
+          return executeDone;
+        },
+        async send() { sendCalls += 1; },
+        async abort() {},
+        async destroy() {},
+      };
+    },
+  };
+
+  const live = await startAgentSdkTask({
+    task: { ...task, mode: 'review' },
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+
+  // The verdict-bearing output event above was already emitted (execute()
+  // runs it synchronously before returning its pending promise), but
+  // execute() itself has not resolved yet — mirroring a real `/message`
+  // follow-up arriving mid-turn.
+  await live.sendMessage('Anything else to check?');
+  resolveExecute({ status: 'complete' });
+
+  const result = await live.done;
+
+  assert.equal(sendCalls, 1);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.reviewVerdict, 'pass');
+  assert.equal(result.summary, 'All requirements met.');
+});
+
+// NIT regression: both runners silently dropped `task.resume` on a review
+// run (harmless here — sdk-runner never resumes a session by
+// `resume.sessionId`, it always creates a fresh one — but the guard below
+// documents and enforces the invariant explicitly rather than leaving it an
+// implicit consequence of unrelated code, mirroring local-runner.ts's
+// equivalent guard where dropping it silently WOULD be unsafe).
+test('startAgentSdkTask fails loudly instead of silently dropping resume on a review-mode task (NIT)', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'All requirements met.\nREVIEW_VERDICT: pass', timestamp: Date.now() },
+  ]);
+
+  const live = await startAgentSdkTask({
+    task: { ...task, mode: 'review', resume: { sessionId: 'ses_old', question: 'Cover tests?', answer: 'Yes' } },
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'failed');
+  assert.match(result.error ?? '', /task\.resume must never be set on a review-mode task/);
+});
+// honored it. A replace-style snapshot resend concatenating onto a prior
+// no-newline fragment could hide a genuine NEEDS_INPUT: line from
+// extractInputRequest's start-of-line anchor.
+test('startAgentSdkTask detects NEEDS_INPUT in a replace-style snapshot even after a prior no-newline fragment (NIT)', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'Investigated the config', timestamp: Date.now() },
+    {
+      id: 'e2', contextId: 'task-1', type: 'output',
+      content: 'NEEDS_INPUT: Which environment should this target?', timestamp: Date.now(),
+      metadata: { replace: true },
+    },
+  ]);
+
+  const live = await startAgentSdkTask({
+    task,
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'awaiting_input');
+  assert.equal(result.question, 'Which environment should this target?');
 });

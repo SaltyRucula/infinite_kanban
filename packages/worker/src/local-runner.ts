@@ -208,7 +208,6 @@ const HEADLESS_CLARIFICATION_SYSTEM_PROMPT = [
   'root), then work inside that repository. If no repository under your root matches this task,',
   'do NOT guess — stop and end your response clearly stating which repository you expected and',
   'that it is not present, so a human can route the task to a worker that has it.',
-  INPUT_REQUEST_INSTRUCTIONS,
 ].join(' ');
 
 // OpenCode gates file access outside the session root behind an interactive
@@ -274,6 +273,18 @@ async function resolveSession(
   client: OpenCodeClientLike,
   task: WorkerTaskAssignment,
 ): Promise<{ sessionId: string; firstPrompt: string }> {
+  // A review run must never carry `resume`: resolveSession would happily
+  // resume the paused session below, but startOpenCodeServerTask always
+  // sends buildReviewPrompt (not this function's firstPrompt) into a review
+  // run, silently discarding the resume answer and sending a review prompt
+  // into a session that was reopened to receive a clarification answer.
+  // Nothing produces this combination today — INPUT_REQUEST_INSTRUCTIONS
+  // (the only thing that can make a run ask for `resume`) is gated on
+  // `!review` — but fail loudly instead of silently mishandling it if that
+  // invariant is ever broken.
+  if (task.resume && isReviewRun(task)) {
+    throw new Error('resolveSession: task.resume must never be set on a review-mode task');
+  }
   if (task.resume) {
     // OpenCode persists sessions on disk, so the paused conversation is
     // usually still available even if the server that ran it has exited.
@@ -451,7 +462,15 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
       const review = isReviewRun(input.task);
       const response = await promptWithStallRecovery({
         agent: input.runner.agent,
-        system: review ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}` : HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
+        // A review run only ever scans for REVIEW_VERDICT (see reviewResult
+        // below), never for a clarification marker — including
+        // INPUT_REQUEST_INSTRUCTIONS here as well would hand the reviewer two
+        // contradictory "end your response with this final line" instructions.
+        // A reviewer that needs more information should express that as
+        // changes_requested with the question in its findings instead.
+        system: review
+          ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}`
+          : `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${INPUT_REQUEST_INSTRUCTIONS}`,
         model: headlessModel(),
         tools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
         parts: [{ type: 'text', text: review ? buildReviewPrompt(input.task) : firstPrompt }],
