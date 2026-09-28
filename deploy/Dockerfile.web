@@ -16,6 +16,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/
+COPY packages/opencode-compat/package.json ./packages/opencode-compat/
 COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
 COPY packages/e2e/package.json ./packages/e2e/

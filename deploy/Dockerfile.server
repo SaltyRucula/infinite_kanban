@@ -26,6 +26,7 @@ WORKDIR /app
 # workspace package.json present for `npm ci`).
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/
+COPY packages/opencode-compat/package.json ./packages/opencode-compat/
 COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
 COPY packages/e2e/package.json ./packages/e2e/
@@ -37,8 +38,9 @@ RUN npm ci --include=dev --no-audit --no-fund
 # Application source.
 COPY . .
 
-# Build shared types then the server (tsc -> dist/).
-RUN npm run build:shared && npm run build:server
+# Build shared types, the opencode-compat package (the server depends on it),
+# then the server (tsc -> dist/).
+RUN npm run build:shared && npm run build:opencode-compat && npm run build:server
 
 EXPOSE 8080
 
