@@ -23,7 +23,7 @@ test.describe('Templates CRUD', () => {
         title: 'Fix bug in {{module}}',
         description: 'Investigate and fix the reported bug',
         priority: 'high',
-        agentType: 'copilot',
+        agentType: 'opencode',
       },
     });
     expect(res.status()).toBe(201);
@@ -34,7 +34,7 @@ test.describe('Templates CRUD', () => {
     expect(template.title).toBe('Fix bug in {{module}}');
     expect(template.description).toBe('Investigate and fix the reported bug');
     expect(template.priority).toBe('high');
-    expect(template.agentType).toBe('copilot');
+    expect(template.agentType).toBe('opencode');
     expect(template.id).toBeTruthy();
     expect(template.createdAt).toBeGreaterThan(0);
   });
@@ -165,7 +165,7 @@ test.describe('Templates CRUD', () => {
     expect(res.status()).toBe(400);
   });
 
-  test('POST /api/templates defaults priority to medium and agentType to copilot', async ({ request }) => {
+  test('POST /api/templates defaults priority to medium and agentType to opencode', async ({ request }) => {
     const res = await request.post(`${API}/api/templates`, {
       data: { name: 'Defaults Test' },
     });
@@ -174,6 +174,6 @@ test.describe('Templates CRUD', () => {
     createdIds.push(template.id);
 
     expect(template.priority).toBe('medium');
-    expect(template.agentType).toBe('copilot');
+    expect(template.agentType).toBe('opencode');
   });
 });

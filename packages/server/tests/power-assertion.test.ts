@@ -52,3 +52,24 @@ test('PowerAssertion re-acquires after the held process exits unexpectedly', () 
   assert.equal(assertion.isHeld(), true);
   assert.equal(spawned.length, 2);
 });
+
+test('PowerAssertion survives caffeinate failing to spawn (e.g. ENOENT on Linux)', () => {
+  const spawned: FakeChild[] = [];
+  const assertion = new PowerAssertion(() => {
+    const child = new FakeChild();
+    spawned.push(child);
+    return child as unknown as import('node:child_process').ChildProcess;
+  });
+
+  assertion.sync(1);
+  // spawn() reports ENOENT asynchronously as an 'error' event; with no
+  // listener, EventEmitter rethrows it and takes down the whole server.
+  assert.doesNotThrow(() => spawned[0]?.emit('error', Object.assign(new Error('spawn caffeinate ENOENT'), { code: 'ENOENT' })));
+  assert.equal(assertion.isHeld(), false);
+});
+
+test('PowerAssertion does not spawn anything off macOS by default', () => {
+  const assertion = new PowerAssertion(undefined, 'linux');
+  assertion.sync(1);
+  assert.equal(assertion.isHeld(), false);
+});
