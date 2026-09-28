@@ -3,3 +3,4 @@ export const SK_SORT_DIR = 'kanban-sort-dir';
 export const SK_FILTER_AGENTS = 'kanban-filter-agents';
 export const SK_FILTER_STATUSES = 'kanban-filter-statuses';
 export const SK_THEME = 'theme';
+export const SK_EVENT_VIEW_MODE = 'kanban-event-view-mode';

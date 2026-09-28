@@ -29,15 +29,18 @@ import type {
   Task,
   AgentEvent,
   AgentEventType,
+  AgentEventImportance,
   ClarificationRequestPayload,
   TaskClarificationAnswer,
   TaskClarificationRequest,
 } from '@/types';
+import { classifyAgentEventImportance } from '@/types';
 import { getAgentDisplay } from '@/lib/agent-config';
 import { TerminalView } from './TerminalView';
 import { api, connectWS } from '@/lib/api';
 import type { ResumeClarificationRequest, ResumeClarificationResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { SK_EVENT_VIEW_MODE } from '@/lib/storage-keys';
 
 const eventIconMap: Record<AgentEventType, React.ElementType> = {
   thinking: Brain,
@@ -154,6 +157,41 @@ function coalesceEvents(events: AgentEvent[], streaming: boolean): CoalescedEven
 
     result.push({ ...event });
   }
+  return result;
+}
+
+/** Resolve an event's importance, falling back to the classifier for older events that predate the field. */
+function getImportance(event: AgentEvent): AgentEventImportance {
+  return event.importance ?? classifyAgentEventImportance(event.type);
+}
+
+/** A run of items in the milestone-first feed: either a single foregrounded milestone, or a collapsed run of detail events. */
+type FeedItem =
+  | { kind: 'milestone'; event: CoalescedEvent }
+  | { kind: 'details'; events: CoalescedEvent[] };
+
+/** Group coalesced events into milestone items and collapsed detail runs, for the "Milestones" view. */
+function groupByImportance(events: CoalescedEvent[]): FeedItem[] {
+  const result: FeedItem[] = [];
+  let pendingDetails: CoalescedEvent[] = [];
+
+  const flushDetails = () => {
+    if (pendingDetails.length > 0) {
+      result.push({ kind: 'details', events: pendingDetails });
+      pendingDetails = [];
+    }
+  };
+
+  for (const event of events) {
+    if (getImportance(event) === 'milestone') {
+      flushDetails();
+      result.push({ kind: 'milestone', event });
+    } else {
+      pendingDetails.push(event);
+    }
+  }
+  flushDetails();
+
   return result;
 }
 
@@ -311,7 +349,29 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function EventItem({ event }: { event: CoalescedEvent }) {
+/** Render a unified diff with additions/deletions colored, matching the theme's diff variables. */
+function DiffBlock({ diff }: { diff: string }) {
+  return (
+    <div className="overflow-x-auto rounded-md p-2.5 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--code-bg)' }}>
+      {diff.split('\n').map((line, i) => (
+        <div
+          key={i}
+          style={
+            line.startsWith('+') && !line.startsWith('++')
+              ? { color: 'var(--code-diff-add-text)', backgroundColor: 'var(--code-diff-add-bg)' }
+              : line.startsWith('-') && !line.startsWith('--')
+              ? { color: 'var(--code-diff-del-text)', backgroundColor: 'var(--code-diff-del-bg)' }
+              : { color: 'var(--code-diff-neutral)' }
+          }
+        >
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EventItem({ event, prominent = false }: { event: CoalescedEvent; prominent?: boolean }) {
   // Thinking events default to collapsed; everything else expanded
   const [expanded, setExpanded] = useState(event.type !== 'thinking');
   const Icon = eventIconMap[event.type];
@@ -348,7 +408,8 @@ function EventItem({ event }: { event: CoalescedEvent }) {
       transition={{ duration: 0.2 }}
       className={cn(
         'group',
-        event.type === 'error' && 'rounded-lg border border-red-500/20 bg-red-500/5'
+        event.type === 'error' && 'rounded-lg border border-red-500/20 bg-red-500/5',
+        prominent && event.type !== 'error' && 'rounded-lg border border-border/60 bg-accent/20'
       )}
     >
       <button
@@ -360,7 +421,7 @@ function EventItem({ event }: { event: CoalescedEvent }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-foreground">
+            <span className={cn('text-xs font-medium text-foreground', prominent && 'font-semibold')}>
               {label}
             </span>
             {headerSummary && (
@@ -465,29 +526,54 @@ function EventItem({ event }: { event: CoalescedEvent }) {
               )}
 
               {/* Diff */}
-              {hasDiff && (
-                <div className="mt-1 overflow-x-auto rounded-md p-2.5 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--code-bg)' }}>
-                  {event.metadata!.diff!.split('\n').map((line, i) => (
-                    <div
-                      key={i}
-                      style={
-                        line.startsWith('+') && !line.startsWith('++')
-                          ? { color: 'var(--code-diff-add-text)', backgroundColor: 'var(--code-diff-add-bg)' }
-                          : line.startsWith('-') && !line.startsWith('--')
-                          ? { color: 'var(--code-diff-del-text)', backgroundColor: 'var(--code-diff-del-bg)' }
-                          : { color: 'var(--code-diff-neutral)' }
-                      }
-                    >
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {hasDiff && <DiffBlock diff={event.metadata!.diff!} />}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
     </motion.div>
+  );
+}
+
+/** A quiet, collapsible run of "detail" events (thinking/output/tool_call/file_read/command_output)
+ *  in the Milestones view. Nothing is discarded — the content stays reachable on expand. */
+function DetailGroup({ events }: { events: CoalescedEvent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const count = events.length;
+  return (
+    <div className="my-0.5">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-muted-foreground/70 hover:text-foreground hover:bg-accent/30 transition-colors"
+      >
+        <span className="h-px flex-1 bg-border/60" />
+        <span className="shrink-0 text-[10px] font-medium">
+          {count} reasoning {count === 1 ? 'step' : 'steps'}
+        </span>
+        <ChevronDown
+          className={cn('h-3 w-3 shrink-0 transition-transform', expanded && 'rotate-180')}
+        />
+        <span className="h-px flex-1 bg-border/60" />
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-0.5 py-0.5">
+              {events.map((event) => (
+                <EventItem key={event.id} event={event} />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -511,6 +597,9 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [descExpanded, setDescExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'summary' | 'events' | 'terminal' | 'changes'>('events');
+  const [eventViewMode, setEventViewMode] = useState<'milestones' | 'everything'>(
+    () => (localStorage.getItem(SK_EVENT_VIEW_MODE) as 'milestones' | 'everything') || 'milestones'
+  );
   // Tracks whether the user manually picked a tab for the current task, so the
   // auto-default (Summary for review/done) doesn't clobber an explicit choice.
   const userSelectedTabRef = useRef(false);
@@ -757,6 +846,15 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     () => coalesceEvents(events, streaming),
     [events, streaming]
   );
+
+  const feedItems = useMemo(
+    () => groupByImportance(coalescedEvents),
+    [coalescedEvents]
+  );
+
+  useEffect(() => {
+    localStorage.setItem(SK_EVENT_VIEW_MODE, eventViewMode);
+  }, [eventViewMode]);
 
   // Derive file changes for the Changes tab
   const fileChanges = useMemo(() => {
@@ -1310,9 +1408,44 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              Actions{fileChanges.length > 0 ? ` (${fileChanges.length})` : ''}
+              Changes{fileChanges.length > 0 ? ` (${fileChanges.length})` : ''}
             </button>
             </div>
+            <div className="flex items-center gap-1">
+            {activeTab === 'events' && (
+              <div
+                role="group"
+                aria-label="Event feed view"
+                className="flex items-center rounded-md border border-border bg-muted p-0.5 mr-1"
+              >
+                <button
+                  type="button"
+                  onClick={() => setEventViewMode('milestones')}
+                  aria-pressed={eventViewMode === 'milestones'}
+                  className={cn(
+                    'rounded px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    eventViewMode === 'milestones'
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Milestones
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEventViewMode('everything')}
+                  aria-pressed={eventViewMode === 'everything'}
+                  className={cn(
+                    'rounded px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    eventViewMode === 'everything'
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Everything
+                </button>
+              </div>
+            )}
             {events.length > 0 && (
               <button
                 onClick={() => {
@@ -1334,6 +1467,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
                 Export
               </button>
             )}
+            </div>
           </div>
 
           {/* Summary view */}
@@ -1369,29 +1503,49 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
             </div>
           )}
 
-          {/* Changes list */}
+          {/* Changes — files touched by the agent, aggregated from file_write/file_edit/file_read events */}
           {activeTab === 'changes' && (
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
               {fileChanges.length === 0 && (
                 <div className="flex h-full items-center justify-center">
                   <div className="text-center">
                     <FileCode2 className="mx-auto h-10 w-10 text-muted-foreground/20" />
-                    <p className="mt-3 text-sm text-muted-foreground/50">No actions yet</p>
+                    <p className="mt-3 text-sm text-muted-foreground/50">No files touched yet</p>
                   </div>
                 </div>
               )}
-              {fileChanges.map((file) => (
-                <details key={file.path} className="group rounded-lg border border-border bg-card">
-                  <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50">
-                    <span>{file.type === 'created' ? '🟢' : file.type === 'modified' ? '🟡' : '📖'}</span>
-                    <span className="flex-1 font-mono text-xs text-foreground truncate" title={file.path}>{file.path}</span>
-                    <span className="text-[10px] text-muted-foreground capitalize">{file.type}</span>
-                  </summary>
-                  <div className="border-t border-border px-3 py-2 overflow-x-auto">
-                    <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">{file.diff || file.content}</pre>
-                  </div>
-                </details>
-              ))}
+              {fileChanges.length > 0 && (columnId === 'review' || columnId === 'done') && (
+                <div className="mb-1 flex items-center gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  {fileChanges.length} file{fileChanges.length === 1 ? '' : 's'} touched — this is the agent's output.
+                </div>
+              )}
+              {fileChanges.map((file) => {
+                const badge = file.type === 'created'
+                  ? { label: 'Write', className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' }
+                  : file.type === 'modified'
+                  ? { label: 'Edit', className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' }
+                  : { label: 'Read', className: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' };
+                return (
+                  <details key={file.path} className="group rounded-lg border border-border bg-card">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50">
+                      <FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="flex-1 font-mono text-xs text-foreground truncate" title={file.path}>{file.path}</span>
+                      <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', badge.className)}>
+                        {badge.label}
+                      </span>
+                      <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-open:rotate-90" />
+                    </summary>
+                    <div className="border-t border-border px-3 py-2 overflow-x-auto">
+                      {file.diff ? (
+                        <DiffBlock diff={file.diff} />
+                      ) : (
+                        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">{file.content}</pre>
+                      )}
+                    </div>
+                  </details>
+                );
+              })}
             </div>
           )}
 
@@ -1429,9 +1583,17 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
               </div>
             )}
 
-            {coalescedEvents.map((event) => (
-              <EventItem key={event.id} event={event} />
-            ))}
+            {eventViewMode === 'everything'
+              ? coalescedEvents.map((event) => (
+                  <EventItem key={event.id} event={event} />
+                ))
+              : feedItems.map((item, i) =>
+                  item.kind === 'milestone' ? (
+                    <EventItem key={item.event.id} event={item.event} prominent />
+                  ) : (
+                    <DetailGroup key={`details-${i}-${item.events[0]?.id ?? i}`} events={item.events} />
+                  )
+                )}
 
             {/* Streaming indicator */}
             {streaming && coalescedEvents.length > 0 && (

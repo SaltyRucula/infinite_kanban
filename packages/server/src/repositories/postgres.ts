@@ -334,8 +334,8 @@ export class PostgresTaskRepository implements TaskRepository {
 
   async insertEvent(event: AgentEvent): Promise<void> {
     await this.pool.query(
-      `INSERT INTO events (id, task_id, type, content, timestamp, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO events (id, task_id, type, content, timestamp, metadata, importance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         event.id,
         event.taskId,
@@ -343,6 +343,7 @@ export class PostgresTaskRepository implements TaskRepository {
         event.content,
         event.timestamp,
         event.metadata ? JSON.stringify(event.metadata) : null,
+        event.importance ?? null,
       ]
     );
   }
@@ -355,6 +356,7 @@ export class PostgresTaskRepository implements TaskRepository {
       content: string;
       timestamp: string;
       metadata: string | null;
+      importance: string | null;
     }>(
       'SELECT * FROM events WHERE task_id = $1 ORDER BY timestamp ASC',
       [taskId]
@@ -375,6 +377,7 @@ export class PostgresTaskRepository implements TaskRepository {
         type: row.type as AgentEvent['type'],
         content: row.content,
         timestamp: Number(row.timestamp),
+        ...(row.importance ? { importance: row.importance as AgentEvent['importance'] } : {}),
         ...(metadata ? { metadata } : {}),
       };
     });

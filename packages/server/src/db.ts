@@ -130,6 +130,13 @@ function migrate(db: Database.Database): void {
   // Index for fast lookups by task_id + ordering by timestamp
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, timestamp ASC)`);
 
+  // Add importance column if it doesn't exist yet (additive, nullable — old
+  // rows read back with importance = undefined; see sqlite.ts getEventsByTaskId).
+  const eventCols = db.pragma('table_info(events)') as { name: string }[];
+  if (!eventCols.some((c) => c.name === 'importance')) {
+    db.exec(`ALTER TABLE events ADD COLUMN importance TEXT`);
+  }
+
   // Add indexes for tasks table
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_column_id ON tasks(column_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_agent_status ON tasks(agent_status)`);
@@ -735,6 +742,10 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, timestamp ASC)
   `);
+
+  // Add importance column if it doesn't exist yet (additive, nullable — old
+  // rows read back with importance = undefined; see postgres.ts getEventsByTaskId).
+  await pool.query(`ALTER TABLE events ADD COLUMN IF NOT EXISTS importance TEXT`);
 
   // Templates table
   await pool.query(`

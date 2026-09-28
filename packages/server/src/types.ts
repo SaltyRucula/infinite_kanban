@@ -21,6 +21,8 @@ export type {
   CreateProjectRequest,
   UpdateProjectRequest,
   AgentEvent,
+  AgentEventType,
+  AgentEventImportance,
   JiraImportResult,
   WSMessage,
 } from '../../../shared/types.js';
@@ -36,3 +38,5 @@ export {
   MAX_GROUP_CHILDREN,
   MIN_GROUP_CHILDREN,
 } from '../../../shared/constants.js';
+
+export { classifyAgentEventImportance } from '../../../shared/types.js';

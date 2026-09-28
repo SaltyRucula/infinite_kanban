@@ -29,7 +29,7 @@ function createDatabase(): Database.Database {
       worker_claim_token_hash TEXT, worker_claimed_at INTEGER, worker_lease_expires_at INTEGER,
       worker_attempt INTEGER NOT NULL DEFAULT 0, labels TEXT NOT NULL DEFAULT '[]', agent_preference TEXT
     );
-    CREATE TABLE events (id TEXT, task_id TEXT, type TEXT, content TEXT, timestamp INTEGER, metadata TEXT);
+    CREATE TABLE events (id TEXT, task_id TEXT, type TEXT, content TEXT, timestamp INTEGER, metadata TEXT, importance TEXT);
   `);
   return db;
 }
