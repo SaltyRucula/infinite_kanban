@@ -160,6 +160,35 @@ test('POST /api/tasks/:id/message queues a worker follow-up command for the same
   assert.deepEqual(workerRepo.queued[0]?.attachmentIds, ['att-1', 'att-2']);
 });
 
+// SHOULD-FIX (round 2): a follow-up message with no live worker lease folds
+// into the description and starts a fresh run (the "requeue" branch). Any
+// clarificationRequest/clarificationAnswer left over from an EARLIER,
+// already-finished clarification cycle must not survive into this new run —
+// otherwise workerResume() would inject that stale Q&A into unrelated work.
+test('POST /api/tasks/:id/message clears a stale clarificationRequest/Answer when requeuing a fresh run', async () => {
+  const { repo, current } = createRepo(makeTask({
+    agentStatus: 'failed',
+    workerLeaseExpiresAt: undefined,
+    clarificationRequest: { requestId: 'req-old', sessionId: 'ses_old', prompt: 'Old question?', timestamp: 1 },
+    clarificationAnswer: { requestId: 'req-old', sessionId: 'ses_old', answer: 'Old answer', timestamp: 2 },
+  }));
+  const workerRepo = new FakeWorkerRepo();
+  await withAgentApp(repo, createManager(), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'please continue' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { success: true, code: 'requeued_with_followup' });
+  });
+
+  const updated = current();
+  assert.equal(updated.agentStatus, 'planning');
+  assert.equal(updated.clarificationRequest ?? null, null);
+  assert.equal(updated.clarificationAnswer ?? null, null);
+});
+
 test('POST /api/tasks/:id/clarification/resume queues clarification command for assigned worker', async () => {
   const { repo } = createRepo(makeTask({ agentStatus: 'awaiting_clarification' }));
   const workerRepo = new FakeWorkerRepo();
@@ -201,6 +230,42 @@ test('POST /api/tasks/:id/stop queues cancel for worker task and marks agentStat
   assert.equal(workerRepo.queued.length, 1);
   assert.equal(workerRepo.queued[0]?.type, 'cancel');
   assert.equal(created.current().agentStatus, 'failed');
+});
+
+// NIT (round 2): hasActiveWorkerLease now requires a genuinely live lease for
+// planning/executing too, not just the status. Pin the resulting behavior at
+// the two call sites this changes: a lapsed (but not yet swept) lease means
+// /stop no longer queues a cancel command that nobody will ever poll for —
+// it falls through to agentManager.stopAgent, which correctly 409s when
+// there is no in-process session either.
+test('POST /api/tasks/:id/stop 409s (rather than queuing an unpollable cancel) when the worker lease has already lapsed', async () => {
+  const { repo } = createRepo(makeTask({ id: 'task-lapsed-stop', agentStatus: 'executing', workerLeaseExpiresAt: Date.now() - 1 }));
+  const workerRepo = new FakeWorkerRepo();
+  await withAgentApp(repo, createManager(), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-lapsed-stop/stop`, { method: 'POST' });
+    assert.equal(response.status, 409);
+  });
+
+  assert.equal(workerRepo.queued.length, 0, 'no cancel command should be queued for a lapsed lease');
+});
+
+// Same lapsed-lease task via /message: it takes the "requeue as a fresh run"
+// branch instead of queuing a follow-up command into the same dead lease.
+test('POST /api/tasks/:id/message requeues a fresh run (rather than queuing an unpollable command) when the worker lease has already lapsed', async () => {
+  const { repo, current } = createRepo(makeTask({ id: 'task-lapsed-message', agentStatus: 'executing', workerLeaseExpiresAt: Date.now() - 1 }));
+  const workerRepo = new FakeWorkerRepo();
+  await withAgentApp(repo, createManager(), workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-lapsed-message/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'please continue' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { success: true, code: 'requeued_with_followup' });
+  });
+
+  assert.equal(workerRepo.queued.length, 0, 'no follow-up command should be queued for a lapsed lease');
+  assert.equal(current().agentStatus, 'planning');
 });
 
 test('GET /api/tasks/:id/opencode-session returns session link without leaking workspace paths', async () => {

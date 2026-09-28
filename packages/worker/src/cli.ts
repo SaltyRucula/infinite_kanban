@@ -7,6 +7,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import {
   isValidAgentType,
+  MAX_DESCRIPTION_LENGTH,
   VALID_AGENT_TYPES,
   WORKER_ASSIGNMENT_POLL_INTERVAL_MS,
   WORKER_HEARTBEAT_INTERVAL_MS,
@@ -77,6 +78,27 @@ async function loadConfig(): Promise<Config> {
 function safeWorkerError(error: unknown, workspacePath: string): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replaceAll(workspacePath, '[local workspace]');
+}
+
+// The server rejects an `awaiting_input` completion whose question exceeds
+// MAX_DESCRIPTION_LENGTH with a 400, which the worker's catch-all then turns
+// into a `failed` task — losing the question AND the work summary. Truncate
+// here, worker-side, before POSTing so a runaway extraction (see
+// extractInputRequest) can never trigger that failure path.
+export function truncateQuestion(question: string): string {
+  if (question.length <= MAX_DESCRIPTION_LENGTH) return question;
+  // .slice() truncates by UTF-16 code unit and can split a surrogate pair
+  // (e.g. an emoji), leaving a lone surrogate that renders as a replacement
+  // character. Iterate by Unicode code point instead (the string iterator is
+  // surrogate-pair aware) so truncation always lands on a whole character
+  // boundary, while still keeping the result within MAX_DESCRIPTION_LENGTH
+  // UTF-16 units — the same unit the server's length check uses.
+  let result = '';
+  for (const char of question) {
+    if (result.length + char.length > MAX_DESCRIPTION_LENGTH) break;
+    result += char;
+  }
+  return result;
 }
 
 async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string; readonly runner: RunnerProfile }> {
@@ -225,6 +247,7 @@ async function executeTask(
     }
   };
 
+  let sessionId: string | undefined;
   try {
     const result = await (async (): Promise<SdkRunResult | OpenCodeRunResult> => {
       switch (runner.kind) {
@@ -234,6 +257,7 @@ async function executeTask(
             workingDirectory: workspacePath,
             sendEvent: sendTaskEvent,
           });
+          sessionId = live.sessionId ?? undefined;
           if (live.sessionId && live.baseUrl) {
             const bridgeUrl = sessionBridge.register({
               taskId: task.id,
@@ -256,6 +280,7 @@ async function executeTask(
             runner,
             sendEvent: sendTaskEvent,
           });
+          sessionId = live.sessionId;
           const bridgeUrl = sessionBridge.register({
             taskId: task.id,
             sessionId: live.sessionId,
@@ -281,6 +306,8 @@ async function executeTask(
         status: result.status,
         ...(result.summary ? { summary: safeWorkerError(result.summary, workspacePath) } : {}),
         ...(result.error ? { error: safeWorkerError(result.error, workspacePath) } : {}),
+        ...(result.question ? { question: truncateQuestion(safeWorkerError(result.question, workspacePath)) } : {}),
+        ...(sessionId ? { sessionId } : {}),
         ...(result.reviewVerdict ? { reviewVerdict: result.reviewVerdict } : {}),
       }),
     });

@@ -1,4 +1,4 @@
-import type { Task, AgentEvent } from '../types.js';
+import type { Task, AgentEvent, TaskClarificationRequest } from '../types.js';
 
 export interface TaskRepository {
   getAll(includeArchived?: boolean, projectId?: string): Promise<Task[]>;
@@ -16,6 +16,14 @@ export interface TaskRepository {
   renewWorkerLease(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<boolean>;
   isWorkerClaimValid(id: string, workerId: string, claimTokenHash: string, now: number): Promise<boolean>;
   completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined>;
+  /**
+   * Atomically park a worker task in Pending awaiting a human answer:
+   * agent_status, column_id, and clarification_request must land in a single
+   * write so a mid-park failure can never strand the row in
+   * awaiting_clarification with no clarification_request (invisible to every
+   * other recovery predicate and un-answerable via /clarification/resume).
+   */
+  parkWorkerTaskForClarification(id: string, workerId: string, claimTokenHash: string, now: number, clarificationRequest: TaskClarificationRequest): Promise<Task | undefined>;
   getExpiredWorkerTasks(now: number): Promise<Task[]>;
   getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]>;
   update(id: string, updates: Partial<Task>): Promise<Task | undefined>;

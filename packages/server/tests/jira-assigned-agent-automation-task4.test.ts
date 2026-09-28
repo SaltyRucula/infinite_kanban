@@ -455,6 +455,12 @@ test('startup recovery safety assertions keep awaiting_clarification out of fail
   assert.equal(shouldRecoverStandaloneTaskAsFailed('planning'), true);
   assert.equal(shouldRecoverStandaloneTaskAsFailed('executing'), true);
   assert.equal(shouldRecoverStandaloneTaskAsFailed('awaiting_clarification'), false);
+  // A properly parked task (has a clarification_request) is never recovered as failed...
+  assert.equal(shouldRecoverStandaloneTaskAsFailed('awaiting_clarification', true), false);
+  // ...but BLOCKER 1 defense in depth: a stranded park (no clarification_request,
+  // e.g. from a historical partial write) IS treated as recoverable/failed so it
+  // can never be permanently invisible to every other recovery predicate.
+  assert.equal(shouldRecoverStandaloneTaskAsFailed('awaiting_clarification', false), true);
 
   assert.equal(shouldRecoverGroupChildAsFailed('executing'), true);
   assert.equal(shouldRecoverGroupChildAsFailed('awaiting_clarification'), false);

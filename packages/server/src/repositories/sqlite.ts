@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Task, Priority, ColumnId, AgentStatus, AgentType, AgentEvent } from '../types.js';
+import type { Task, Priority, ColumnId, AgentStatus, AgentType, AgentEvent, TaskClarificationRequest } from '../types.js';
 import type { TaskRepository } from './types.js';
 import { errorMessage } from '../utils.js';
 import { CLAIMABLE_AGENT_STATUS_SQL_LIST, coerceAgentType } from '@ai-agent-board/shared/constants.js';
@@ -232,26 +232,84 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   async completeWorkerTask(id: string, workerId: string, claimTokenHash: string, status: 'complete' | 'failed', completedAt: number, summary?: string, error?: string): Promise<Task | undefined> {
-    // Clearing run_requested_at (not just run_claimed_at/worker_claim_token_hash)
-    // is the real fix for the unattended-re-run root cause: leaving it set
-    // meant a completed task still matched getWorkerAssignments' predicate
-    // (run_requested_at set, no live claim) the instant anything reset
-    // agent_status back to 'idle' — e.g. PATCH /api/tasks/:id moving the card
-    // from Review/Done back to In Progress unconditionally sets agentStatus
-    // 'idle' and update() re-persists the untouched run_requested_at. A human
-    // dragging the card then silently re-triggers a worker run.
-    const result = this.db.prepare(`UPDATE tasks SET agent_status = ?, completed_at = ?, summary = ?, run_requested_at = NULL, run_claimed_at = NULL, worker_claim_token_hash = NULL, worker_lease_expires_at = NULL WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`).run(status, completedAt, summary ?? (error ? error : null), id, workerId, claimTokenHash, completedAt);
+    // Single atomic write: agent_status, completed_at/summary, the resulting
+    // column (review on completion; pending -> in-progress otherwise so a
+    // failure never leaves the task stranded in Pending), and clearing any
+    // stale clarification request/answer all land together — a partial write
+    // here could otherwise leave a terminal task with a leftover
+    // clarification payload that leaks into an unrelated future run.
+    // run_requested_at/run_claimed_at MUST also be cleared here: a completed
+    // task still carries assigned_worker_id, and PATCH /:id {columnId:
+    // 'in-progress'} resets agentStatus to 'idle' without touching either —
+    // if run_requested_at survived, that idle+assigned+run-requested row
+    // would immediately match getWorkerAssignments/claimWorkerTask and the
+    // worker would silently re-run it with no explicit Run action. Every
+    // legitimate re-dispatch path (groups.ts, orchestrations.ts, agent.ts's
+    // requeue branches, jira import-execution.ts) calls requestRun() again
+    // before re-running, so nothing depends on this surviving completion.
+    const result = this.db.prepare(`UPDATE tasks SET
+        agent_status = ?,
+        completed_at = ?,
+        summary = ?,
+        column_id = CASE WHEN ? = 'complete' THEN 'review' WHEN column_id = 'pending' THEN 'in-progress' ELSE column_id END,
+        clarification_request = NULL,
+        clarification_answer = NULL,
+        run_requested_at = NULL,
+        run_claimed_at = NULL,
+        worker_claim_token_hash = NULL,
+        worker_lease_expires_at = NULL
+      WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`)
+      .run(status, completedAt, summary ?? (error ? error : null), status, id, workerId, claimTokenHash, completedAt);
+    return result.changes ? this.getById(id) : undefined;
+  }
+
+  async parkWorkerTaskForClarification(id: string, workerId: string, claimTokenHash: string, now: number, clarificationRequest: TaskClarificationRequest): Promise<Task | undefined> {
+    // Single atomic write: agent_status, column_id, and clarification_request
+    // land together so a mid-write failure can never leave the row stuck in
+    // awaiting_clarification with no clarification_request (which would be
+    // invisible to every recovery predicate and un-answerable via
+    // /clarification/resume). completed_at is cleared because parking is not
+    // a terminal state; the worker claim is released the same way completion
+    // releases it, so the task is not claimable again until answered.
+    // run_requested_at is cleared for the same reason as completeWorkerTask:
+    // a human dragging a parked task straight to In Progress (instead of
+    // answering) resets agentStatus to 'idle' via PATCH without touching it,
+    // which would otherwise make the row immediately re-claimable by the
+    // worker with no explicit Run action.
+    const result = this.db.prepare(`UPDATE tasks SET
+        agent_status = 'awaiting_clarification',
+        column_id = 'pending',
+        completed_at = NULL,
+        clarification_request = ?,
+        clarification_answer = NULL,
+        run_requested_at = NULL,
+        run_claimed_at = NULL,
+        worker_claim_token_hash = NULL,
+        worker_lease_expires_at = NULL
+      WHERE id = ? AND assigned_worker_id = ? AND worker_claim_token_hash = ? AND worker_lease_expires_at >= ?`)
+      .run(JSON.stringify(clarificationRequest), id, workerId, claimTokenHash, now);
     return result.changes ? this.getById(id) : undefined;
   }
 
   async getExpiredWorkerTasks(now: number): Promise<Task[]> {
-    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IS NOT NULL AND worker_lease_expires_at IS NOT NULL AND worker_lease_expires_at < ? AND agent_status IN ('planning','executing')`).all(now) as TaskRow[]).map(rowToTask);
+    // Defense in depth: also recover a task stranded in awaiting_clarification
+    // with no clarification_request (e.g. a park that partially failed before
+    // this method existed, or any other write anomaly) — such a row has no
+    // live lease to expire (the park clears worker_lease_expires_at), so it
+    // would otherwise never be picked up by this sweep.
+    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IS NOT NULL AND (
+        (worker_lease_expires_at IS NOT NULL AND worker_lease_expires_at < ? AND agent_status IN ('planning','executing'))
+        OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
+      )`).all(now) as TaskRow[]).map(rowToTask);
   }
 
   async getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]> {
     if (workerIds.length === 0) return [];
     const placeholders = workerIds.map(() => '?').join(',');
-    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IN (${placeholders}) AND agent_status IN ('planning','executing')`).all(...workerIds) as TaskRow[]).map(rowToTask);
+    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IN (${placeholders}) AND (
+        agent_status IN ('planning','executing')
+        OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
+      )`).all(...workerIds) as TaskRow[]).map(rowToTask);
   }
 
   async update(id: string, updates: Partial<Task>): Promise<Task | undefined> {

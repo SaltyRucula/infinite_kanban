@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import {
   isValidAgentType,
   isValidMaxConcurrency,
+  MAX_DESCRIPTION_LENGTH,
   MAX_GROUP_CHILDREN,
   WORKER_HEARTBEAT_INTERVAL_MS,
   WORKER_MAX_NAME_LENGTH,
@@ -347,8 +348,19 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(403).json({ error: 'task is not assigned to this worker' });
       return;
     }
-    if (req.body.status !== 'complete' && req.body.status !== 'failed') {
-      res.status(400).json({ error: 'status must be complete or failed' });
+    const status = req.body.status;
+    if (status !== 'complete' && status !== 'failed' && status !== 'awaiting_input') {
+      res.status(400).json({ error: 'status must be complete, failed, or awaiting_input' });
+      return;
+    }
+    const question = typeof req.body.question === 'string' ? req.body.question.trim() : '';
+    const sessionId = typeof req.body.sessionId === 'string' ? req.body.sessionId.trim() : '';
+    if (status === 'awaiting_input' && (!question || question.length > MAX_DESCRIPTION_LENGTH)) {
+      res.status(400).json({ error: `awaiting_input requires a question of at most ${MAX_DESCRIPTION_LENGTH} characters` });
+      return;
+    }
+    if (sessionId.length > MAX_DESCRIPTION_LENGTH) {
+      res.status(400).json({ error: `sessionId must be at most ${MAX_DESCRIPTION_LENGTH} characters` });
       return;
     }
     const reviewVerdict = req.body.reviewVerdict;
@@ -361,12 +373,54 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task claim is invalid' });
       return;
     }
+    const now = Date.now();
+
+    // Mirror the in-process lifecycle (makeStatusCallback): finished work goes
+    // to Review, a blocking question parks the task in Pending, and a failure
+    // never leaves it stranded in Pending.
+    if (status === 'awaiting_input') {
+      const clarificationRequest = {
+        requestId: uuid(),
+        // The board requires a session id to accept an answer; runners that
+        // cannot expose one resume with carried-over context instead.
+        sessionId: sessionId || `worker-task:${task.id}`,
+        prompt: question,
+        timestamp: now,
+      };
+      // Single atomic write: agent_status, column_id, and clarification_request
+      // land together, so a mid-write failure can never strand the row in
+      // awaiting_clarification with no clarification_request (see BLOCKER 1
+      // in the review: that state is invisible to every recovery predicate
+      // and un-answerable via /clarification/resume).
+      const parked = await tasks.parkWorkerTaskForClarification(task.id, worker.id, claim, now, clarificationRequest);
+      if (!parked) {
+        res.status(409).json({ error: 'task claim is expired or invalid' });
+        return;
+      }
+      await workers.clearTaskSessions(task.id);
+      await workers.clearTaskCommands(task.id);
+      const event: AgentEvent = {
+        id: uuid(),
+        taskId: task.id,
+        type: 'command',
+        content: question,
+        timestamp: now,
+        metadata: { clarification_request: { requestId: clarificationRequest.requestId, prompt: question, timestamp: now } },
+      };
+      await tasks.insertEvent(event);
+      const { broadcast } = await import('../websocket.js');
+      broadcast({ type: 'agent_event', payload: event });
+      broadcastTaskUpdate(parked);
+      res.json({ task: toWorkerTaskAssignment(parked) });
+      return;
+    }
+
     const completed = await tasks.completeWorkerTask(
       task.id,
       worker.id,
       claim,
-      req.body.status,
-      Date.now(),
+      status,
+      now,
       typeof req.body.summary === 'string' ? req.body.summary : undefined,
       typeof req.body.error === 'string' ? req.body.error : undefined,
     );

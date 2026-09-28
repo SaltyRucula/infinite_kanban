@@ -4,6 +4,7 @@ import { mapOpenCodeEvent, type AgentEvent as CoreEvent } from '@codewithdan/age
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import type { Event as OpenCodeEvent } from '@opencode-ai/sdk';
 import type { AgentEvent, ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { buildResumeAnswerPrompt, buildResumeContext, extractInputRequest, INPUT_REQUEST_INSTRUCTIONS } from './input-request.js';
 import { buildReviewPrompt, isReviewRun, REVIEW_DISABLED_TOOLS, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 export type AgentSdkRunnerProfile = { readonly kind: 'agent-sdk' };
@@ -11,9 +12,10 @@ export type OpenCodeServerRunnerProfile = { readonly kind: 'opencode-server'; re
 export type RunnerProfile = AgentSdkRunnerProfile | OpenCodeServerRunnerProfile;
 export type WorkspaceSettings = { readonly workspacePath: string; readonly runner: RunnerProfile };
 export type OpenCodeRunResult = {
-  readonly status: 'complete' | 'failed';
+  readonly status: 'complete' | 'failed' | 'awaiting_input';
   readonly summary?: string;
   readonly error?: string;
+  readonly question?: string;
   readonly reviewVerdict?: ReviewVerdict;
 };
 
@@ -53,6 +55,7 @@ export type OpenCodePromptBody = {
 export interface OpenCodeClientLike {
   readonly session: {
     create(input: { body?: { title?: string } }): Promise<{ data?: { id: string } }>;
+    get(input: { path: { id: string } }): Promise<{ data?: { id: string } }>;
     prompt(input: {
       path: { id: string };
       body?: OpenCodePromptBody;
@@ -205,10 +208,7 @@ const HEADLESS_CLARIFICATION_SYSTEM_PROMPT = [
   'root), then work inside that repository. If no repository under your root matches this task,',
   'do NOT guess — stop and end your response clearly stating which repository you expected and',
   'that it is not present, so a human can route the task to a worker that has it.',
-  'If you are blocked by a genuinely unknown requirement and cannot safely proceed,',
-  'do NOT guess and do NOT keep working. Instead, stop and end your response with a clear,',
-  'specific question describing exactly what you need to know to continue. Do not mark the',
-  'task as done in that case — a human will read your question and follow up.',
+  INPUT_REQUEST_INSTRUCTIONS,
 ].join(' ');
 
 // OpenCode gates file access outside the session root behind an interactive
@@ -270,6 +270,41 @@ function responseText(response: unknown): string {
     .join('\n');
 }
 
+async function resolveSession(
+  client: OpenCodeClientLike,
+  task: WorkerTaskAssignment,
+): Promise<{ sessionId: string; firstPrompt: string }> {
+  if (task.resume) {
+    // OpenCode persists sessions on disk, so the paused conversation is
+    // usually still available even if the server that ran it has exited.
+    // client.session.get is reached through an `as unknown as` cast in
+    // defaultCreateClient, so an installed SDK that lacks the method throws
+    // SYNCHRONOUSLY rather than rejecting — a bare `.catch()` never sees a
+    // synchronous throw, which used to fail the whole task instead of
+    // falling back to a fresh session below. Wrap the whole lookup in
+    // try/catch so any failure (missing method or a rejected promise) falls
+    // through to creating a new session.
+    let existing: { data?: { id: string } } | undefined;
+    try {
+      existing = await client.session.get({ path: { id: task.resume.sessionId } });
+    } catch {
+      existing = undefined;
+    }
+    if (existing?.data?.id) {
+      return { sessionId: existing.data.id, firstPrompt: buildResumeAnswerPrompt(task.resume) };
+    }
+  }
+  const created = await client.session.create({ body: { title: task.title } });
+  const sessionId = created.data?.id;
+  if (!sessionId) {
+    throw new Error('opencode session create returned no session id');
+  }
+  const firstPrompt = task.resume
+    ? `${buildTaskPrompt(task)}\n\n${buildResumeContext(task.resume)}`
+    : buildTaskPrompt(task);
+  return { sessionId, firstPrompt };
+}
+
 export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
   const record = asRecord(raw);
   const workspacePath = typeof record?.workspacePath === 'string' ? record.workspacePath.trim() : '';
@@ -326,11 +361,7 @@ type StartOpenCodeServerTaskWithClientInput = StartOpenCodeServerTaskInput & {
 async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskWithClientInput): Promise<LiveOpenCodeServerTask> {
   const client = input.createClient({ baseUrl: input.baseUrl, directory: input.workspacePath });
 
-  const created = await client.session.create({ body: { title: input.task.title } });
-  const sessionId = created.data?.id;
-  if (!sessionId) {
-    throw new Error('opencode session create returned no session id');
-  }
+  const { sessionId, firstPrompt } = await resolveSession(client, input.task);
 
   // `prompt()` can resolve without throwing even when the server failed
   // internally (observed: a `createUserMessage` exception never surfaced as
@@ -423,7 +454,7 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
         system: review ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}` : HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
         model: headlessModel(),
         tools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
-        parts: [{ type: 'text', text: review ? buildReviewPrompt(input.task) : buildTaskPrompt(input.task) }],
+        parts: [{ type: 'text', text: review ? buildReviewPrompt(input.task) : firstPrompt }],
       });
       if (aborted) {
         return { status: 'failed', error: 'opencode session cancelled', summary: 'Cancelled OpenCode session task' };
@@ -439,6 +470,14 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
         return { status: 'failed', error: late.message, summary: 'OpenCode server task failed' };
       }
       if (review) return reviewResult(responseText(response), input.workspacePath);
+      const question = extractInputRequest(responseText(response));
+      if (question) {
+        return {
+          status: 'awaiting_input',
+          question: sanitizeLocalText(question, input.workspacePath),
+          summary: 'OpenCode session is waiting for input',
+        };
+      }
       return { status: 'complete', summary: 'OpenCode server task completed' };
     } catch (error: unknown) {
       const message = sanitizeLocalText(error instanceof Error ? error.message : String(error), input.workspacePath);

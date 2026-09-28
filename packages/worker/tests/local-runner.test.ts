@@ -55,6 +55,7 @@ type FakeClientState = {
   readonly sessionCreates: string[];
   readonly prompts: Array<{ sessionId: string; agent?: string; text: string }>;
   readonly aborts: string[];
+  readonly existingSessions?: readonly string[];
   readonly replyText?: string;
   readonly bodies?: Array<{ system?: string; tools?: Readonly<Record<string, boolean>> }>;
 };
@@ -74,6 +75,10 @@ function createFakeClient(
       create: async ({ body }) => {
         state.sessionCreates.push(body?.title ?? '');
         return { data: { id: 'ses_worker_1' } };
+      },
+      get: async ({ path }) => {
+        if (!state.existingSessions?.includes(path.id)) throw new Error('session not found');
+        return { data: { id: path.id } };
       },
       prompt: async ({ path, body }) => {
         const first = body?.parts[0];
@@ -289,6 +294,104 @@ test('startOpenCodeServerTask stops a managed server on worker shutdown signal',
 
   assert.equal(spawned.killCalled, true);
   await live.done;
+});
+
+test('startOpenCodeServerTask reports awaiting_input when the agent ends with a blocking question', async () => {
+  const state: FakeClientState = {
+    sessionCreates: [],
+    prompts: [],
+    aborts: [],
+    replyText: 'I looked at /tmp/workspace/api.\nNEEDS_INPUT: Which API version should the client target?',
+  };
+
+  const live = await startOpenCodeServerTask({
+    task,
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'awaiting_input');
+  assert.equal(result.question, 'Which API version should the client target?');
+});
+
+test('startOpenCodeServerTask resumes the paused session with the human answer', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [], existingSessions: ['ses_paused'] };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, resume: { sessionId: 'ses_paused', question: 'Which API version?', answer: 'Use v2' } },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'complete');
+  assert.equal(live.sessionId, 'ses_paused');
+  assert.deepEqual(state.sessionCreates, []);
+  assert.equal(state.prompts.length, 1);
+  assert.equal(state.prompts[0]?.sessionId, 'ses_paused');
+  assert.match(state.prompts[0]?.text ?? '', /Answer to your question: Use v2/);
+});
+
+test('startOpenCodeServerTask carries the question and answer into a new session when the paused one is gone', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, resume: { sessionId: 'ses_missing', question: 'Which API version?', answer: 'Use v2' } },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => createFakeClient(state),
+  });
+  await live.done;
+
+  assert.equal(live.sessionId, 'ses_worker_1');
+  assert.deepEqual(state.sessionCreates, ['Implement local runner seam']);
+  assert.match(state.prompts[0]?.text ?? '', /Task title: Implement local runner seam/);
+  assert.match(state.prompts[0]?.text ?? '', /Your question: Which API version\?/);
+  assert.match(state.prompts[0]?.text ?? '', /Answer: Use v2/);
+});
+
+// SHOULD-FIX 5 regression: defaultCreateClient reaches client.session.get
+// through an `as unknown as OpenCodeClientLike` cast, so an installed SDK
+// version that lacks the method (or otherwise throws synchronously when
+// invoked, e.g. a TypeError from calling a non-function) throws BEFORE a
+// bare `.catch()` on its return value can ever see it. That used to reject
+// resolveSession's promise and fail the whole task instead of falling back
+// to creating a fresh session.
+test('startOpenCodeServerTask falls back to a fresh session when client.session.get throws synchronously', async () => {
+  const state: FakeClientState = { sessionCreates: [], prompts: [], aborts: [] };
+  const client = createFakeClient(state);
+  const syncThrowingClient: typeof client = {
+    ...client,
+    session: {
+      ...client.session,
+      get: () => { throw new TypeError('client.session.get is not a function'); },
+    },
+  };
+
+  const live = await startOpenCodeServerTask({
+    task: { ...task, resume: { sessionId: 'ses_paused', question: 'Which API version?', answer: 'Use v2' } },
+    workspacePath: '/tmp/workspace',
+    runner: { kind: 'opencode-server', agent: 'sisyphus' },
+    baseUrl: 'http://127.0.0.1:4096',
+    sendEvent: async () => {},
+    createClient: () => syncThrowingClient,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'complete');
+  assert.equal(live.sessionId, 'ses_worker_1');
+  assert.deepEqual(state.sessionCreates, ['Implement local runner seam']);
+  assert.match(state.prompts[0]?.text ?? '', /Your question: Which API version\?/);
+  assert.match(state.prompts[0]?.text ?? '', /Answer: Use v2/);
 });
 
 test('startOpenCodeServerTask runs a review task as a read-only reviewer and reports the verdict', async () => {

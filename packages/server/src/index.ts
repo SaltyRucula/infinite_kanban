@@ -23,6 +23,7 @@ import type { AttachmentStore } from './repositories/attachment-types.js';
 import { AgentManager } from './services/agent-manager.js';
 import { authMiddleware } from './middleware/auth.js';
 import type { TaskRepository } from './repositories/types.js';
+import type { Task } from './types.js';
 import type { TemplateRepository } from './repositories/template-types.js';
 import type { TaskGroupRepository } from './repositories/group-types.js';
 import type { ProjectRepository } from './repositories/project-types.js';
@@ -38,9 +39,9 @@ import { WORKER_HEARTBEAT_INTERVAL_MS, WORKER_STALE_AFTER_MS } from '@ai-agent-b
 import {
   shouldRecoverGroupChildAsFailed,
   shouldRecoverGroupChildToIdle,
-  shouldRecoverStandaloneTaskAsFailed,
   getAllTasksAcrossProjects,
   getAllGroupsAcrossProjects,
+  recoverOrphanedStandaloneTasks,
 } from './startup-recovery.js';
 import {
   registerE2EClarificationProvider,
@@ -250,16 +251,12 @@ const agentManager = new AgentManager();
   // Recover standalone tasks orphaned by a previous server restart.
   // Skip group children (already handled above with group-aware recovery).
   const allTasks = await getAllTasksAcrossProjects(projectRepo, taskRepo);
-  const orphaned = allTasks.filter((t) => shouldRecoverStandaloneTaskAsFailed(t.agentStatus) && !groupChildIds.has(t.id) && !recoveredRunIds.has(t.id));
-  for (const task of orphaned) {
-    await taskRepo.update(task.id, {
-      agentStatus: 'failed',
-      completedAt: Date.now(),
-    });
-    await taskRepo.clearRun(task.id);
-    await workerRepo.clearTaskSessions(task.id);
-    console.warn(`[server] recovered orphaned task ${task.id} "${task.title}" (was ${task.agentStatus})`);
-  }
+  const excludeFromStandaloneRecovery = new Set<string>([...groupChildIds, ...recoveredRunIds]);
+  await recoverOrphanedStandaloneTasks(allTasks, excludeFromStandaloneRecovery, {
+    taskRepo,
+    workerRepo,
+    onRecovered: (task) => console.warn(`[server] recovered orphaned task ${task.id} "${task.title}" (was ${task.agentStatus})`),
+  });
 
   // Reclaim stale dispatch leases continuously, not only after a restart.
   const dispatchInterval = setInterval(() => {
@@ -269,27 +266,39 @@ const agentManager = new AgentManager();
 
   const workerSweepInterval = setInterval(async () => {
     const now = Date.now();
-    const offline = await workerRepo.markOffline(now - WORKER_STALE_AFTER_MS, now);
-    for (const worker of offline) {
-      broadcastWorkerUpdate(worker);
-      const tasks = await taskRepo.getAssignedWorkerTasks([worker.id]);
-      for (const task of tasks) {
-        const failed = await taskRepo.update(task.id, { agentStatus: 'failed', completedAt: now, summary: 'worker_offline', runClaimedAt: undefined });
-        if (failed) {
-          await workerRepo.clearTaskSessions(task.id);
-          await workerRepo.clearTaskCommands(task.id);
-          broadcastTaskUpdate(failed);
-        }
-      }
-    }
-    const expired = await taskRepo.getExpiredWorkerTasks(now);
-    for (const task of expired) {
-      const failed = await taskRepo.update(task.id, { agentStatus: 'failed', completedAt: now, summary: 'worker_offline', runClaimedAt: undefined });
+    // Fail a worker task abandoned by an offline worker or an expired lease.
+    // Also clear any clarification request/answer: a resumed run killed here
+    // must not leak its stale question/answer into the next unrelated /run
+    // (see SHOULD-FIX 4 in the review), and normalize columnId out of Pending
+    // so a failed task never renders stuck in the Pending column.
+    const failStrandedWorkerTask = async (task: Task): Promise<void> => {
+      const updates: Partial<Task> = {
+        agentStatus: 'failed',
+        completedAt: now,
+        summary: 'worker_offline',
+        runClaimedAt: undefined,
+        clarificationRequest: null,
+        clarificationAnswer: null,
+      };
+      if (task.columnId === 'pending') updates.columnId = 'in-progress';
+      const failed = await taskRepo.update(task.id, updates);
       if (failed) {
         await workerRepo.clearTaskSessions(task.id);
         await workerRepo.clearTaskCommands(task.id);
         broadcastTaskUpdate(failed);
       }
+    };
+    const offline = await workerRepo.markOffline(now - WORKER_STALE_AFTER_MS, now);
+    for (const worker of offline) {
+      broadcastWorkerUpdate(worker);
+      const tasks = await taskRepo.getAssignedWorkerTasks([worker.id]);
+      for (const task of tasks) {
+        await failStrandedWorkerTask(task);
+      }
+    }
+    const expired = await taskRepo.getExpiredWorkerTasks(now);
+    for (const task of expired) {
+      await failStrandedWorkerTask(task);
     }
   }, WORKER_HEARTBEAT_INTERVAL_MS);
   workerSweepInterval.unref();

@@ -11,6 +11,7 @@ import type {
   WorkerTaskAssignment,
 } from '@ai-agent-board/shared/types.js';
 import { isValidAgentType } from '@ai-agent-board/shared/constants.js';
+import { buildResumeContext, extractInputRequest, INPUT_REQUEST_INSTRUCTIONS } from './input-request.js';
 import { buildReviewPrompt, isReviewRun, neutralizeVerdictMarker, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 const SESSION_ERROR_GRACE_MS = 250;
@@ -20,9 +21,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 export type SdkRunResult = {
-  readonly status: 'complete' | 'failed';
+  readonly status: 'complete' | 'failed' | 'awaiting_input';
   readonly summary?: string;
   readonly error?: string;
+  readonly question?: string;
   readonly reviewVerdict?: 'pass' | 'changes_requested';
 };
 
@@ -146,7 +148,7 @@ function coerceEventType(candidate: string): AgentEventType {
 // The vendored CoreEvent shape gives no message/part identity to key on (see
 // mapOpenCodeEvent in @codewithdan/agent-sdk-core: every event gets a fresh
 // random uuid, and tool state completions never carry the id of the text
-// part they may race with), so the accumulated `outputText` below spans the
+// part they may race with), so the accumulated `verdictText` below spans the
 // entire single-turn run — mirroring what local-runner.ts gets "for free"
 // from the raw HTTP response's parts array (which also includes every text
 // part emitted during the turn, not just a literal last fragment). An
@@ -198,14 +200,51 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
 
   const review = isReviewRun(input.task);
-  // See mergeOutput's comment above for why this accumulates across the
-  // whole turn instead of resetting at tool/file event boundaries.
-  let outputText = '';
+
+  // Two independently-shaped buffers are kept over the same onEvent stream
+  // because the review-verdict scan and the clarification-question scan need
+  // different accumulation semantics, and reading one scan off the other's
+  // buffer shape would corrupt it (see the two comments below).
+  //
+  // `verdictText` accumulates across the WHOLE turn (never reset at tool/file
+  // event boundaries), deduped against snapshot resends via mergeOutput. See
+  // mergeOutput's comment above for why this never resets: tool "completed"
+  // state and `patch` events (message finalization) can legitimately arrive
+  // AFTER the final assistant text, and resetting on those would wipe a real
+  // verdict.
+  let verdictText = '';
+
+  // `burstText` mirrors the OLD scoped-reset behavior instead: output streams
+  // as deltas or whole-part snapshots for a single evolving assistant
+  // message, so this can repeat text within one message — it is only scanned
+  // for the input-request marker, never shown to anyone. Any OTHER event
+  // type between bursts of 'output' events (tool call, thinking, etc.) marks
+  // the end of that message, so the buffer is reset there too: otherwise it
+  // would accumulate every assistant message across the whole run, and the
+  // marker text baked into this session's own system prompt
+  // (INPUT_REQUEST_INSTRUCTIONS) could be picked up from an earlier turn that
+  // merely recapped it, false-parking already-finished work.
+  //
+  // The provider's execute() resolves on a synthetic 'complete' event, and
+  // sdk-runner then waits SESSION_ERROR_GRACE_MS before reading the buffer —
+  // but the SSE event stream can lag that resolution by a beat (documented
+  // in local-runner.ts's own grace-period handling around the same race), so
+  // an unrelated trailing 'output' fragment can arrive AFTER the real final
+  // message's burst already closed and was evaluated. If that straggler
+  // doesn't itself contain the marker, resetting to it and reading only the
+  // final buffer would silently lose the genuine question that was already
+  // detected in the previous, now-discarded burst. lastDetectedQuestion
+  // remembers the last NON-EMPTY per-burst extraction result so a later,
+  // unrelated empty burst can never erase it.
+  let burstText = '';
+  let lastEventType: CoreEvent['type'] | undefined;
+  let lastDetectedQuestion: string | undefined;
 
   const session = await provider.createSession({
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
     systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
+      + `${INPUT_REQUEST_INSTRUCTIONS} `
       + (review ? `${REVIEW_SYSTEM_PROMPT} ` : '')
       // On the review path the title is untrusted task text (e.g. Jira
       // import) interpolated into the system prompt itself; neutralize it
@@ -215,16 +254,24 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
       + `Task title: ${review ? neutralizeVerdictMarker(input.task.title) : input.task.title}`,
     onEvent: (event: CoreEvent) => {
       const type = coerceEventType(event.type);
-      // Only accumulate genuine 'output' events into the verdict-scanned
-      // buffer, checked against the raw (uncoerced) event.type. Widening an
+      // Only accumulate genuine 'output' events into either scan buffer,
+      // checked against the raw (uncoerced) event.type. Widening an
       // unrecognized/off-spec type to 'output' is a reasonable default for
-      // *display* purposes (below), but doing the same for the buffer that
-      // feeds the review verdict scan would be backwards: an off-spec event
-      // should be excluded from scanning, not folded in as if it were real
-      // assistant text.
+      // *display* purposes (below), but doing the same for the buffers that
+      // feed the review/clarification scans would be backwards: an off-spec
+      // event should be excluded from scanning, not folded in as if it were
+      // real assistant text.
       if (event.type === 'output') {
-        outputText = event.metadata?.replace ? event.content : mergeOutput(outputText, event.content);
+        verdictText = event.metadata?.replace ? event.content : mergeOutput(verdictText, event.content);
+
+        if (lastEventType !== undefined && lastEventType !== 'output') {
+          const question = extractInputRequest(burstText);
+          if (question) lastDetectedQuestion = question;
+          burstText = '';
+        }
+        burstText += event.content;
       }
+      lastEventType = event.type;
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
       const mapped: AgentEvent = {
         id: event.id || uuid(),
@@ -254,7 +301,16 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
 
   const done = (async (): Promise<SdkRunResult> => {
     try {
-      const result = await session.execute(review ? buildReviewPrompt(input.task) : `${input.task.title}\n\n${input.task.description}`);
+      // The provider deletes its sessions on cleanup, so a resumed task starts
+      // a fresh session carrying the question and answer as context. A run
+      // started from Review takes precedence over resume — the two are
+      // mutually exclusive on any single run (see the module comment on
+      // startAgentSdkTask's two buffers).
+      const prompt = review
+        ? buildReviewPrompt(input.task)
+        : `${input.task.title}\n\n${input.task.description}`
+          + (input.task.resume ? `\n\n${buildResumeContext(input.task.resume)}` : '');
+      const result = await session.execute(prompt);
       if (result.status === 'complete') {
         const late = await Promise.race([
           sessionErrorSignal.then((message) => ({ message })),
@@ -263,7 +319,15 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
         if (late) {
           return { status: 'failed', summary: 'Agent SDK task failed', error: late.message };
         }
-        if (review) return reviewResult(outputText, input.workingDirectory);
+        if (review) return reviewResult(verdictText, input.workingDirectory);
+        const question = extractInputRequest(burstText) ?? lastDetectedQuestion;
+        if (question) {
+          return {
+            status: 'awaiting_input',
+            question: sanitizeLocalText(question, input.workingDirectory),
+            summary: 'Agent SDK task is waiting for input',
+          };
+        }
         return {
           status: 'complete',
           summary: 'Agent SDK task completed',
@@ -290,6 +354,9 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     ...(maybeOpenCodeBaseUrl(agentType) ? { baseUrl: maybeOpenCodeBaseUrl(agentType) } : {}),
     done,
     sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
+      verdictText = '';
+      burstText = '';
+      lastDetectedQuestion = undefined;
       await session.send(message);
     },
     abort: async () => {

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import type { Task } from '../types.js';
-import { isValidAgentType, VALID_AGENT_TYPES } from '@ai-agent-board/shared/constants.js';
+import { isValidAgentType, MAX_DESCRIPTION_LENGTH, VALID_AGENT_TYPES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
@@ -25,13 +25,42 @@ export function createAgentRouter(
 ): Router {
   const router = Router();
 
-  const hasActiveWorkerLease = (task: Task): boolean => {
-    return task.assignedWorkerId != null
-      && (task.agentStatus === 'planning' || task.agentStatus === 'executing' || task.agentStatus === 'awaiting_clarification');
-  };
-
   const hasLiveOpenCodeSession = (task: Task): boolean => {
     return task.workerLeaseExpiresAt != null && task.workerLeaseExpiresAt >= Date.now();
+  };
+
+  const hasActiveWorkerLease = (task: Task): boolean => {
+    if (task.assignedWorkerId == null) return false;
+    // Requiring a genuinely live lease here (rather than trusting
+    // planning/executing status alone) means a task whose worker lease has
+    // already lapsed — but the periodic sweep hasn't caught up yet — is no
+    // longer treated as having an active worker session. That changes two
+    // call sites' behavior at the margin: POST /:id/stop falls through past
+    // enqueueWorkerCommand to agentManager.stopAgent (409s "no running agent"
+    // instead of cancelling+failing via a queued command nobody will ever
+    // poll for), and POST /:id/message falls through to the "requeue as a
+    // fresh run" branch instead of queuing a command into the same dead
+    // void. Both are more correct than silently trusting a stale lease.
+    //
+    // The awaiting_clarification arm below is NOT reachable via
+    // parkWorkerTaskForClarification (that atomic write always NULLs
+    // worker_lease_expires_at, so a task it parks never has a live lease).
+    // It is kept for the pre-existing "clarification queued to a still-live
+    // worker session" contract this file's test suite already pins (see
+    // agent-worker-session.test.ts) — some other path may still leave a
+    // worker-assigned task in awaiting_clarification with a live lease, and
+    // treating that as "no active lease" would incorrectly fall through to
+    // isParkedWorkerQuestion's stop/resume handling for a task whose worker
+    // session is, in fact, still alive.
+    if (task.agentStatus === 'planning' || task.agentStatus === 'executing') return hasLiveOpenCodeSession(task);
+    return task.agentStatus === 'awaiting_clarification' && hasLiveOpenCodeSession(task);
+  };
+
+  const isParkedWorkerQuestion = (task: Task): boolean => {
+    return task.assignedWorkerId != null
+      && task.agentStatus === 'awaiting_clarification'
+      && !hasActiveWorkerLease(task)
+      && !agentManager.isRunning(task.id);
   };
 
   const hasMatchingWorkerSession = async (workerSessions: WorkerRepository, task: Task): Promise<boolean> => {
@@ -170,8 +199,16 @@ export function createAgentRouter(
       startedAt: Date.now(),
       completedAt: undefined,
     };
-    if (task.columnId === 'backlog') {
+    if (task.columnId === 'backlog' || task.columnId === 'pending') {
       updates.columnId = 'in-progress';
+    }
+    // A re-run of a parked task must not carry a stale clarification request
+    // or answer into the fresh run (SHOULD-FIX 3 in the review): otherwise the
+    // task keeps rendering in Pending while executing, and any leftover
+    // resume payload would be handed to the worker for unrelated work.
+    if (task.clarificationRequest || task.clarificationAnswer) {
+      updates.clarificationRequest = null;
+      updates.clarificationAnswer = null;
     }
     const updated = await repo.update(task.id, updates);
     if (!updated) {
@@ -228,6 +265,23 @@ export function createAgentRouter(
         return;
       }
       await workerRepo?.clearTaskSessions(task.id);
+      broadcastTaskUpdate(updated);
+      res.json(toPortableTask(updated));
+      return;
+    }
+    if (isParkedWorkerQuestion(task)) {
+      await repo.clearRun(task.id);
+      const updated = await repo.update(task.id, {
+        agentStatus: 'failed',
+        completedAt: Date.now(),
+        columnId: 'in-progress',
+        clarificationRequest: null,
+        clarificationAnswer: null,
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
       broadcastTaskUpdate(updated);
       res.json(toPortableTask(updated));
       return;
@@ -295,6 +349,12 @@ export function createAgentRouter(
         startedAt: Date.now(),
         completedAt: undefined,
         summary: undefined,
+        // This starts a brand-new run from a human follow-up message, not a
+        // clarification answer — any leftover clarificationRequest/Answer
+        // from an earlier cycle must not survive, or workerResume() would
+        // inject stale Q&A into this unrelated run.
+        clarificationRequest: null,
+        clarificationAnswer: null,
       });
       if (!updated) {
         res.status(404).json({ error: 'task not found' });
@@ -335,6 +395,16 @@ export function createAgentRouter(
     const sessionId = typeof req.body.sessionId === 'string' ? req.body.sessionId : '';
     const answer = typeof req.body.answer === 'string' ? req.body.answer : '';
 
+    // Bound lengths comparable to `question` (capped at MAX_DESCRIPTION_LENGTH
+    // in workers.ts) — sessionId and answer were previously unbounded.
+    if (sessionId.length > MAX_DESCRIPTION_LENGTH || answer.length > MAX_DESCRIPTION_LENGTH) {
+      res.status(400).json({
+        error: `sessionId and answer must be at most ${MAX_DESCRIPTION_LENGTH} characters`,
+        code: 'invalid_request',
+      });
+      return;
+    }
+
     if (await enqueueWorkerCommand(task, {
       type: 'clarification',
       requestId,
@@ -342,6 +412,48 @@ export function createAgentRouter(
       answer,
     })) {
       res.json({ success: true, code: 'queued_for_worker', message: 'clarification queued for worker session' });
+      return;
+    }
+
+    if (isParkedWorkerQuestion(task)) {
+      const request = task.clarificationRequest;
+      const answerText = answer.trim();
+      if (!request || !requestId.trim() || !answerText) {
+        res.status(400).json({ error: 'requestId and answer are required', code: 'invalid_request' });
+        return;
+      }
+      if (request.requestId !== requestId.trim()) {
+        res.status(409).json({ error: 'clarification request is stale', code: 'stale_request' });
+        return;
+      }
+      // Re-queue the same task for its worker; the assignment carries the
+      // question, answer, and session so the agent continues where it stopped.
+      const now = Date.now();
+      const clarificationAnswer = { requestId: request.requestId, answer: answerText, timestamp: now, sessionId: request.sessionId };
+      await repo.requestRun(task.id, now);
+      const updated = await repo.update(task.id, {
+        agentStatus: 'planning',
+        columnId: 'in-progress',
+        startedAt: now,
+        completedAt: undefined,
+        clarificationAnswer,
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+      const event = {
+        id: uuid(),
+        taskId: task.id,
+        type: 'command' as const,
+        content: `Clarification answered: ${answerText}`,
+        timestamp: now,
+        metadata: { clarification_answer: clarificationAnswer },
+      };
+      await repo.insertEvent(event);
+      broadcast({ type: 'agent_event', payload: event });
+      broadcastTaskUpdate(updated);
+      res.json({ success: true, code: 'requeued_for_worker', message: 'answer queued; the worker will resume the task' });
       return;
     }
 
@@ -398,7 +510,9 @@ export function createAgentRouter(
       return;
     }
     const workerSessions = workerRepo;
-    if (!hasActiveWorkerLease(task) || !hasLiveOpenCodeSession(task) || !await hasMatchingWorkerSession(workerSessions, task)) {
+    // hasActiveWorkerLease already requires a live lease (hasLiveOpenCodeSession)
+    // for every worker-active status, so no separate lease check is needed here.
+    if (!hasActiveWorkerLease(task) || !await hasMatchingWorkerSession(workerSessions, task)) {
       res.status(404).json({ error: 'no OpenCode session found for this task' });
       return;
     }
