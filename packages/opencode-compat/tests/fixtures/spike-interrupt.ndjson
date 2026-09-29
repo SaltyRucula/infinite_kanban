@@ -1,0 +1,40 @@
+data: {"id":"evt_0e866355a001rLZVqDw6Yo9qp5","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e86639580016N87czqjv397gz","created":1790605408600,"type":"session.inbox.enqueued","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"inboxID":"msg_0e8663957001y8HfhYW6IRLCeI","sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","item":{"type":"user","payload":{"text":"Run the shell command: sleep 30 && echo done30   Then tell me it finished."},"delivery":"steer"}},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":1,"version":1}}
+
+data: {"id":"evt_0e866395b001Sry1Wo6KOL7UTy","created":1790605408603,"type":"session.execution.started","data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4"},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":2,"version":1}}
+
+data: {"id":"evt_0e8663960001GY6mzlK5b6wcEE","created":1790605408608,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","delta":{"core/environment":"90edc9149321d9f596d1bc50e4ec1f69de58c4693c8ce510cd6da7f568213d44","core/date":"bf08b8486572ab3eef677a3c9ee12468e411ae41a8f4d2fb6cf02a6ca73f1986","core/codemode":"071d8a4709c1e22c3c798c86ce2ac9f6ac314ce40c61b706d90deb9e4b40fb15","core/skill-guidance":"2bdcbef7e86beba800140c686651138c596d51bdbc714492011bad41433e4ded"}},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":3,"version":2}}
+
+data: {"id":"evt_0e8663961001OKd9VaKp1c6kuh","created":1790605408609,"type":"session.inbox.delivered","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","inboxID":"msg_0e8663957001y8HfhYW6IRLCeI"},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":4,"version":1}}
+
+data: {"id":"evt_0e8663efc001kCZBBU8J04ulAP","created":1790605410044,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","agent":"orchestrator","model":{"id":"claude-sonnet-5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","snapshot":"f4342394712973756744920efca1d286d3f07f6e","started":1790605408675},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":5,"version":1}}
+
+data: {"id":"evt_0e8663eff001Tf8KdcBcABs3gS","created":1790605410048,"type":"session.tool.input.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","id":"toolu_01R7K3FBR7ujVCJE5eMe71r8","name":"shell"},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":6,"version":1}}
+
+data: {"id":"evt_0e8663f58001chbo0aQ14jlLnS","created":1790605410137,"type":"session.tool.input.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","id":"toolu_01R7K3FBR7ujVCJE5eMe71r8","text":"{\"command\": \"sleep 30 && echo done30\"}"},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":7,"version":1}}
+
+data: {"id":"evt_0e8663f5c001gM1OHF4livOawY","created":1790605410140,"type":"session.tool.called","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","id":"toolu_01R7K3FBR7ujVCJE5eMe71r8","input":{"command":"sleep 30 && echo done30"},"executed":false},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":8,"version":1}}
+
+data: {"id":"evt_0e8663f5f001vFhxPkdsSSKeMn","created":1790605410143,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4"},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":9,"version":1}}
+
+data: {"id":"evt_0e8663f67001uSwLsN1cAuHthF","created":1790605410151,"type":"shell.created","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"info":{"id":"sh_0e8663f65001UOQI5DdMtsw7yW","status":"running","command":"sleep 30 && echo done30","cwd":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox","shell":"/bin/zsh","file":"/Users/CTW01561/.local/share/opencode/shell/1bd604b29ed3a44fed4f05bbb7bb92271006b51b/sh_0e8663f65001UOQI5DdMtsw7yW.out","metadata":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4"},"time":{"started":1790605410149}}}}
+
+data: {"id":"evt_0e8663f67002WAjOL31u17LXmJ","created":1790605410151,"type":"session.tool.progress","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","id":"toolu_01R7K3FBR7ujVCJE5eMe71r8","metadata":{"shellID":"sh_0e8663f65001UOQI5DdMtsw7yW"}}}
+
+data: {"id":"evt_0e866659e001o3FY1rn7OQPWQ3","created":1790605419934,"type":"shell.deleted","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"id":"sh_0e8663f65001UOQI5DdMtsw7yW"}}
+
+data: {"id":"evt_0e866659e002McyvyEKEiZmgTE","created":1790605419934,"type":"session.tool.failed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","id":"toolu_01R7K3FBR7ujVCJE5eMe71r8","error":{"type":"aborted","message":"Tool execution interrupted"},"metadata":{"shellID":"sh_0e8663f65001UOQI5DdMtsw7yW"},"executed":false},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":10,"version":2}}
+
+data: {"id":"evt_0e86665a20019cJfJSrZ5R8q7K","created":1790605419938,"type":"shell.exited","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"id":"sh_0e8663f65001UOQI5DdMtsw7yW","status":"exited"}}
+
+data: {"id":"evt_0e86665c0001OeU0Ub5U0tQl97","created":1790605419968,"type":"session.step.failed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","assistantMessageID":"msg_0e8663963001RgPPc8UiGS6KA4","error":{"type":"aborted","message":"Step interrupted"},"rawFinish":"tool_use","cost":0.0019366000000000001,"tokens":{"input":2,"output":56,"reasoning":0,"cache":{"read":6863,"write":13468}},"snapshot":"f4342394712973756744920efca1d286d3f07f6e","files":[]},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":11,"version":1}}
+
+data: {"id":"evt_0e86665c1001Cv6DUoDby5xcO5","created":1790605419969,"type":"session.usage.updated","data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","cost":0.0019366000000000001,"tokens":{"input":2,"output":56,"reasoning":0,"cache":{"read":6863,"write":13468}}}}
+
+data: {"id":"evt_0e86665c10024Z38NaMNK4sYXR","created":1790605419969,"type":"session.execution.interrupted","data":{"sessionID":"ses_f1799dc5dffeJa08k1Egs2r9B4","reason":"user"},"durable":{"aggregateID":"ses_f1799dc5dffeJa08k1Egs2r9B4","seq":12,"version":1}}
+
+: heartbeat
+

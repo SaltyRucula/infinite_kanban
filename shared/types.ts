@@ -262,12 +262,61 @@ export type AgentEventType =
   | 'error'
   | 'complete';
 
+/**
+ * Human-facing importance of an agent event.
+ *
+ * - `milestone`: a discrete, human-meaningful state change or artifact
+ *   (a file was written, a command ran, a test finished, the agent failed
+ *   or completed). Worth surfacing prominently.
+ * - `detail`: streaming reasoning/token noise or read-only chatter
+ *   (thinking tokens, raw output tokens, tool-call bookkeeping, file
+ *   reads, command output). Safe to collapse by default.
+ */
+export type AgentEventImportance = 'milestone' | 'detail';
+
+/**
+ * Single source of truth for classifying event importance, shared by the
+ * client and the server so both agree on what counts as a "milestone".
+ *
+ * `output` is classified as `detail` even though it's the assistant's
+ * response: it is raw token streaming (often merged/coalesced), not a
+ * single human-meaningful milestone. The human-facing conclusion of a task
+ * is surfaced separately via the task summary, not via `output` events.
+ *
+ * `error` and `complete` are always milestones — they represent the
+ * terminal state of a run and must never be collapsed.
+ */
+export function classifyAgentEventImportance(type: AgentEventType): AgentEventImportance {
+  switch (type) {
+    case 'file_write':
+    case 'file_edit':
+    case 'command':
+    case 'test_result':
+    case 'error':
+    case 'complete':
+      return 'milestone';
+    case 'thinking':
+    case 'output':
+    case 'tool_call':
+    case 'file_read':
+    case 'command_output':
+      return 'detail';
+    default:
+      return 'detail';
+  }
+}
+
 export interface AgentEvent {
   id: string;
   taskId: string;
   type: AgentEventType;
   content: string;
   timestamp: number;
+  /**
+   * Optional so already-persisted events (written before this field
+   * existed) remain valid; the client defaults undefined to `detail`.
+   */
+  importance?: AgentEventImportance;
   metadata?: {
     file?: string;
     fileEventType?: string;

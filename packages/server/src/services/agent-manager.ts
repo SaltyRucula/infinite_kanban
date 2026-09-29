@@ -14,6 +14,7 @@ import type {
   TaskClarificationRequest,
   TaskClarificationAnswer,
 } from '../types.js';
+import { classifyAgentEventImportance } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { AgentProvider, AgentSession, AgentAttachment } from '@codewithdan/agent-sdk-core';
 import type { AgentInfo } from '../../../../shared/types.js';
@@ -575,6 +576,13 @@ export class AgentManager {
     if (this.deletedTasks.has(taskId)) return;
     // Drop empty content events — nothing to show
     if (!event.content?.trim() && event.type !== 'complete' && event.type !== 'error') return;
+
+    // Stamp importance at this single choke point so cache, DB, and WS
+    // broadcast all carry it. Respect an explicit upstream value if one is
+    // ever set (e.g. by a future provider-level classification).
+    if (event.importance === undefined) {
+      event.importance = classifyAgentEventImportance(event.type);
+    }
 
     let log = this.eventLogs.get(taskId) || [];
     log.push(event);

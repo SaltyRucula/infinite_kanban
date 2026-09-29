@@ -33,7 +33,7 @@ function createDatabase(): Database.Database {
       worker_claim_token_hash TEXT, worker_claimed_at INTEGER, worker_lease_expires_at INTEGER,
       worker_attempt INTEGER NOT NULL DEFAULT 0, labels TEXT NOT NULL DEFAULT '[]', agent_preference TEXT
     );
-    CREATE TABLE events (id TEXT, task_id TEXT, type TEXT, content TEXT, timestamp INTEGER, metadata TEXT);
+    CREATE TABLE events (id TEXT, task_id TEXT, type TEXT, content TEXT, timestamp INTEGER, metadata TEXT, importance TEXT);
     CREATE TABLE templates (id TEXT PRIMARY KEY, name TEXT, title TEXT, description TEXT, priority TEXT, agent_type TEXT, repo_path TEXT, base_branch TEXT, use_worktree INTEGER, created_at INTEGER);
     CREATE TABLE workers (id TEXT PRIMARY KEY, name TEXT, token_hash TEXT, status TEXT, hostname TEXT, version TEXT, agent_types_json TEXT, max_concurrent_tasks INTEGER, registered_at INTEGER, last_heartbeat_at INTEGER, updated_at INTEGER, disabled_at INTEGER);
   `);

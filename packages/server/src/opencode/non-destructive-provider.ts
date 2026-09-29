@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
 import { createOpencodeClient } from '@opencode-ai/sdk';
 import type { SessionPromptData } from '@opencode-ai/sdk';
@@ -11,6 +11,7 @@ import type {
   AgentResult,
   AgentType,
 } from '@codewithdan/agent-sdk-core/types';
+import { formatOpenCodeV2DetectedError, spawnOpenCodeServer } from '@ai-agent-board/opencode-compat';
 import { isTransientNetworkError } from '../utils.js';
 
 export interface NonDestructiveOpenCodeProviderOptions {
@@ -151,10 +152,41 @@ export class NonDestructiveOpenCodeProvider implements AgentProvider {
       console.log(`[opencode-provider] connected to existing server at ${this.baseUrl}`);
       return;
     }
-    const server = await startManagedOpenCodeServer(this.hostname, this.port);
-    this.client = createOpencodeClient({ baseUrl: server.url });
-    this.managedServer = { process: server.process, close: () => stopManagedOpenCodeServer(server.process) };
-    console.log(`[opencode-provider] server started at ${server.url} (model: ${this.model})`);
+    // Spawns `opencode serve` (detached, own process group — so stop() can
+    // terminate both the Node wrapper and the underlying .opencode child),
+    // waits for its startup banner, and identifies its API version via
+    // `/api/info` — see @ai-agent-board/opencode-compat/spawn.ts.
+    //
+    // `spawnOpenCodeServer` itself no longer treats a positively-identified
+    // v2+ server as fatal (opencode-compat now has a working v2 adapter,
+    // wired into the worker's local-runner.ts — see
+    // packages/opencode-compat/src/v2-adapter.ts). This provider, however,
+    // speaks v1's wire protocol directly via `createOpencodeClient`
+    // (unprefixed `/session/*` REST calls, no HTTP Basic auth) throughout
+    // — `execute()`/`send()`/`abort()`/`destroy()`, the SSE dedup/retry
+    // loop, and `recoverPrompt()`'s transient-network retry logic all
+    // assume v1's endpoint shapes and have no v2 equivalent here. Passing a
+    // v2 server to any of that would 404 confusingly deep inside a task run
+    // instead of failing clearly at startup, so this call site reproduces
+    // the same fail-fast behaviour `spawnOpenCodeServer` used to apply
+    // internally — v2 support for this managed-server path is intentionally
+    // out of scope for this change; see createV2Adapter's doc comment for
+    // what a future migration of this provider onto the `OpenCodeAdapter`
+    // abstraction would need to account for.
+    const spawned = await spawnOpenCodeServer({
+      hostname: this.hostname,
+      port: this.port,
+      spawnOptions: { detached: true },
+      stopOnFatal: (proc) => stopManagedOpenCodeServer(proc as unknown as ChildProcess),
+    });
+    if (spawned.apiVersion === 2) {
+      await stopManagedOpenCodeServer(spawned.process as unknown as ChildProcess);
+      throw new Error(formatOpenCodeV2DetectedError(spawned.baseUrl, spawned.detectedVersion ?? 'unknown'));
+    }
+    const proc = spawned.process as unknown as ChildProcess;
+    this.client = createOpencodeClient({ baseUrl: spawned.baseUrl });
+    this.managedServer = { process: proc, close: () => stopManagedOpenCodeServer(proc) };
+    console.log(`[opencode-provider] server started at ${spawned.baseUrl} (model: ${this.model})`);
   }
 
   async stop(): Promise<void> {
@@ -442,34 +474,11 @@ export class NonDestructiveOpenCodeProvider implements AgentProvider {
 }
 
 /**
- * Start OpenCode in its own process group so stop() can terminate both the
- * Node wrapper and the underlying .opencode child.
+ * Stop OpenCode's whole process group (started `detached: true` by
+ * spawnOpenCodeServer above), not just the immediate child — the upstream
+ * SDK only kills the wrapper process, which can leave `.opencode` listening
+ * on its port.
  */
-async function startManagedOpenCodeServer(hostname: string, port: number): Promise<{ url: string; process: ChildProcess }> {
-  const args = ['serve', `--hostname=${hostname}`, `--port=${port}`];
-  const proc = spawn('opencode', args, { detached: true, env: process.env });
-  const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timeout waiting for OpenCode server to start after 5000ms')), 5000);
-    let settled = false;
-    let output = '';
-    function settle(fn: () => void) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      fn();
-    }
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
-      const match = output.match(/opencode server listening on\s+(https?:\/\/[^\s]+)/);
-      if (match) settle(() => resolve(match[1]));
-    });
-    proc.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-    proc.on('exit', (code) => settle(() => reject(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\nServer output: ${output}` : ''}`))));
-    proc.on('error', (error) => settle(() => reject(error)));
-  });
-  return { url, process: proc };
-}
-
 async function stopManagedOpenCodeServer(proc: ChildProcess): Promise<void> {
   if (!proc.killed) {
     try {

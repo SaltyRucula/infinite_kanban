@@ -1,0 +1,94 @@
+data: {"id":"evt_0e83abd31001D2aLMTocncrBsX","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e83ac1250012BBpTYx5udxrLh","created":1790602559781,"type":"session.created","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","slug":"quick-engine","version":"2.0.12","projectID":"6d28ac457c51fbd3d64ef6451855569db141f4dc","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"subpath":"","title":"probe2","permissions":[{"action":"*","resource":"*","effect":"allow"}],"model":{"id":"longcat-2.5-preview-free","providerID":"opencode"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":0,"version":1}}
+
+data: {"id":"evt_0e83ac193001t1r6yi0476rXIL","created":1790602559891,"type":"session.inbox.enqueued","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"inboxID":"msg_0e83ac192001jsCZLBAj5bHVuf","sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","item":{"type":"user","payload":{"text":"Run the bash command `echo hello-from-tool` and then reply with the single word DONE."},"delivery":"steer"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":1,"version":1}}
+
+data: {"id":"evt_0e83ac194001RLF4KrQUd2j12P","created":1790602559892,"type":"session.execution.started","data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":2,"version":1}}
+
+data: {"id":"evt_0e83ac19e0016Snq7GkDz7gX6S","created":1790602559902,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","delta":{"core/environment":"f0bd2cd2edd73e01efbae3eea07dd3f73243eb3ffd952fc53bafc5a2db59b09a","core/date":"bf08b8486572ab3eef677a3c9ee12468e411ae41a8f4d2fb6cf02a6ca73f1986","core/codemode":"2eed04ce01c181212b01f421f90128adf1be5d800b8b1c682a0de7c05c29315a","core/skill-guidance":"2bdcbef7e86beba800140c686651138c596d51bdbc714492011bad41433e4ded","core/mcp-guidance":"ebfb2cdb7f306bc024f59985a6d693126c41c28f4ddadb5905c67683b520c1f7"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":3,"version":2}}
+
+data: {"id":"evt_0e83ac19f001N9NipozxKU5pMw","created":1790602559903,"type":"session.inbox.delivered","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","inboxID":"msg_0e83ac192001jsCZLBAj5bHVuf"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":4,"version":1}}
+
+data: {"id":"evt_0e83ac1ba001gqDXL6uri1rsev","created":1790602559930,"type":"skill.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+data: {"id":"evt_0e83ac1bb001Tx7S5oKFHtJUCG","created":1790602559931,"type":"skill.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+data: {"id":"evt_0e83ac1d9001DgMpkq8GxsGGFY","created":1790602559961,"type":"skill.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+data: {"id":"evt_0e83ac1da00145uiDQJTuH3n5P","created":1790602559962,"type":"skill.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+data: {"id":"evt_0e83ac1db0013n5ooqWRZulDjP","created":1790602559963,"type":"skill.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+data: {"id":"evt_0e83ac1dc001bE8e0UObJcRpN1","created":1790602559964,"type":"skill.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e83b02df001w15bRZVuZLkyyp","created":1790602576607,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","agent":"orchestrator","model":{"id":"longcat-2.5-preview-free","providerID":"opencode","variant":"default"},"assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","started":1790602559927},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":5,"version":1}}
+
+data: {"id":"evt_0e83b02e1001ExFIw0RpRkitGB","created":1790602576609,"type":"session.reasoning.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":6,"version":1}}
+
+data: {"id":"evt_0e83b0347001l64ogjmBJ4H1Vy","created":1790602576711,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"delta":"\n"}}
+
+data: {"id":"evt_0e83b04070011WoznCturArP9T","created":1790602576903,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"delta":"The user wants me to"}}
+
+data: {"id":"evt_0e83b049f001fFaXv0EkoyHYXG","created":1790602577055,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"delta":" run a simple bash command and reply with"}}
+
+data: {"id":"evt_0e83b0505001lsOxt7ntcJRYlp","created":1790602577157,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"delta":" a single word. This is a trivial, isolated action that"}}
+
+data: {"id":"evt_0e83b0592001cqFhpZLFNDfA4R","created":1790602577298,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"delta":" I should handle"}}
+
+data: {"id":"evt_0e83b05e2001F1D1ThmIKBkgpB","created":1790602577378,"type":"session.tool.input.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","id":"call_25767766dd31472cbc1d1d9d","name":"shell"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":7,"version":1}}
+
+data: {"id":"evt_0e83b06450012drsuc0DR8jBHf","created":1790602577477,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"delta":" directly."}}
+
+data: {"id":"evt_0e83b06aa00149EAtVxh4Hplel","created":1790602577578,"type":"session.reasoning.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","ordinal":0,"text":"\nThe user wants me to run a simple bash command and reply with a single word. This is a trivial, isolated action that I should handle directly.","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":8,"version":1}}
+
+data: {"id":"evt_0e83b06ac001E65Gv8K004VQok","created":1790602577580,"type":"session.tool.input.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","id":"call_25767766dd31472cbc1d1d9d","text":"{\"command\": \"echo hello-from-tool\"}"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":9,"version":1}}
+
+data: {"id":"evt_0e83b06ad0013IJf5Fpx5zTxGz","created":1790602577581,"type":"session.tool.called","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","id":"call_25767766dd31472cbc1d1d9d","input":{"command":"echo hello-from-tool"},"executed":false},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":10,"version":1}}
+
+data: {"id":"evt_0e83b06ae0014UJULM01kIhJoA","created":1790602577582,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":11,"version":1}}
+
+data: {"id":"evt_0e83b06bb001C10UcBNR8QgAbe","created":1790602577595,"type":"shell.created","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"info":{"id":"sh_0e83b06b90016fqC1c48WNlz5Z","status":"running","command":"echo hello-from-tool","cwd":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat","shell":"/bin/zsh","file":"/Users/CTW01561/.local/share/opencode/shell/6d28ac457c51fbd3d64ef6451855569db141f4dc/sh_0e83b06b90016fqC1c48WNlz5Z.out","metadata":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV"},"time":{"started":1790602577593}}}}
+
+data: {"id":"evt_0e83b06bc001xhTBQSXpNX5XT5","created":1790602577596,"type":"session.tool.progress","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","id":"call_25767766dd31472cbc1d1d9d","metadata":{"shellID":"sh_0e83b06b90016fqC1c48WNlz5Z"}}}
+
+data: {"id":"evt_0e83b06c0001uU71UudQZXUVEC","created":1790602577600,"type":"shell.exited","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"id":"sh_0e83b06b90016fqC1c48WNlz5Z","exit":0,"status":"exited"}}
+
+data: {"id":"evt_0e83b06c9001y5ZwgIfH5g8EUt","created":1790602577609,"type":"session.tool.success","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","id":"call_25767766dd31472cbc1d1d9d","content":[{"type":"text","text":"hello-from-tool\n"},{"type":"text","text":"Command exited with code 0."}],"metadata":{"status":"completed","truncated":false,"exit":0},"executed":false},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":12,"version":2}}
+
+data: {"id":"evt_0e83b06ca001BYAK5IwUT58m4X","created":1790602577610,"type":"session.step.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83ac1a3001OJHAXiuIxFaTEj","finish":"tool-calls","rawFinish":"tool_calls","cost":0,"tokens":{"input":13052,"output":19,"reasoning":31,"cache":{"read":0,"write":0}}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":13,"version":1}}
+
+data: {"id":"evt_0e83b06cb0011LK14YJhtLdyj0","created":1790602577611,"type":"session.usage.updated","data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","cost":0,"tokens":{"input":13052,"output":19,"reasoning":31,"cache":{"read":0,"write":0}}}}
+
+data: {"id":"evt_0e83b14d0001ckVUpxQN1wadHm","created":1790602581200,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","agent":"orchestrator","model":{"id":"longcat-2.5-preview-free","providerID":"opencode","variant":"default"},"assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","started":1790602577619},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":14,"version":1}}
+
+data: {"id":"evt_0e83b14d2001BmmLcgw81zDVXd","created":1790602581202,"type":"session.reasoning.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":15,"version":1}}
+
+data: {"id":"evt_0e83b1539001uyB2A2cKVQ8xf4","created":1790602581305,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"delta":"\n"}}
+
+data: {"id":"evt_0e83b16270012VwueziP5091DY","created":1790602581543,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"delta":"The command executed successfully."}}
+
+data: {"id":"evt_0e83b16aa001Ch9eIB2PtW9CL4","created":1790602581674,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"delta":" The user asked me to reply with the"}}
+
+data: {"id":"evt_0e83b1705001TlVSDnN5bgYSla","created":1790602581765,"type":"session.text.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":16,"version":1}}
+
+data: {"id":"evt_0e83b172c001UtvUfKwlomOgsd","created":1790602581804,"type":"session.reasoning.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"delta":" single word DONE.\n"}}
+
+data: {"id":"evt_0e83b1751001oBKcgxk4N6j5RB","created":1790602581841,"type":"session.reasoning.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"text":"\nThe command executed successfully. The user asked me to reply with the single word DONE.\n","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":17,"version":1}}
+
+data: {"id":"evt_0e83b1753001uDFpucvCMhN5H5","created":1790602581843,"type":"session.text.delta","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"delta":"DONE"}}
+
+data: {"id":"evt_0e83b1753002UOb3oa6W0notax","created":1790602581843,"type":"session.text.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","ordinal":0,"text":"DONE"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":18,"version":1}}
+
+data: {"id":"evt_0e83b1754001g4OorF3VR6HUba","created":1790602581844,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":19,"version":1}}
+
+data: {"id":"evt_0e83b1755001dg54e6epZSOiiJ","created":1790602581845,"type":"session.step.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-compat"},"data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","assistantMessageID":"msg_0e83b06cf001GEgrFr9btiqMhP","finish":"stop","rawFinish":"stop","cost":0,"tokens":{"input":13124,"output":5,"reasoning":18,"cache":{"read":0,"write":0}}},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":20,"version":1}}
+
+data: {"id":"evt_0e83b1756001V3SPNEA7762Cds","created":1790602581846,"type":"session.usage.updated","data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV","cost":0,"tokens":{"input":26176,"output":24,"reasoning":49,"cache":{"read":0,"write":0}}}}
+
+data: {"id":"evt_0e83b1756002QpLxV0JIM1MLaQ","created":1790602581846,"type":"session.execution.succeeded","data":{"sessionID":"ses_f17c53edbffekz0UcO67NMTeFV"},"durable":{"aggregateID":"ses_f17c53edbffekz0UcO67NMTeFV","seq":21,"version":1}}
+

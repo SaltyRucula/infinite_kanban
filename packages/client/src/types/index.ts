@@ -19,6 +19,7 @@ export type {
   TaskTemplate,
   AgentEventType,
   AgentEvent,
+  AgentEventImportance,
   ClarificationRequestPayload,
   TaskClarificationRequest,
   TaskClarificationAnswer,
@@ -27,4 +28,5 @@ export type {
   JiraImportResult,
 } from '../../../../shared/types.js';
 
+export { classifyAgentEventImportance } from '../../../../shared/types.js';
 export { VALID_TRANSITIONS, MAX_GROUP_CHILDREN, MIN_GROUP_CHILDREN } from '../../../../shared/constants.js';

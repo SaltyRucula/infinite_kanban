@@ -9,6 +9,7 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../../shared" }
+    { "path": "../../shared" },
+    { "path": "../opencode-compat/tsconfig.build.json" }
   ]
 }

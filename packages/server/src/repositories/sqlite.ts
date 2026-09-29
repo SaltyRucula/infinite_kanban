@@ -138,8 +138,8 @@ export class SqliteTaskRepository implements TaskRepository {
       delete: db.prepare('DELETE FROM tasks WHERE id = ?'),
       count: db.prepare('SELECT COUNT(*) as cnt FROM tasks'),
       insertEvent: db.prepare(`
-        INSERT INTO events (id, task_id, type, content, timestamp, metadata)
-        VALUES (@id, @task_id, @type, @content, @timestamp, @metadata)
+        INSERT INTO events (id, task_id, type, content, timestamp, metadata, importance)
+        VALUES (@id, @task_id, @type, @content, @timestamp, @metadata, @importance)
       `),
       getEventsByTaskId: db.prepare('SELECT * FROM events WHERE task_id = ? ORDER BY timestamp ASC'),
       deleteEventsByTaskId: db.prepare('DELETE FROM events WHERE task_id = ?'),
@@ -364,6 +364,7 @@ export class SqliteTaskRepository implements TaskRepository {
       content: event.content,
       timestamp: event.timestamp,
       metadata: event.metadata ? JSON.stringify(event.metadata) : null,
+      importance: event.importance ?? null,
     });
   }
 
@@ -375,6 +376,7 @@ export class SqliteTaskRepository implements TaskRepository {
       content: string;
       timestamp: number;
       metadata: string | null;
+      importance: string | null;
     }>;
     return rows.map((row) => {
       let metadata: AgentEvent['metadata'] | undefined;
@@ -392,6 +394,7 @@ export class SqliteTaskRepository implements TaskRepository {
         type: row.type as AgentEvent['type'],
         content: row.content,
         timestamp: row.timestamp,
+        ...(row.importance ? { importance: row.importance as AgentEvent['importance'] } : {}),
         ...(metadata ? { metadata } : {}),
       };
     });

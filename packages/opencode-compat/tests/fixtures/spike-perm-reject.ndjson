@@ -1,0 +1,36 @@
+data: {"id":"evt_0e86c7adc001x1pZiXwjQ5UPnz","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e86c7ed70012MPkIWUaMAZvT1","created":1790605819607,"type":"session.inbox.enqueued","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"inboxID":"msg_0e86c7ed6001VidaZK5HHY6tx7","sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","item":{"type":"user","payload":{"text":"Directly call your file-read tool (not shell) to read /etc/passwd (outside your session directory). Report the raw tool result or error honestly."},"delivery":"steer"}},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":1,"version":1}}
+
+data: {"id":"evt_0e86c7eda001JwCRrASP3Ld1AC","created":1790605819610,"type":"session.execution.started","data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy"},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":2,"version":1}}
+
+data: {"id":"evt_0e86c7ede001WC0yHQsLbAQun7","created":1790605819614,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","delta":{"core/environment":"c22978d9c7c2a90cd2eab98b2cde2f618c4422841a835fd5c26460b709b557a9","core/date":"bf08b8486572ab3eef677a3c9ee12468e411ae41a8f4d2fb6cf02a6ca73f1986","core/codemode":"071d8a4709c1e22c3c798c86ce2ac9f6ac314ce40c61b706d90deb9e4b40fb15","core/skill-guidance":"2bdcbef7e86beba800140c686651138c596d51bdbc714492011bad41433e4ded"}},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":3,"version":2}}
+
+data: {"id":"evt_0e86c7edf001X4K2nOAEmIwddh","created":1790605819615,"type":"session.inbox.delivered","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","inboxID":"msg_0e86c7ed6001VidaZK5HHY6tx7"},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":4,"version":1}}
+
+data: {"id":"evt_0e86c83f70017AqoC83eKdeWV6","created":1790605820919,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","agent":"orchestrator","model":{"id":"claude-sonnet-5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk","snapshot":"9783689516699c1aeeeeaa574f7fc4c9e1d1f1cb","started":1790605819674},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":5,"version":1}}
+
+data: {"id":"evt_0e86c83fa001i7rbcM5kAS8i78","created":1790605820922,"type":"session.tool.input.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk","id":"toolu_011hrocXePWajc14gNLSLGeE","name":"read"},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":6,"version":1}}
+
+data: {"id":"evt_0e86c8431001rrbqS03TwC4LRm","created":1790605820977,"type":"session.tool.input.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk","id":"toolu_011hrocXePWajc14gNLSLGeE","text":"{\"path\": \"/etc/passwd\"}"},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":7,"version":1}}
+
+data: {"id":"evt_0e86c8433001rmFIYECu86iDSZ","created":1790605820979,"type":"session.tool.called","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk","id":"toolu_011hrocXePWajc14gNLSLGeE","input":{"path":"/etc/passwd"},"executed":false},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":8,"version":1}}
+
+data: {"id":"evt_0e86c8435001Fo6s2q4Sx9zvkR","created":1790605820981,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk"},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":9,"version":1}}
+
+data: {"id":"evt_0e86c8439002NdFGlg54ruaUWJ","created":1790605820985,"type":"permission.asked","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"id":"per_0e86c84390018mgn8nZGmnJIIT","sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","action":"external_directory","resources":["/etc/*"],"save":["/etc/*"],"source":{"type":"tool","messageID":"msg_0e86c7ee500190IGh5PSYczpqk","id":"toolu_011hrocXePWajc14gNLSLGeE"}}}
+
+data: {"id":"evt_0e86ca914001BDghmWMcR0l23A","created":1790605830420,"type":"permission.replied","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","requestID":"per_0e86c84390018mgn8nZGmnJIIT","reply":"reject"}}
+
+data: {"id":"evt_0e86ca915001d9jahXfq2i2bz0","created":1790605830421,"type":"session.tool.failed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk","id":"toolu_011hrocXePWajc14gNLSLGeE","error":{"type":"aborted","message":"The user declined this tool call"},"executed":false},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":10,"version":2}}
+
+data: {"id":"evt_0e86ca934001BEJsotj9vx8h2d","created":1790605830452,"type":"session.step.failed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","assistantMessageID":"msg_0e86c7ee500190IGh5PSYczpqk","error":{"type":"aborted","message":"Step interrupted"},"rawFinish":"tool_use","cost":0.0018866000000000002,"tokens":{"input":2,"output":51,"reasoning":0,"cache":{"read":6863,"write":13484}},"snapshot":"9783689516699c1aeeeeaa574f7fc4c9e1d1f1cb","files":[]},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":11,"version":1}}
+
+data: {"id":"evt_0e86ca935001UbVxkfEj0EPvlU","created":1790605830453,"type":"session.usage.updated","data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","cost":0.0018866000000000002,"tokens":{"input":2,"output":51,"reasoning":0,"cache":{"read":6863,"write":13484}}}}
+
+data: {"id":"evt_0e86ca935002ZMkBvz2DXVIkHW","created":1790605830453,"type":"session.execution.interrupted","data":{"sessionID":"ses_f1793855bffeLZnokAFoNoyVZy","reason":"shutdown"},"durable":{"aggregateID":"ses_f1793855bffeLZnokAFoNoyVZy","seq":12,"version":1}}
+
+: heartbeat
+

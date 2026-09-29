@@ -1,8 +1,16 @@
-import { spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { v4 as uuid } from 'uuid';
-import { mapOpenCodeEvent, type AgentEvent as CoreEvent } from '@codewithdan/agent-sdk-core';
-import { createOpencodeClient } from '@opencode-ai/sdk';
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk';
+import type { AgentEvent as CoreEvent } from '@codewithdan/agent-sdk-core';
+import {
+  createV1Adapter,
+  createV2Adapter,
+  spawnOpenCodeServer,
+  type OpenCodeAdapter,
+  type OpenCodeProcessLike,
+  type OpenCodeSpawnFn,
+  type SessionSpec,
+  type TurnOpts,
+  type TurnResult,
+} from '@ai-agent-board/opencode-compat';
 import type { AgentEvent, ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { buildResumeAnswerPrompt, buildResumeContext, extractInputRequest, INPUT_REQUEST_INSTRUCTIONS } from './input-request.js';
 import { buildReviewPrompt, isReviewRun, REVIEW_DISABLED_TOOLS, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
@@ -28,51 +36,31 @@ export type LiveOpenCodeServerTask = {
   shutdown(): Promise<void>;
 };
 
-export interface OpenCodeProcess {
-  readonly stdout: NodeJS.ReadableStream;
-  readonly stderr: NodeJS.ReadableStream;
-  on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
-  on(event: 'error', listener: (error: Error) => void): this;
-  off(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
-  off(event: 'error', listener: (error: Error) => void): this;
-  kill(signal?: NodeJS.Signals | number): boolean;
-}
+// Re-exported under the pre-adapter name so callers/tests that only care
+// about "a spawned opencode process handle" don't need to know the compat
+// package's type name.
+export type OpenCodeProcess = OpenCodeProcessLike;
+export type OpenCodeSpawn = OpenCodeSpawnFn;
 
-export type OpenCodeSpawn = (
-  command: string,
-  args: readonly string[],
-  options: SpawnOptionsWithoutStdio,
-) => OpenCodeProcess;
-
-export type OpenCodePromptBody = {
-  agent?: string;
-  system?: string;
-  model?: { providerID: string; modelID: string };
-  tools?: Readonly<Record<string, boolean>>;
-  parts: readonly [{ type: 'text'; text: string }];
-};
-
-export interface OpenCodeClientLike {
-  readonly session: {
-    create(input: { body?: { title?: string } }): Promise<{ data?: { id: string } }>;
-    get(input: { path: { id: string } }): Promise<{ data?: { id: string } }>;
-    prompt(input: {
-      path: { id: string };
-      body?: OpenCodePromptBody;
-    }): Promise<unknown>;
-    abort(input: { path: { id: string } }): Promise<unknown>;
-  };
-  readonly event: {
-    subscribe(input?: { signal?: AbortSignal; sseMaxRetryAttempts?: number }): Promise<{
-      stream: AsyncGenerator<OpenCodeEvent, void, unknown>;
-    }>;
-  };
-}
-
-export type CreateOpenCodeClient = (input: {
+/**
+ * Builds an `OpenCodeAdapter` for a given server connection. Test seam:
+ * inject a fake adapter instead of talking to a real opencode server.
+ *
+ * `apiVersion`/`password` are populated by `startOpenCodeServerTask`'s real
+ * spawn path (see `spawnOpenCodeServer`'s `apiVersion` probe result) so the
+ * default factory below can select `createV1Adapter` vs `createV2Adapter`
+ * without guessing. Both are left `undefined` on the "attach to an
+ * already-running server" path (`input.baseUrl` supplied directly, used
+ * only by tests today — see `startOpenCodeServerTask`) since that path
+ * never spawns or probes; `defaultCreateAdapter` falls back to v1 there,
+ * matching this build's behaviour before this seam existed.
+ */
+export type CreateOpenCodeAdapter = (input: {
   readonly baseUrl: string;
   readonly directory: string;
-}) => OpenCodeClientLike;
+  readonly apiVersion?: 1 | 2;
+  readonly password?: string;
+}) => OpenCodeAdapter;
 
 type StartOpenCodeServerTaskInput = {
   readonly task: WorkerTaskAssignment;
@@ -80,7 +68,7 @@ type StartOpenCodeServerTaskInput = {
   readonly runner: OpenCodeServerRunnerProfile;
   readonly sendEvent: (event: AgentEvent) => Promise<void>;
   readonly spawnFn?: OpenCodeSpawn;
-  readonly createClient?: CreateOpenCodeClient;
+  readonly createAdapter?: CreateOpenCodeAdapter;
   readonly baseUrl?: string;
   readonly managedServer?: OpenCodeProcess;
 };
@@ -142,53 +130,29 @@ function mapCoreEvent(taskId: string, workspacePath: string, event: CoreEvent): 
   };
 }
 
-function defaultSpawn(command: string, args: readonly string[], options: SpawnOptionsWithoutStdio): OpenCodeProcess {
-  return spawn(command, [...args], options);
-}
-
-function defaultCreateClient(input: { readonly baseUrl: string; readonly directory: string }): OpenCodeClientLike {
-  return createOpencodeClient({ baseUrl: input.baseUrl, directory: input.directory }) as unknown as OpenCodeClientLike;
-}
-
-function waitForManagedServerReady(process: OpenCodeProcess): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('timeout waiting for opencode serve to report a listening URL after 5000ms'));
-    }, 5_000);
-    let output = '';
-
-    const onOutput = (chunk: string | Buffer): void => {
-      output += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-      const match = output.match(/opencode server listening on\s+(https?:\/\/[^\s]+)/);
-      if (!match) return;
-      cleanup();
-      resolve(match[1]);
-    };
-
-    const onClose = (code: number | null): void => {
-      cleanup();
-      reject(new Error(`opencode serve exited before startup with code ${code ?? 'unknown'}`));
-    };
-
-    const onError = (error: Error): void => {
-      cleanup();
-      reject(error);
-    };
-
-    const cleanup = (): void => {
-      clearTimeout(timeoutId);
-      process.stdout.off('data', onOutput);
-      process.stderr.off('data', onOutput);
-      process.off('close', onClose);
-      process.off('error', onError);
-    };
-
-    process.stdout.on('data', onOutput);
-    process.stderr.on('data', onOutput);
-    process.on('close', onClose);
-    process.on('error', onError);
-  });
+/**
+ * Selects `createV1Adapter` vs `createV2Adapter` from `spawnOpenCodeServer`'s
+ * `apiVersion` probe result (see `CreateOpenCodeAdapter`'s doc comment).
+ * `apiVersion` is only ever `2` when a real spawn positively identified a
+ * v2+ server via `/api/info` — see spawn.ts — so `password` is guaranteed
+ * present alongside it in that branch (both come from the same
+ * `SpawnedOpenCodeServer` handle); the thrown error below is a defensive
+ * backstop for a hand-rolled `apiVersion: 2` call site, not a path any real
+ * spawn can reach.
+ */
+function defaultCreateAdapter(input: {
+  readonly baseUrl: string;
+  readonly directory: string;
+  readonly apiVersion?: 1 | 2;
+  readonly password?: string;
+}): OpenCodeAdapter {
+  if (input.apiVersion === 2) {
+    if (!input.password) {
+      throw new Error('opencode v2 server detected but no server password was supplied to the adapter factory');
+    }
+    return createV2Adapter({ baseUrl: input.baseUrl, directory: input.directory, password: input.password });
+  }
+  return createV1Adapter({ baseUrl: input.baseUrl, directory: input.directory });
 }
 
 // The native `question` tool is a TUI-only interactive feature: when invoked
@@ -259,19 +223,10 @@ export function buildTaskPrompt(task: WorkerTaskAssignment): string {
   ].join('\n');
 }
 
-function responseText(response: unknown): string {
-  const parts = asRecord(asRecord(response)?.data)?.parts;
-  if (!Array.isArray(parts)) return '';
-  return parts
-    .map((part) => asRecord(part))
-    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
-    .map((part) => part?.text as string)
-    .join('\n');
-}
-
 async function resolveSession(
-  client: OpenCodeClientLike,
+  adapter: OpenCodeAdapter,
   task: WorkerTaskAssignment,
+  spec: SessionSpec,
 ): Promise<{ sessionId: string; firstPrompt: string }> {
   // A review run must never carry `resume`: resolveSession would happily
   // resume the paused session below, but startOpenCodeServerTask always
@@ -288,28 +243,19 @@ async function resolveSession(
   if (task.resume) {
     // OpenCode persists sessions on disk, so the paused conversation is
     // usually still available even if the server that ran it has exited.
-    // client.session.get is reached through an `as unknown as` cast in
-    // defaultCreateClient, so an installed SDK that lacks the method throws
-    // SYNCHRONOUSLY rather than rejecting — a bare `.catch()` never sees a
-    // synchronous throw, which used to fail the whole task instead of
-    // falling back to a fresh session below. Wrap the whole lookup in
-    // try/catch so any failure (missing method or a rejected promise) falls
-    // through to creating a new session.
-    let existing: { data?: { id: string } } | undefined;
+    // Any failure here (not-found, or a transport-level error) falls
+    // through to creating a new session below rather than failing the task.
+    let existingId: string | null = null;
     try {
-      existing = await client.session.get({ path: { id: task.resume.sessionId } });
+      existingId = await adapter.getSession(task.resume.sessionId);
     } catch {
-      existing = undefined;
+      existingId = null;
     }
-    if (existing?.data?.id) {
-      return { sessionId: existing.data.id, firstPrompt: buildResumeAnswerPrompt(task.resume) };
+    if (existingId) {
+      return { sessionId: existingId, firstPrompt: buildResumeAnswerPrompt(task.resume) };
     }
   }
-  const created = await client.session.create({ body: { title: task.title } });
-  const sessionId = created.data?.id;
-  if (!sessionId) {
-    throw new Error('opencode session create returned no session id');
-  }
+  const sessionId = await adapter.createSession(spec);
   const firstPrompt = task.resume
     ? `${buildTaskPrompt(task)}\n\n${buildResumeContext(task.resume)}`
     : buildTaskPrompt(task);
@@ -344,40 +290,85 @@ export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
 }
 
 export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInput): Promise<LiveOpenCodeServerTask> {
-  const spawnFn = input.spawnFn ?? defaultSpawn;
-  const createClient = input.createClient ?? defaultCreateClient;
+  const createAdapter = input.createAdapter ?? defaultCreateAdapter;
 
-  const managedServer = input.managedServer ?? (!input.baseUrl
-    ? spawnFn('opencode', ['serve', `--hostname=${DEFAULT_SERVER_HOSTNAME}`, `--port=${DEFAULT_SERVER_PORT}`], {
-        shell: false,
-        env: { ...process.env, OPENCODE_PERMISSION: HEADLESS_PERMISSION_ENV },
-      })
-    : undefined);
   if (input.baseUrl) {
-    return startOpenCodeServerTaskWithClient({ ...input, baseUrl: input.baseUrl, managedServer, createClient });
+    // Caller already has a running server (and optionally a `managedServer`
+    // handle for later shutdown()/abort() lifecycle control) — never spawn
+    // or version-probe in this branch, so apiVersion/password are unknown
+    // here; defaultCreateAdapter falls back to v1 (see its doc comment).
+    return startOpenCodeServerTaskWithAdapter({
+      ...input,
+      baseUrl: input.baseUrl,
+      managedServer: input.managedServer,
+      createAdapter,
+    });
   }
-  if (!managedServer) {
-    throw new Error('failed to start managed opencode server');
-  }
-  const baseUrl = await waitForManagedServerReady(managedServer);
-  return startOpenCodeServerTaskWithClient({ ...input, baseUrl, managedServer, createClient });
+
+  const spawned = await spawnOpenCodeServer({
+    hostname: DEFAULT_SERVER_HOSTNAME,
+    port: DEFAULT_SERVER_PORT,
+    spawnFn: input.spawnFn,
+    existingProcess: input.managedServer,
+    spawnOptions: { shell: false },
+    env: { OPENCODE_PERMISSION: HEADLESS_PERMISSION_ENV },
+  });
+  return startOpenCodeServerTaskWithAdapter({
+    ...input,
+    baseUrl: spawned.baseUrl,
+    managedServer: spawned.process,
+    apiVersion: spawned.apiVersion,
+    password: spawned.serverPassword,
+    createAdapter,
+  });
 }
 
-type StartOpenCodeServerTaskWithClientInput = StartOpenCodeServerTaskInput & {
+type StartOpenCodeServerTaskWithAdapterInput = StartOpenCodeServerTaskInput & {
   readonly baseUrl: string;
   readonly managedServer: OpenCodeProcess | undefined;
-  readonly createClient: CreateOpenCodeClient;
+  readonly createAdapter: CreateOpenCodeAdapter;
+  readonly apiVersion?: 1 | 2;
+  readonly password?: string;
 };
 
-async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskWithClientInput): Promise<LiveOpenCodeServerTask> {
-  const client = input.createClient({ baseUrl: input.baseUrl, directory: input.workspacePath });
+async function startOpenCodeServerTaskWithAdapter(input: StartOpenCodeServerTaskWithAdapterInput): Promise<LiveOpenCodeServerTask> {
+  const adapter = input.createAdapter({
+    baseUrl: input.baseUrl,
+    directory: input.workspacePath,
+    apiVersion: input.apiVersion,
+    password: input.password,
+  });
+  const review = isReviewRun(input.task);
 
-  const { sessionId, firstPrompt } = await resolveSession(client, input.task);
+  // Hoisted per SessionSpec's contract (see opencode-compat/types.ts): this
+  // build's v1 adapter treats these purely as defaults available to
+  // runTurn's opts fallback. Every runTurn call below passes its own
+  // explicit opts instead of relying on that fallback — this task always
+  // resends agent/model/tools on every turn regardless of whether the
+  // session was freshly created or resumed (a resumed session never calls
+  // createSession, so it would have no stored spec to fall back to), which
+  // is exactly what the pre-adapter code did.
+  const spec: SessionSpec = {
+    title: input.task.title,
+    directory: input.workspacePath,
+    agent: input.runner.agent,
+    model: headlessModel(),
+    systemPrompt: review
+      ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}`
+      : HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
+    headlessPermissions: true,
+    disabledTools: review
+      ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS }
+      : HEADLESS_DISABLED_TOOLS,
+  };
 
-  // `prompt()` can resolve without throwing even when the server failed
-  // internally (observed: a `createUserMessage` exception never surfaced as
-  // an HTTP error), so a successful `prompt()` alone cannot prove the turn
-  // ran; the SSE `session.error` event is the reliable signal, tracked here.
+  const { sessionId, firstPrompt } = await resolveSession(adapter, input.task, spec);
+
+  // `runTurn()` can resolve without throwing even when the server failed
+  // internally to process the turn, so a successful `runTurn()` alone
+  // cannot prove the turn ran; the SSE `session.error` event (surfaced here
+  // as a mapped core event of type 'error') is the reliable signal, tracked
+  // here.
   let sessionErrorMessage: string | undefined;
   let resolveSessionError: (message: string) => void = () => {};
   const sessionErrorSignal = new Promise<string>((resolve) => { resolveSessionError = resolve; });
@@ -385,7 +376,7 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
   // Tool calls occasionally never report completion back through the SSE
   // stream (observed independent of CPU load or command complexity — e.g. a
   // `find` that runs in under a second locally still leaves the session
-  // "running" indefinitely). `client.session.prompt()` then blocks until the
+  // "running" indefinitely). `adapter.runTurn()` then blocks until the
   // outer HTTP client times out (~5 minutes) with a generic "fetch failed".
   // Track the last time *any* event arrived so a stall can be detected and
   // retried well before that outer timeout, instead of just failing.
@@ -395,18 +386,15 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
   let aborted = false;
   const streamLoop = (async (): Promise<void> => {
     try {
-      const streamResult = await client.event.subscribe({ signal: streamAbortController.signal, sseMaxRetryAttempts: 0 });
-      for await (const event of streamResult.stream) {
-        mapOpenCodeEvent(sessionId, event, input.task.id, (coreEvent: CoreEvent) => {
-          lastActivityAt = Date.now();
-          const mapped = mapCoreEvent(input.task.id, input.workspacePath, coreEvent);
-          if (mapped.type === 'error' && sessionErrorMessage === undefined) {
-            sessionErrorMessage = mapped.content || 'opencode session reported an error';
-            resolveSessionError(sessionErrorMessage);
-          }
-          void input.sendEvent(mapped).catch((error: unknown) => {
-            console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
-          });
+      for await (const coreEvent of adapter.subscribe(sessionId, streamAbortController.signal)) {
+        lastActivityAt = Date.now();
+        const mapped = mapCoreEvent(input.task.id, input.workspacePath, coreEvent);
+        if (mapped.type === 'error' && sessionErrorMessage === undefined) {
+          sessionErrorMessage = mapped.content || 'opencode session reported an error';
+          resolveSessionError(sessionErrorMessage);
+        }
+        void input.sendEvent(mapped).catch((error: unknown) => {
+          console.error(`[worker] event upload failed: ${error instanceof Error ? error.message : String(error)}`);
         });
       }
     } catch {
@@ -417,50 +405,49 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
   const abort = async (): Promise<void> => {
     aborted = true;
     streamAbortController.abort();
-    await client.session.abort({ path: { id: sessionId } });
+    await adapter.interrupt(sessionId);
   };
 
   const shutdown = async (): Promise<void> => {
     aborted = true;
     streamAbortController.abort();
-    await client.session.abort({ path: { id: sessionId } }).catch(() => undefined);
+    await adapter.interrupt(sessionId).catch(() => undefined);
     input.managedServer?.kill('SIGTERM');
   };
 
-  const promptWithStallRecovery = async (body: OpenCodePromptBody): Promise<unknown> => {
+  const runTurnWithStallRecovery = async (text: string, opts: TurnOpts): Promise<TurnResult> => {
     let attempt = 0;
-    let currentBody = body;
+    let currentText = text;
     for (;;) {
       lastActivityAt = Date.now();
-      const promptPromise = client.session.prompt({ path: { id: sessionId }, body: currentBody });
+      const turnPromise = adapter.runTurn(sessionId, currentText, opts);
       let stallTimer: ReturnType<typeof setInterval> | undefined;
       const stallPromise = new Promise<'stalled'>((resolve) => {
         stallTimer = setInterval(() => {
           if (Date.now() - lastActivityAt > STALL_TIMEOUT_MS) resolve('stalled');
         }, STALL_CHECK_INTERVAL_MS);
       });
-      const outcome = await Promise.race([promptPromise.then((response) => ({ response })), stallPromise]);
+      const outcome = await Promise.race([turnPromise.then((result) => ({ result })), stallPromise]);
       clearInterval(stallTimer);
-      if (outcome !== 'stalled') return outcome.response;
+      if (outcome !== 'stalled') return outcome.result;
 
-      // Stalled: the original prompt() call is still in flight server-side,
+      // Stalled: the original runTurn() call is still in flight server-side,
       // but we've given up waiting on it. Swallow whatever it eventually
       // settles with (we've already moved on) so it doesn't surface as an
-      // unhandled rejection, then abort the turn and retry with a nudge.
-      void promptPromise.catch(() => undefined);
+      // unhandled rejection, then interrupt the turn and retry with a nudge.
+      void turnPromise.catch(() => undefined);
       attempt += 1;
-      await client.session.abort({ path: { id: sessionId } }).catch(() => undefined);
+      await adapter.interrupt(sessionId).catch(() => undefined);
       if (attempt > MAX_STALL_RETRIES) {
         throw new Error(`OpenCode session stalled with no tool-call progress for over ${STALL_TIMEOUT_MS / 1000}s, even after ${MAX_STALL_RETRIES} retries`);
       }
-      currentBody = { ...currentBody, parts: [{ type: 'text', text: STALL_RETRY_NUDGE }] };
+      currentText = STALL_RETRY_NUDGE;
     }
   };
 
   const done = (async (): Promise<OpenCodeRunResult> => {
     try {
-      const review = isReviewRun(input.task);
-      const response = await promptWithStallRecovery({
+      const result = await runTurnWithStallRecovery(review ? buildReviewPrompt(input.task) : firstPrompt, {
         agent: input.runner.agent,
         // A review run only ever scans for REVIEW_VERDICT (see reviewResult
         // below), never for a clarification marker — including
@@ -468,19 +455,18 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
         // contradictory "end your response with this final line" instructions.
         // A reviewer that needs more information should express that as
         // changes_requested with the question in its findings instead.
-        system: review
+        systemPrompt: review
           ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}`
           : `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${INPUT_REQUEST_INSTRUCTIONS}`,
         model: headlessModel(),
-        tools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
-        parts: [{ type: 'text', text: review ? buildReviewPrompt(input.task) : firstPrompt }],
+        disabledTools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
       });
       if (aborted) {
         return { status: 'failed', error: 'opencode session cancelled', summary: 'Cancelled OpenCode session task' };
       }
       // The SSE stream can lag the HTTP response by a beat; race a bounded
       // grace period against sessionErrorSignal so a late `session.error`
-      // still overrides a falsely-successful `prompt()` resolution.
+      // still overrides a falsely-successful `runTurn()` resolution.
       const late = await Promise.race([
         sessionErrorSignal.then((message) => ({ message })),
         sleep(SESSION_ERROR_GRACE_MS).then(() => undefined),
@@ -488,8 +474,8 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
       if (late) {
         return { status: 'failed', error: late.message, summary: 'OpenCode server task failed' };
       }
-      if (review) return reviewResult(responseText(response), input.workspacePath);
-      const question = extractInputRequest(responseText(response));
+      if (review) return reviewResult(result.text, input.workspacePath);
+      const question = extractInputRequest(result.text);
       if (question) {
         return {
           status: 'awaiting_input',
@@ -514,11 +500,15 @@ async function startOpenCodeServerTaskWithClient(input: StartOpenCodeServerTaskW
     sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
       const trimmed = message.trim();
       if (!trimmed) return;
-      await promptWithStallRecovery({
+      await runTurnWithStallRecovery(trimmed, {
         agent: input.runner.agent,
         model: headlessModel(),
-        tools: HEADLESS_DISABLED_TOOLS,
-        parts: [{ type: 'text', text: trimmed }],
+        // Deliberately omit the system prompt on follow-ups: the session
+        // already has full context from the first turn, so resending it is
+        // unnecessary chatter, not a functional requirement (matches the
+        // pre-adapter behaviour exactly).
+        systemPrompt: null,
+        disabledTools: HEADLESS_DISABLED_TOOLS,
       });
     },
     abort,

@@ -1,0 +1,42 @@
+data: {"id":"evt_0e8657a53001ylDAeQhXqYrhSK","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e8657e4c001L10Xlhqv82crar","created":1790605360716,"type":"session.inbox.enqueued","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"inboxID":"msg_0e8657e4b001Svs2cmtyH88R5i","sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","item":{"type":"user","payload":{"text":"In readme.txt there is a line. I want you to append a new line with a secret code word, but I have NOT told you the code word. You must ask me for it before proceeding — use your question/form mechanism. Wait for my answer."},"delivery":"steer"}},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":1,"version":1}}
+
+data: {"id":"evt_0e8657e4e001g4rCojIqD28Evu","created":1790605360718,"type":"session.execution.started","data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8"},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":2,"version":1}}
+
+data: {"id":"evt_0e8657e54001yLeRm0qpOI9HyC","created":1790605360724,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","delta":{"core/environment":"df8613b48b933ce7a01c15dc111ef91d1b13c7be93708c5abf44f6ca85247c04","core/date":"bf08b8486572ab3eef677a3c9ee12468e411ae41a8f4d2fb6cf02a6ca73f1986","core/codemode":"071d8a4709c1e22c3c798c86ce2ac9f6ac314ce40c61b706d90deb9e4b40fb15","core/skill-guidance":"2bdcbef7e86beba800140c686651138c596d51bdbc714492011bad41433e4ded"}},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":3,"version":2}}
+
+data: {"id":"evt_0e8657e55001EeZiHx7oUjKPLq","created":1790605360725,"type":"session.inbox.delivered","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","inboxID":"msg_0e8657e4b001Svs2cmtyH88R5i"},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":4,"version":1}}
+
+data: {"id":"evt_0e865842a00134IIeCxlZY0RXV","created":1790605362218,"type":"session.step.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","agent":"orchestrator","model":{"id":"claude-sonnet-5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr","snapshot":"f4342394712973756744920efca1d286d3f07f6e","started":1790605360786},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":5,"version":1}}
+
+data: {"id":"evt_0e865842d001zH6uH1OFujheNp","created":1790605362221,"type":"session.tool.input.started","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr","id":"toolu_019QiWxVnVzRM1zkDYQPA3jw","name":"question"},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":6,"version":1}}
+
+data: {"id":"evt_0e86586df0018ukOyIND0RrVoM","created":1790605362911,"type":"session.tool.input.ended","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr","id":"toolu_019QiWxVnVzRM1zkDYQPA3jw","text":"{\"questions\": [{\"question\":\"What is the secret code word to append to readme.txt?\",\"header\":\"Secret code word\",\"options\":[{\"label\":\"Type your own answer\",\"description\":\"Provide the code word to append\"}]}]}"},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":7,"version":1}}
+
+data: {"id":"evt_0e86586e2001V23llOq1V7vJhu","created":1790605362914,"type":"session.tool.called","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr","id":"toolu_019QiWxVnVzRM1zkDYQPA3jw","input":{"questions":[{"question":"What is the secret code word to append to readme.txt?","header":"Secret code word","options":[{"label":"Type your own answer","description":"Provide the code word to append"}]}]},"executed":false},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":8,"version":1}}
+
+data: {"id":"evt_0e86586e4001xf4NS9fLAUxCkk","created":1790605362916,"type":"session.step.streamed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr"},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":9,"version":1}}
+
+data: {"id":"evt_0e86586e7002kG32cSVImgDCwe","created":1790605362919,"type":"form.created","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"form":{"id":"frm_0e86586e7001GsKPS3Y4eXO9j6","sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","title":"Questions","metadata":{"kind":"question","tool":{"messageID":"msg_0e8657e57001rbiomgxg0H7cRr","id":"toolu_019QiWxVnVzRM1zkDYQPA3jw"}},"fields":[{"key":"q0","title":"Secret code word","description":"What is the secret code word to append to readme.txt?","type":"string","options":[{"value":"Type your own answer","label":"Type your own answer","description":"Provide the code word to append"}],"custom":true}]}}}
+
+data: {"id":"evt_0e865ad75001sjSlMfU22si8Pl","created":1790605372789,"type":"provider.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{}}
+
+data: {"id":"evt_0e865ad80001x57ZBOTxnrY0w0","created":1790605372800,"type":"model.updated","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0e865c90e001r5NSKE637lBJPV","created":1790605379854,"type":"form.cancelled","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"id":"frm_0e86586e7001GsKPS3Y4eXO9j6","sessionID":"ses_f179a99aeffeD92HBlCapTnTn8"}}
+
+data: {"id":"evt_0e865c90f001KeTYFr5EC2pqzV","created":1790605379855,"type":"session.tool.failed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr","id":"toolu_019QiWxVnVzRM1zkDYQPA3jw","error":{"type":"aborted","message":"The user dismissed this question"},"executed":false},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":10,"version":2}}
+
+data: {"id":"evt_0e865c92e001i8zHhvCjkOK24r","created":1790605379886,"type":"session.step.failed","location":{"directory":"/private/var/folders/rg/c9gdk1994x31x_fmh1jlznx80000gp/T/opencode/oc-spike-sandbox"},"data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","assistantMessageID":"msg_0e8657e57001rbiomgxg0H7cRr","error":{"type":"aborted","message":"Step interrupted"},"rawFinish":"tool_use","cost":0.0024566,"tokens":{"input":2,"output":108,"reasoning":0,"cache":{"read":6863,"write":13507}},"snapshot":"f4342394712973756744920efca1d286d3f07f6e","files":[]},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":11,"version":1}}
+
+data: {"id":"evt_0e865c931001KL9ehvmleZlqkf","created":1790605379889,"type":"session.usage.updated","data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","cost":0.0024566,"tokens":{"input":2,"output":108,"reasoning":0,"cache":{"read":6863,"write":13507}}}}
+
+data: {"id":"evt_0e865c931002zuPwDYTAWGUz0R","created":1790605379889,"type":"session.execution.interrupted","data":{"sessionID":"ses_f179a99aeffeD92HBlCapTnTn8","reason":"shutdown"},"durable":{"aggregateID":"ses_f179a99aeffeD92HBlCapTnTn8","seq":12,"version":1}}
+
+: heartbeat
+

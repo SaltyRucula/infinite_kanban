@@ -90,8 +90,13 @@ test.describe('Copilot SDK Agent', () => {
     });
     await request.post(`${API}/api/tasks/${task.id}/run`);
 
-    // 4. Click task card to open agent panel — verify events stream in
+    // 4. Click task card to open agent panel — verify events stream in.
+    // The Events tab defaults to the "Milestones" view, which collapses raw
+    // thinking/tool-call/file-read noise behind a "N reasoning steps"
+    // affordance; switch to "Everything" to see the full raw stream this
+    // assertion is checking.
     await page.getByRole('heading', { name: title }).click();
+    await page.getByRole('button', { name: 'Everything', exact: true }).click();
     await expect(page.getByText(/Starting|Intent|view|edit|task_complete/i).first())
       .toBeVisible({ timeout: 60_000 });
 
@@ -144,9 +149,12 @@ test.describe('Copilot SDK Agent', () => {
     expect(wtDiff.length).toBeGreaterThan(0);
 
     // 7. Open agent panel in UI and verify events rendered.
-    // Review/done tasks default to the Summary tab, so switch to Events first.
+    // Review/done tasks default to the Summary tab, so switch to Events first,
+    // then to the "Everything" view to see the full raw stream (Milestones
+    // is the default and collapses detail events behind an expandable group).
     await page.getByRole('heading', { name: title }).click();
     await page.getByRole('button', { name: 'Events', exact: true }).click();
+    await page.getByRole('button', { name: 'Everything', exact: true }).click();
     await expect(page.getByText(/worktree created|task_complete/i).first())
       .toBeVisible({ timeout: 5_000 });
 
