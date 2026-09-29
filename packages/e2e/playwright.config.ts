@@ -15,6 +15,7 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL: `http://localhost:${TEST_CLIENT_PORT}`,
+    extraHTTPHeaders: { Authorization: 'Bearer e2e-full-scope-token' },
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

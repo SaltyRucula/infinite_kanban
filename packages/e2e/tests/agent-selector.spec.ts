@@ -156,7 +156,7 @@ test.describe('Worker Selection in TaskDialog', () => {
       },
     });
 
-    expect(response.status()).toBe(201);
+    expect(response.status()).toBe(200);
     expect((await response.json()).worker.status).toBe('online');
   });
 
