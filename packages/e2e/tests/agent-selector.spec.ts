@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { API, fillLocalPath, waitForBoard } from './helpers';
+import { API, fillLocalPath, waitForBoard, workerRegistrationHeaders } from './helpers';
 
 const AGENT_LABELS: Record<string, string> = {
   copilot: 'Copilot',
@@ -145,8 +145,24 @@ test.describe('Worker Selection in TaskDialog', () => {
     await expect(dialog.getByText(/No online registered workers currently support/)).toBeVisible();
   });
 
+  test('registers workers with the test-only credential scoped to workers:register', async ({ request }) => {
+    const response = await request.post(`${API}/api/workers/register`, {
+      headers: workerRegistrationHeaders,
+      data: {
+        name: `scoped-registration-worker-${Date.now()}`,
+        agentTypes: ['opencode'],
+        maxConcurrentTasks: 1,
+        hostname: 'scoped-registration-host',
+      },
+    });
+
+    expect(response.status()).toBe(200);
+    expect((await response.json()).worker.status).toBe('online');
+  });
+
   test('lists matching online worker and assigns it on task creation with no path required', async ({ page, request }) => {
     const regRes = await request.post(`${API}/api/workers/register`, {
+      headers: workerRegistrationHeaders,
       data: {
         name: 'OpencodeWorker-1',
         agentTypes: ['opencode'],

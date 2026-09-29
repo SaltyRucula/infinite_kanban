@@ -8,6 +8,8 @@ import path from 'path';
 const TEST_SERVER_PORT = process.env.E2E_SERVER_PORT ?? '3002';
 export const API = `http://localhost:${TEST_SERVER_PORT}`;
 const DEFAULT_TEST_REPO_NAME = 'test-repo';
+export const E2E_WORKER_REGISTRATION_TOKEN = 'e2e-worker-registration-token';
+export const workerRegistrationHeaders = { Authorization: `Bearer ${E2E_WORKER_REGISTRATION_TOKEN}` };
 
 type PrepareRepoOptions = {
   branch?: string;
@@ -154,6 +156,7 @@ export async function startInProcessRun(
 /** Register a worker via the worker API and return its id and token. */
 export async function registerWorker(request: any, name: string): Promise<{ id: string; token: string }> {
   const res = await request.post(`${API}/api/workers/register`, {
+    headers: workerRegistrationHeaders,
     data: { name, agentTypes: ['opencode'], maxConcurrentTasks: 1, hostname: `${name}-host` },
   });
   expect(res.ok()).toBeTruthy();

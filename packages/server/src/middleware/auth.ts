@@ -73,7 +73,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // A service-token-only deployment keeps the existing browser/API surface
   // behind its outer access boundary, but requires scoped auth for the narrow
   // orchestration facade and agent refresh mutation.
-  if (serviceCredentials.length === 0 || !scope) { next(); return; }
+  if (!scope || (serviceCredentials.length === 0 && scope !== 'workers:register')) { next(); return; }
   const auth = authenticateToken(token);
   if (!auth.authenticated) { res.status(401).json({ error: 'unauthorized' }); return; }
   if (!auth.scopes.includes(scope)) { res.status(403).json({ error: 'forbidden' }); return; }
