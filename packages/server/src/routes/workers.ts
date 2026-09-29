@@ -19,6 +19,42 @@ import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWork
 
 const COMMAND_POLL_LIMIT_DEFAULT = 20;
 const COMMAND_POLL_LIMIT_MAX = 100;
+const WORKER_EVENT_RATE_LIMIT_MAX = 100;
+const WORKER_EVENT_RATE_LIMIT_WINDOW_MS = 60_000;
+const VALID_AGENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set([
+  'thinking', 'tool_call', 'file_read', 'file_write', 'file_edit', 'command',
+  'command_output', 'output', 'test_result', 'error', 'complete',
+]);
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validWorkerEventMetadata(value: unknown): value is NonNullable<AgentEvent['metadata']> {
+  if (value === undefined) return true;
+  if (!isPlainRecord(value)) return false;
+  const stringKeys = new Set(['file', 'fileEventType', 'language', 'command', 'diff', 'error']);
+  for (const [key, item] of Object.entries(value)) {
+    if (stringKeys.has(key) && typeof item === 'string' && item.length <= MAX_DESCRIPTION_LENGTH) continue;
+    if (key === 'agentType' && isValidAgentType(item)) continue;
+    if (key === 'duration' && typeof item === 'number' && Number.isFinite(item) && item >= 0) continue;
+    if ((key === 'clarification_request' || key === 'clarification_answer') && isPlainRecord(item)) continue;
+    return false;
+  }
+  return true;
+}
+
+function workerEventRateLimited(timestamps: Map<string, { startedAt: number; count: number }>, workerId: string): boolean {
+  const now = Date.now();
+  const current = timestamps.get(workerId);
+  if (!current || now - current.startedAt >= WORKER_EVENT_RATE_LIMIT_WINDOW_MS) {
+    timestamps.set(workerId, { startedAt: now, count: 1 });
+    return false;
+  }
+  if (current.count >= WORKER_EVENT_RATE_LIMIT_MAX) return true;
+  current.count += 1;
+  return false;
+}
 
 function publicWorker(worker: Worker & { readonly tokenHash?: string; readonly tokenIssuedAt?: number }): Worker {
   const { tokenHash: _tokenHash, tokenIssuedAt: _tokenIssuedAt, ...result } = worker;
@@ -120,6 +156,7 @@ async function settleReviewRun(
 
 export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository): Router {
   const router = Router();
+  const workerEventTimestamps = new Map<string, { startedAt: number; count: number }>();
   const taskId = (req: Request): string => {
     const parameter = req.params.taskId;
     return typeof parameter === 'string' ? parameter : parameter[0];
@@ -372,17 +409,23 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(409).json({ error: 'task claim is invalid' });
       return;
     }
-    const event = req.body as AgentEvent;
+    if (workerEventRateLimited(workerEventTimestamps, worker.id)) {
+      res.status(429).json({ error: 'worker event rate limit exceeded' });
+      return;
+    }
+    const submittedEvent = req.body as AgentEvent;
     if (
-      event.taskId !== task.id
-      || typeof event.id !== 'string'
-      || typeof event.type !== 'string'
-      || typeof event.content !== 'string'
-      || typeof event.timestamp !== 'number'
+      submittedEvent.taskId !== task.id
+      || !VALID_AGENT_EVENT_TYPES.has(submittedEvent.type)
+      || typeof submittedEvent.content !== 'string'
+      || submittedEvent.content.length > MAX_DESCRIPTION_LENGTH
+      || !Number.isFinite(submittedEvent.timestamp)
+      || !validWorkerEventMetadata(submittedEvent.metadata)
     ) {
       res.status(400).json({ error: 'invalid agent event' });
       return;
     }
+    const event: AgentEvent = { ...submittedEvent, id: uuid() };
     await tasks.insertEvent(event);
     const renewed = await tasks.renewWorkerLease(task.id, worker.id, claim, Date.now(), WORKER_TASK_LEASE_MS);
     if (!renewed) {
