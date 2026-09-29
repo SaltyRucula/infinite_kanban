@@ -33,6 +33,7 @@ function requiredScope(req: Request): ServiceScope | undefined {
   if (p === '/health') return undefined;
   if (p.startsWith('/workers/me')) return undefined;
   if (p === '/workers/register' && method === 'POST') return 'workers:register';
+  if (p === '/workers/enrollment-codes' && method === 'POST') return 'workers:manage';
   if (/^\/workers\/[^/]+(?:\/status)?$/.test(p) && (method === 'PATCH' || method === 'DELETE')) return 'workers:manage';
   if (p === '/workers') return undefined;
   if (p === '/agents') return undefined;
@@ -55,8 +56,16 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const scope = requiredScope(req);
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+  const enrollmentRegistration = req.path === '/workers/register'
+    && req.method === 'POST'
+    && typeof req.body?.enrollmentCode === 'string'
+    && req.body.enrollmentCode.trim().length > 0;
 
   if (req.path.startsWith('/workers/me')) { next(); return; }
+
+  // An enrollment code is the credential for a newly bootstrapped worker.
+  // The route validates and atomically consumes it before registering.
+  if (enrollmentRegistration) { next(); return; }
 
   // API_KEY retains the legacy "protect every API route" behavior.
   if (hasLegacyKey) {
@@ -66,6 +75,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
       res.status(403).json({ error: 'forbidden' });
       return;
     }
+    res.locals.principal = { id: auth.legacy ? 'legacy-admin' : `service:${digestToken(token ?? '')}` };
     next();
     return;
   }
@@ -77,7 +87,12 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const auth = authenticateToken(token);
   if (!auth.authenticated) { res.status(401).json({ error: 'unauthorized' }); return; }
   if (!auth.scopes.includes(scope)) { res.status(403).json({ error: 'forbidden' }); return; }
+  res.locals.principal = { id: `service:${digestToken(token ?? '')}` };
   next();
+}
+
+function digestToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 export function isValidToken(token: string | undefined): boolean {

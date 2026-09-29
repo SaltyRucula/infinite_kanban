@@ -9,6 +9,7 @@ export interface WorkerRegistration {
   readonly hostname?: string;
   readonly version?: string;
   readonly registeredAt: number;
+  readonly ownerId?: string;
 }
 
 export type WorkerTaskCommand = {

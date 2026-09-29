@@ -30,6 +30,7 @@ export interface Worker {
   registeredAt: number;
   lastHeartbeatAt: number;
   updatedAt: number;
+  ownerId?: string;
 }
 
 export interface Task {

@@ -33,6 +33,7 @@ import { createDurableRunRequestedCallback, dispatchPendingRuns } from './run-di
 import { SqliteWorkerRepository } from './repositories/sqlite-workers.js';
 import { PostgresWorkerRepository } from './repositories/postgres-workers.js';
 import type { WorkerRepository } from './repositories/worker-types.js';
+import type { EnrollmentCodeRepository } from './repositories/enrollment-code-types.js';
 import { createWorkersRouter } from './routes/workers.js';
 import { broadcastTaskUpdate, broadcastWorkerUpdate } from './routes/helpers.js';
 import { WORKER_HEARTBEAT_INTERVAL_MS, WORKER_STALE_AFTER_MS } from '@ai-agent-board/shared/constants.js';
@@ -68,6 +69,7 @@ let groupRepo: TaskGroupRepository;
 let projectRepo: ProjectRepository;
 let attachmentStore: AttachmentStore;
 let workerRepo: WorkerRepository;
+let enrollmentCodeRepo: EnrollmentCodeRepository;
 let cleanupDb: () => void;
 let jiraImportScheduler: JiraImportScheduler | undefined;
 
@@ -86,6 +88,8 @@ const agentManager = new AgentManager();
     await initPostgresDatabase(pool);
     taskRepo = new PostgresTaskRepository(pool);
     workerRepo = new PostgresWorkerRepository(pool);
+    const { PostgresEnrollmentCodeRepository } = await import('./repositories/postgres-enrollment-codes.js');
+    enrollmentCodeRepo = new PostgresEnrollmentCodeRepository(pool);
     const { PostgresProjectRepository } = await import('./repositories/postgres-projects.js');
     projectRepo = new PostgresProjectRepository(pool);
     const { PostgresTemplateRepository } = await import('./repositories/postgres-templates.js');
@@ -101,6 +105,8 @@ const agentManager = new AgentManager();
     const db = initDatabase();
     taskRepo = new SqliteTaskRepository(db);
     workerRepo = new SqliteWorkerRepository(db);
+    const { SqliteEnrollmentCodeRepository } = await import('./repositories/sqlite-enrollment-codes.js');
+    enrollmentCodeRepo = new SqliteEnrollmentCodeRepository(db);
     const { SqliteProjectRepository } = await import('./repositories/sqlite-projects.js');
     projectRepo = new SqliteProjectRepository(db);
     const { SqliteTemplateRepository } = await import('./repositories/sqlite-templates.js');
@@ -150,7 +156,7 @@ const agentManager = new AgentManager();
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo));
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));
   app.use('/api/tasks', createGitRouter(taskRepo, agentManager));
-  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo));
+  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo, enrollmentCodeRepo));
   app.post('/api/tasks/:id/assign', async (req, res, next) => {
     try {
       const task = await taskRepo.getById(String(req.params.id));
