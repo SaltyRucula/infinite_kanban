@@ -3,7 +3,74 @@ import test from 'node:test';
 import { MAX_DESCRIPTION_LENGTH } from '@ai-agent-board/shared/constants.js';
 import { completeTaskFailure, fetchAssignments, registerTaskSession, requestWithLoggedFailure } from '../src/api.js';
 import { parseWorkspaceSettings } from '../src/local-runner.js';
-import { truncateQuestion } from '../src/cli.js';
+import { buildWorkspaceConfig, resolveRunnerProfile, truncateQuestion } from '../src/cli.js';
+
+// Issue #25: `register`/`start` must write a complete `runner` block into
+// workspace.json so neither runner profile needs a hand-edit. resolveRunnerProfile
+// is the pure resolver behind that: it turns the optional --runner/--agent flags
+// into a RunnerProfile that must round-trip through parseWorkspaceSettings.
+test('resolveRunnerProfile defaults to the agent-sdk runner when no flags are given', () => {
+  assert.deepEqual(resolveRunnerProfile(undefined, undefined), { kind: 'agent-sdk' });
+});
+
+test('resolveRunnerProfile builds an opencode-server runner with the default "build" agent', () => {
+  assert.deepEqual(resolveRunnerProfile('opencode-server', undefined), {
+    kind: 'opencode-server',
+    agent: 'build',
+  });
+});
+
+test('resolveRunnerProfile honours an explicit --agent for the opencode-server runner', () => {
+  assert.deepEqual(resolveRunnerProfile('opencode-server', 'plan'), {
+    kind: 'opencode-server',
+    agent: 'plan',
+  });
+});
+
+test('resolveRunnerProfile rejects an unsupported runner kind', () => {
+  assert.throws(
+    () => resolveRunnerProfile('shell', undefined),
+    /runner must be either "agent-sdk" or "opencode-server"/,
+  );
+});
+
+// The block resolveRunnerProfile produces must be exactly what the runtime
+// loader accepts, so a written workspace.json never needs a hand-edit.
+test('resolveRunnerProfile output round-trips through parseWorkspaceSettings for both profiles', () => {
+  const sdk = resolveRunnerProfile(undefined, undefined);
+  assert.deepEqual(
+    parseWorkspaceSettings({ workspacePath: '/tmp/workspace', runner: sdk }).runner,
+    sdk,
+  );
+  const server = resolveRunnerProfile('opencode-server', 'build');
+  assert.deepEqual(
+    parseWorkspaceSettings({ workspacePath: '/tmp/workspace', runner: server }).runner,
+    server,
+  );
+});
+
+// Issue #25 core: the persisted workspace.json must carry the runner block so
+// the opencode-server profile works with no manual JSON editing. Previously
+// register wrote only { workspacePath }.
+test('buildWorkspaceConfig persists both workspacePath and the resolved runner block', () => {
+  const config = buildWorkspaceConfig('/home/me/dev', { kind: 'opencode-server', agent: 'build' });
+  assert.deepEqual(config, {
+    workspacePath: '/home/me/dev',
+    runner: { kind: 'opencode-server', agent: 'build' },
+  });
+});
+
+test('buildWorkspaceConfig output is accepted by parseWorkspaceSettings without a hand-edit', () => {
+  for (const runner of [
+    resolveRunnerProfile(undefined, undefined),
+    resolveRunnerProfile('opencode-server', 'plan'),
+  ] as const) {
+    const config = buildWorkspaceConfig('/tmp/workspace', runner);
+    const parsed = parseWorkspaceSettings(config);
+    assert.equal(parsed.workspacePath, '/tmp/workspace');
+    assert.deepEqual(parsed.runner, runner);
+  }
+});
 
 test('requestWithLoggedFailure returns undefined and logs the API failure', async () => {
   const errors: string[] = [];
