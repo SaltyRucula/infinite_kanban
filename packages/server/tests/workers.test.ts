@@ -7,6 +7,7 @@ import { createWorkersRouter } from '../src/routes/workers.js';
 import type { TaskRepository } from '../src/repositories/types.js';
 import type { WorkerRepository } from '../src/repositories/worker-types.js';
 import type { AgentEvent, Task, Worker } from '../src/types.js';
+import { MAX_DESCRIPTION_LENGTH } from '@ai-agent-board/shared/constants.js';
 
 type QueuedWorkerCommand = {
   readonly id: string;
@@ -53,6 +54,7 @@ const task: Task = {
 
 class FakeTaskRepository implements TaskRepository {
   private claimed = false;
+  readonly events: AgentEvent[] = [];
 
   async getAll(): Promise<Task[]> { return []; }
   async getById(): Promise<Task | undefined> { return task; }
@@ -72,10 +74,11 @@ class FakeTaskRepository implements TaskRepository {
   async parkWorkerTaskForClarification(): Promise<Task | undefined> { return this.claimed ? task : undefined; }
   async getExpiredWorkerTasks(): Promise<Task[]> { return []; }
   async getAssignedWorkerTasks(): Promise<Task[]> { return []; }
+  async revokeWorkerAssignments(): Promise<Task[]> { return []; }
   async update(): Promise<Task | undefined> { return undefined; }
   async delete(): Promise<boolean> { return false; }
   async count(): Promise<number> { return 0; }
-  async insertEvent(_event: AgentEvent): Promise<void> {}
+  async insertEvent(event: AgentEvent): Promise<void> { this.events.push(event); }
   async getEventsByTaskId(): Promise<AgentEvent[]> { return []; }
   async deleteEventsByTaskId(): Promise<void> {}
   async getArchivedTasks(): Promise<Task[]> { return []; }
@@ -123,24 +126,122 @@ class FakeWorkerRepository implements WorkerRepository {
   }
 }
 
-async function withServer(callback: (baseUrl: string) => Promise<void>): Promise<void> {
+async function withServer(callback: (baseUrl: string, taskRepo: FakeTaskRepository) => Promise<void>): Promise<void> {
   const app = express();
+  const taskRepo = new FakeTaskRepository();
   app.use(express.json());
-  app.use('/api/workers', createWorkersRouter(new FakeTaskRepository(), new FakeWorkerRepository()));
+  app.use('/api/workers', createWorkersRouter(taskRepo, new FakeWorkerRepository()));
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   try {
-    await callback(`http://127.0.0.1:${address.port}`);
+    await callback(`http://127.0.0.1:${address.port}`, taskRepo);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
 
+async function claimEventHeaders(baseUrl: string): Promise<Record<string, string>> {
+  const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/claim`, {
+    method: 'POST',
+    headers: workerHeaders(),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json() as { claimToken: string };
+  return { ...workerHeaders({ 'x-worker-claim': body.claimToken }), 'content-type': 'application/json' };
+}
+
+function workerEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'worker-chosen-id',
+    taskId: 'task-1',
+    type: 'output',
+    content: 'event content',
+    timestamp: 1,
+    ...overrides,
+  };
+}
+
 function workerHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return { authorization: 'Bearer worker-token', ...extra };
 }
+
+test('worker event ingress replaces a worker-chosen event id with a server id', async () => {
+  await withServer(async (baseUrl, taskRepo) => {
+    const headers = await claimEventHeaders(baseUrl);
+    const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(workerEvent()),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(taskRepo.events.length, 1);
+    assert.notEqual(taskRepo.events[0]?.id, 'worker-chosen-id');
+    assert.match(taskRepo.events[0]?.id ?? '', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
+});
+
+test('worker event ingress rejects malformed event types and timestamps', async () => {
+  await withServer(async (baseUrl, taskRepo) => {
+    const headers = await claimEventHeaders(baseUrl);
+    for (const event of [
+      workerEvent({ type: 'made_up_event' }),
+      workerEvent({ timestamp: 'not-a-timestamp' }),
+    ]) {
+      const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+        method: 'POST', headers, body: JSON.stringify(event),
+      });
+      assert.equal(response.status, 400);
+    }
+    assert.equal(taskRepo.events.length, 0);
+  });
+});
+
+test('worker event ingress rejects oversized content and metadata outside its allowlist', async () => {
+  await withServer(async (baseUrl, taskRepo) => {
+    const headers = await claimEventHeaders(baseUrl);
+    for (const event of [
+      workerEvent({ content: 'x'.repeat(MAX_DESCRIPTION_LENGTH + 1) }),
+      workerEvent({ metadata: { unexpected: 'value' } }),
+    ]) {
+      const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+        method: 'POST', headers, body: JSON.stringify(event),
+      });
+      assert.equal(response.status, 400);
+    }
+    assert.equal(taskRepo.events.length, 0);
+  });
+});
+
+test('worker event ingress retains only approved metadata for valid events', async () => {
+  await withServer(async (baseUrl, taskRepo) => {
+    const headers = await claimEventHeaders(baseUrl);
+    const metadata = { file: 'src/route.ts', command: 'npm test', duration: 12 };
+    const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+      method: 'POST', headers, body: JSON.stringify(workerEvent({ metadata })),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(taskRepo.events[0]?.metadata, metadata);
+  });
+});
+
+test('worker event ingress rate limits a worker after 100 events in one minute', async () => {
+  await withServer(async (baseUrl) => {
+    const headers = await claimEventHeaders(baseUrl);
+    for (let index = 0; index < 100; index += 1) {
+      const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+        method: 'POST', headers, body: JSON.stringify(workerEvent({ id: `worker-${index}` })),
+      });
+      assert.equal(response.status, 200);
+    }
+    const blocked = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+      method: 'POST', headers, body: JSON.stringify(workerEvent({ id: 'worker-over-limit' })),
+    });
+    assert.equal(blocked.status, 429);
+  });
+});
 
 test('worker assignments and claim responses contain only story handoff fields', async () => {
   await withServer(async (baseUrl) => {
