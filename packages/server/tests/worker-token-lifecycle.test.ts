@@ -29,7 +29,8 @@ function createDatabase(): Database.Database {
       last_heartbeat_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       disabled_at INTEGER,
-      token_issued_at INTEGER NOT NULL
+      token_issued_at INTEGER NOT NULL,
+      owner_id TEXT
     );
     CREATE TABLE worker_task_sessions (
       task_id TEXT NOT NULL,
@@ -64,7 +65,7 @@ function createDatabase(): Database.Database {
     );
     CREATE TABLE events (
       id TEXT PRIMARY KEY, task_id TEXT NOT NULL, type TEXT NOT NULL, content TEXT NOT NULL,
-      timestamp INTEGER NOT NULL, metadata TEXT
+      timestamp INTEGER NOT NULL, metadata TEXT, importance TEXT
     );
   `);
   return db;

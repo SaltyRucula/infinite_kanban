@@ -14,6 +14,7 @@ import {
 import type { AgentEvent, AgentType, Task, Worker } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { WorkerRegistration, WorkerRepository } from '../repositories/worker-types.js';
+import type { EnrollmentCodeRepository } from '../repositories/enrollment-code-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
 import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
@@ -21,6 +22,7 @@ const COMMAND_POLL_LIMIT_DEFAULT = 20;
 const COMMAND_POLL_LIMIT_MAX = 100;
 const WORKER_EVENT_RATE_LIMIT_MAX = 100;
 const WORKER_EVENT_RATE_LIMIT_WINDOW_MS = 60_000;
+const ENROLLMENT_CODE_TTL_MS = 15 * 60 * 1000;
 const VALID_AGENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set([
   'thinking', 'tool_call', 'file_read', 'file_write', 'file_edit', 'command',
   'command_output', 'output', 'test_result', 'error', 'complete',
@@ -154,7 +156,7 @@ async function settleReviewRun(
   return await tasks.update(completed.id, updates) ?? completed;
 }
 
-export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository): Router {
+export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository, enrollmentCodes?: EnrollmentCodeRepository): Router {
   const router = Router();
   const workerEventTimestamps = new Map<string, { startedAt: number; count: number }>();
   const taskId = (req: Request): string => {
@@ -171,6 +173,30 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       broadcastTaskUpdate(task);
     }
   };
+
+  router.post('/enrollment-codes', asyncHandler(async (req: Request, res: Response) => {
+    const ownerId = res.locals.principal?.id;
+    if (!ownerId || !enrollmentCodes) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const projectId = req.body.projectId;
+    if (projectId !== undefined && (typeof projectId !== 'string' || !projectId.trim())) {
+      res.status(400).json({ error: 'projectId must be a non-empty string when provided' });
+      return;
+    }
+    const now = Date.now();
+    const credentials = tokenHash();
+    const expiresAt = now + ENROLLMENT_CODE_TTL_MS;
+    await enrollmentCodes.create({
+      codeHash: credentials.hash,
+      ownerId,
+      ...(typeof projectId === 'string' ? { projectId: projectId.trim() } : {}),
+      expiresAt,
+      createdAt: now,
+    });
+    res.status(201).json({ code: credentials.raw, expiresAt });
+  }));
 
   router.post('/register', asyncHandler(async (req: Request, res: Response) => {
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
@@ -197,6 +223,14 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       return;
     }
 
+    const enrollmentCode = typeof req.body.enrollmentCode === 'string' ? req.body.enrollmentCode.trim() : '';
+    const enrollment = enrollmentCode && enrollmentCodes
+      ? await enrollmentCodes.consume(crypto.createHash('sha256').update(enrollmentCode).digest('hex'), Date.now())
+      : undefined;
+    if (enrollmentCode && !enrollment) {
+      res.status(401).json({ error: 'invalid or expired enrollment code' });
+      return;
+    }
     const now = Date.now();
     const credentials = tokenHash();
     const registration: WorkerRegistration = {
@@ -206,6 +240,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       agentTypes: agentTypes as AgentType[],
       maxConcurrentTasks,
       registeredAt: now,
+      ...(enrollment ? { ownerId: enrollment.ownerId } : {}),
       ...(req.body.hostname ? { hostname: req.body.hostname } : {}),
       ...(req.body.version ? { version: req.body.version } : {}),
     };

@@ -210,15 +210,30 @@ function migrate(db: Database.Database): void {
       last_heartbeat_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       disabled_at INTEGER,
-      token_issued_at INTEGER
+      token_issued_at INTEGER,
+      owner_id TEXT
     )
   `);
   const workerCols = db.pragma('table_info(workers)') as { name: string }[];
   if (!workerCols.some((column) => column.name === 'token_issued_at')) {
     db.exec(`ALTER TABLE workers ADD COLUMN token_issued_at INTEGER`);
   }
+  if (!workerCols.some((column) => column.name === 'owner_id')) {
+    db.exec(`ALTER TABLE workers ADD COLUMN owner_id TEXT`);
+  }
   db.exec(`UPDATE workers SET token_issued_at = registered_at WHERE token_issued_at IS NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_owner_id ON workers(owner_id)`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS enrollment_codes (
+      code_hash TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      project_id TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_enrollment_codes_expiry ON enrollment_codes(expires_at)`);
   db.exec(`UPDATE workers SET agent_types_json = '["opencode"]'`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS worker_task_sessions (
@@ -625,7 +640,8 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       last_heartbeat_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
       disabled_at BIGINT,
-      token_issued_at BIGINT
+      token_issued_at BIGINT,
+      owner_id TEXT
     )
   `);
   const { rows: workerColumnRows } = await pool.query(`
@@ -635,8 +651,22 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   if (!workerColumnRows.some((row: { column_name: string }) => row.column_name === 'token_issued_at')) {
     await pool.query('ALTER TABLE workers ADD COLUMN token_issued_at BIGINT');
   }
+  if (!workerColumnRows.some((row: { column_name: string }) => row.column_name === 'owner_id')) {
+    await pool.query('ALTER TABLE workers ADD COLUMN owner_id TEXT');
+  }
   await pool.query('UPDATE workers SET token_issued_at = registered_at WHERE token_issued_at IS NULL');
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workers_owner_id ON workers(owner_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS enrollment_codes (
+      code_hash TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      project_id TEXT,
+      expires_at BIGINT NOT NULL,
+      created_at BIGINT NOT NULL
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_enrollment_codes_expiry ON enrollment_codes(expires_at)`);
   await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]'`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS worker_task_sessions (
