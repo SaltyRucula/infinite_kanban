@@ -209,9 +209,15 @@ function migrate(db: Database.Database): void {
       registered_at INTEGER NOT NULL,
       last_heartbeat_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      disabled_at INTEGER
+      disabled_at INTEGER,
+      token_issued_at INTEGER
     )
   `);
+  const workerCols = db.pragma('table_info(workers)') as { name: string }[];
+  if (!workerCols.some((column) => column.name === 'token_issued_at')) {
+    db.exec(`ALTER TABLE workers ADD COLUMN token_issued_at INTEGER`);
+  }
+  db.exec(`UPDATE workers SET token_issued_at = registered_at WHERE token_issued_at IS NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
   db.exec(`UPDATE workers SET agent_types_json = '["opencode"]'`);
   db.exec(`
@@ -618,9 +624,18 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       registered_at BIGINT NOT NULL,
       last_heartbeat_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
-      disabled_at BIGINT
+      disabled_at BIGINT,
+      token_issued_at BIGINT
     )
   `);
+  const { rows: workerColumnRows } = await pool.query(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'workers' AND table_schema = current_schema()
+  `);
+  if (!workerColumnRows.some((row: { column_name: string }) => row.column_name === 'token_issued_at')) {
+    await pool.query('ALTER TABLE workers ADD COLUMN token_issued_at BIGINT');
+  }
+  await pool.query('UPDATE workers SET token_issued_at = registered_at WHERE token_issued_at IS NULL');
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
   await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]'`);
   await pool.query(`

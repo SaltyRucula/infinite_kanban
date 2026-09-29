@@ -157,7 +157,11 @@ const agentManager = new AgentManager();
       if (!task) { res.status(404).json({ error: 'task not found' }); return; }
       const workerId = req.body.workerId ?? req.body.assignedWorkerId ?? null;
       if (workerId !== null && typeof workerId !== 'string') { res.status(400).json({ error: 'workerId must be a string or null' }); return; }
-      if (workerId !== null && !await workerRepo.getById(workerId)) { res.status(404).json({ error: 'worker not found' }); return; }
+      if (workerId !== null) {
+        const worker = await workerRepo.getById(workerId);
+        if (!worker) { res.status(404).json({ error: 'worker not found' }); return; }
+        if (worker.status === 'disabled') { res.status(409).json({ error: 'worker is disabled' }); return; }
+      }
       if (task.agentStatus === 'planning' || task.agentStatus === 'executing') { res.status(409).json({ error: 'cannot assign a running task' }); return; }
       const updated = await taskRepo.assignToWorker(task.id, workerId);
       if (!updated) { res.status(409).json({ error: 'task is already claimed or not eligible' }); return; }

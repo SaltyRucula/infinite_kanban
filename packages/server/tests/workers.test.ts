@@ -25,9 +25,9 @@ const worker: Worker = {
   status: 'online',
   agentTypes: ['codex'],
   maxConcurrentTasks: 1,
-  registeredAt: 1,
-  lastHeartbeatAt: 1,
-  updatedAt: 1,
+  registeredAt: Date.now(),
+  lastHeartbeatAt: Date.now(),
+  updatedAt: Date.now(),
 };
 
 const task: Task = {
@@ -92,6 +92,9 @@ class FakeWorkerRepository implements WorkerRepository {
     return { ...worker, tokenHash: crypto.createHash('sha256').update('worker-token').digest('hex') };
   }
   async list(): Promise<Worker[]> { return [worker]; }
+  async setStatus(): Promise<Worker> { return worker; }
+  async delete(): Promise<boolean> { return true; }
+  async rotateToken(): Promise<Worker> { return worker; }
   async markOffline(): Promise<Worker[]> { return []; }
   async registerTaskSession(taskId: string, sessionId: string, baseUrl: string, updatedAt: number): Promise<void> {
     this.sessions.push({ taskId, sessionId, baseUrl, updatedAt });

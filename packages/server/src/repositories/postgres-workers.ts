@@ -8,7 +8,7 @@ import type {
 } from './worker-types.js';
 import { coerceAgentType } from '@ai-agent-board/shared/constants.js';
 
-interface WorkerRow { id: string; name: string; token_hash: string; status: Worker['status']; hostname: string | null; version: string | null; agent_types_json: string; max_concurrent_tasks: number; registered_at: string; last_heartbeat_at: string; updated_at: string; disabled_at: string | null }
+interface WorkerRow { id: string; name: string; token_hash: string; status: Worker['status']; hostname: string | null; version: string | null; agent_types_json: string; max_concurrent_tasks: number; registered_at: string; last_heartbeat_at: string; updated_at: string; disabled_at: string | null; token_issued_at?: string | null }
 interface WorkerTaskSessionRow { session_id: string; base_url: string; updated_at: string }
 interface WorkerTaskCommandRow {
   id: string;
@@ -21,8 +21,8 @@ interface WorkerTaskCommandRow {
   answer: string | null;
 }
 
-function rowToWorker(row: WorkerRow): Worker & { readonly tokenHash: string } {
-  return { id: row.id, name: row.name, status: row.status, agentTypes: (JSON.parse(row.agent_types_json) as unknown[]).map(coerceAgentType), hostname: row.hostname ?? undefined, version: row.version ?? undefined, maxConcurrentTasks: row.max_concurrent_tasks, registeredAt: Number(row.registered_at), lastHeartbeatAt: Number(row.last_heartbeat_at), updatedAt: Number(row.updated_at), tokenHash: row.token_hash };
+function rowToWorker(row: WorkerRow): Worker & { readonly tokenHash: string; readonly tokenIssuedAt: number } {
+  return { id: row.id, name: row.name, status: row.status, agentTypes: (JSON.parse(row.agent_types_json) as unknown[]).map(coerceAgentType), hostname: row.hostname ?? undefined, version: row.version ?? undefined, maxConcurrentTasks: row.max_concurrent_tasks, registeredAt: Number(row.registered_at), lastHeartbeatAt: Number(row.last_heartbeat_at), updatedAt: Number(row.updated_at), tokenHash: row.token_hash, tokenIssuedAt: Number(row.token_issued_at ?? row.registered_at) };
 }
 
 function rowToTaskSession(row: WorkerTaskSessionRow): RegisteredWorkerOpenCodeSession {
@@ -53,7 +53,7 @@ export class PostgresWorkerRepository implements WorkerRepository {
   constructor(private readonly pool: Pool) {}
 
   async register(input: WorkerRegistration): Promise<Worker> {
-    await this.pool.query(`INSERT INTO workers (id,name,token_hash,status,hostname,version,agent_types_json,max_concurrent_tasks,registered_at,last_heartbeat_at,updated_at) VALUES ($1,$2,$3,'online',$4,$5,$6,$7,$8,$8,$8)`, [input.id, input.name, input.tokenHash, input.hostname ?? null, input.version ?? null, JSON.stringify(input.agentTypes), input.maxConcurrentTasks, input.registeredAt]);
+    await this.pool.query(`INSERT INTO workers (id,name,token_hash,status,hostname,version,agent_types_json,max_concurrent_tasks,registered_at,last_heartbeat_at,updated_at,token_issued_at) VALUES ($1,$2,$3,'online',$4,$5,$6,$7,$8,$8,$8,$8)`, [input.id, input.name, input.tokenHash, input.hostname ?? null, input.version ?? null, JSON.stringify(input.agentTypes), input.maxConcurrentTasks, input.registeredAt]);
     return (await this.getById(input.id)) as Worker;
   }
 
@@ -75,6 +75,21 @@ export class PostgresWorkerRepository implements WorkerRepository {
   async list(): Promise<Worker[]> {
     const { rows } = await this.pool.query<WorkerRow>('SELECT * FROM workers ORDER BY name');
     return rows.map(rowToWorker);
+  }
+
+  async setStatus(id: string, status: 'online' | 'disabled', at: number): Promise<Worker | undefined> {
+    await this.pool.query('UPDATE workers SET status=$1, disabled_at=$2, updated_at=$3 WHERE id=$4', [status, status === 'disabled' ? at : null, at, id]);
+    return this.getById(id);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const result = await this.pool.query('DELETE FROM workers WHERE id=$1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async rotateToken(id: string, currentTokenHash: string, nextTokenHash: string, at: number): Promise<Worker | undefined> {
+    const { rows } = await this.pool.query<WorkerRow>('UPDATE workers SET token_hash=$1, token_issued_at=$2, updated_at=$2 WHERE id=$3 AND token_hash=$4 RETURNING *', [nextTokenHash, at, id, currentTokenHash]);
+    return rows[0] ? rowToWorker(rows[0]) : undefined;
   }
 
   async markOffline(cutoff: number, at: number): Promise<Worker[]> {

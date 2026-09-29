@@ -208,7 +208,7 @@ export class SqliteTaskRepository implements TaskRepository {
   async getPendingRuns(staleBefore = Date.now()-30_000) { return (this.db.prepare("SELECT * FROM tasks WHERE assigned_worker_id IS NULL AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < ?) AND agent_status IN ('idle','planning') ORDER BY run_requested_at").all(staleBefore) as TaskRow[]).map(rowToTask); }
 
   async assignToWorker(id: string, workerId: string | null): Promise<Task | undefined> {
-    const result = this.db.prepare(`UPDATE tasks SET assigned_worker_id = ?, worker_claim_token_hash = NULL, worker_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = ? AND worker_claim_token_hash IS NULL AND agent_status IN ('idle','planning')`).run(workerId, id);
+    const result = this.db.prepare(`UPDATE tasks SET assigned_worker_id = ?, worker_claim_token_hash = NULL, worker_claimed_at = NULL, worker_lease_expires_at = NULL WHERE id = ? AND worker_claim_token_hash IS NULL AND agent_status IN ('idle','planning') AND (? IS NULL OR EXISTS (SELECT 1 FROM workers WHERE id = ? AND status <> 'disabled'))`).run(workerId, id, workerId, workerId);
     return result.changes ? this.getById(id) : undefined;
   }
 
@@ -310,6 +310,28 @@ export class SqliteTaskRepository implements TaskRepository {
         agent_status IN ('planning','executing')
         OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
       )`).all(...workerIds) as TaskRow[]).map(rowToTask);
+  }
+
+  async revokeWorkerAssignments(workerId: string, at: number): Promise<Task[]> {
+    return this.db.transaction((id: string, revokedAt: number): Task[] => {
+      const rows = this.db.prepare(`UPDATE tasks SET
+      assigned_worker_id=NULL, run_requested_at=NULL, run_claimed_at=NULL,
+      worker_claim_token_hash=NULL, worker_claimed_at=NULL, worker_lease_expires_at=NULL,
+      agent_status=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'failed' ELSE agent_status END,
+      completed_at=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN ? ELSE completed_at END,
+      summary=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'worker_revoked' ELSE summary END,
+      clarification_request=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_request END,
+      clarification_answer=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_answer END,
+      column_id=CASE WHEN agent_status = 'awaiting_clarification' AND column_id = 'pending' THEN 'in-progress' ELSE column_id END
+      WHERE assigned_worker_id=? RETURNING *`).all(revokedAt, id) as TaskRow[];
+      const clearSessions = this.db.prepare('DELETE FROM worker_task_sessions WHERE task_id=?');
+      const clearCommands = this.db.prepare('DELETE FROM worker_task_commands WHERE task_id=?');
+      for (const row of rows) {
+        clearSessions.run(row.id);
+        clearCommands.run(row.id);
+      }
+      return rows.map(rowToTask);
+    })(workerId, at);
   }
 
   async update(id: string, updates: Partial<Task>): Promise<Task | undefined> {

@@ -445,12 +445,12 @@ function workerResume(task: Task): Pick<WorkerTaskAssignment, 'resume'> {
   return { resume: { sessionId: request.sessionId, question: request.prompt, answer: answer.answer } };
 }
 
-export function broadcastWorkerUpdate(worker: Worker & { readonly tokenHash?: string }): void {
+export function broadcastWorkerUpdate(worker: Worker & { readonly tokenHash?: string; readonly tokenIssuedAt?: number }): void {
   // Strip tokenHash at the broadcast boundary — every connected WebSocket
   // client receives this payload, so callers should never need to remember
   // to sanitize it themselves (unlike the HTTP responses in routes/workers.ts,
   // which build a public view per-request).
-  const { tokenHash: _tokenHash, ...publicWorker } = worker;
+  const { tokenHash: _tokenHash, tokenIssuedAt: _tokenIssuedAt, ...publicWorker } = worker;
   broadcast({ type: 'worker_updated', payload: publicWorker as Worker });
 }
 

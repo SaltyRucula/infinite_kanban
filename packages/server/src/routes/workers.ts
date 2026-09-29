@@ -15,13 +15,13 @@ import type { AgentEvent, AgentType, Task, Worker } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { WorkerRegistration, WorkerRepository } from '../repositories/worker-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
-import { asyncHandler, broadcastTaskUpdate, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
+import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
 const COMMAND_POLL_LIMIT_DEFAULT = 20;
 const COMMAND_POLL_LIMIT_MAX = 100;
 
-function publicWorker(worker: Worker & { readonly tokenHash?: string }): Worker {
-  const { tokenHash: _tokenHash, ...result } = worker;
+function publicWorker(worker: Worker & { readonly tokenHash?: string; readonly tokenIssuedAt?: number }): Worker {
+  const { tokenHash: _tokenHash, tokenIssuedAt: _tokenIssuedAt, ...result } = worker;
   return result;
 }
 
@@ -124,6 +124,16 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     const parameter = req.params.taskId;
     return typeof parameter === 'string' ? parameter : parameter[0];
   };
+  const workerId = (req: Request): string => {
+    const parameter = req.params.id;
+    return typeof parameter === 'string' ? parameter : parameter[0];
+  };
+  const revokeAssignments = async (id: string, at: number): Promise<void> => {
+    const released = await tasks.revokeWorkerAssignments(id, at);
+    for (const task of released) {
+      broadcastTaskUpdate(task);
+    }
+  };
 
   router.post('/register', asyncHandler(async (req: Request, res: Response) => {
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
@@ -172,7 +182,54 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     });
   }));
 
+  router.patch('/:id/status', asyncHandler(async (req: Request, res: Response) => {
+    const status = req.body.status;
+    if (status !== 'online' && status !== 'disabled') {
+      res.status(400).json({ error: 'status must be online or disabled' });
+      return;
+    }
+    const now = Date.now();
+    const id = workerId(req);
+    const updated = await workers.setStatus(id, status, now);
+    if (!updated) {
+      res.status(404).json({ error: 'worker not found' });
+      return;
+    }
+    if (status === 'disabled') await revokeAssignments(id, now);
+    broadcastWorkerUpdate(updated);
+    res.json(publicWorker(updated));
+  }));
+
+  router.delete('/:id', asyncHandler(async (req: Request, res: Response) => {
+    const id = workerId(req);
+    const now = Date.now();
+    const disabled = await workers.setStatus(id, 'disabled', now);
+    if (!disabled) {
+      res.status(404).json({ error: 'worker not found' });
+      return;
+    }
+    await revokeAssignments(id, now);
+    if (!await workers.delete(id)) {
+      throw new Error(`worker ${id} disappeared during deletion`);
+    }
+    broadcastWorkerRemove(id);
+    res.status(204).end();
+  }));
+
   router.use('/me', workerAuth(workers));
+
+  router.post('/me/rotate', asyncHandler(async (_req: Request, res: Response) => {
+    const worker = authenticatedWorker(res);
+    const now = Date.now();
+    const credentials = tokenHash();
+    const updated = await workers.rotateToken(worker.id, worker.tokenHash, credentials.hash, now);
+    if (!updated) {
+      res.status(409).json({ error: 'worker token was rotated concurrently' });
+      return;
+    }
+    broadcastWorkerUpdate(updated);
+    res.json({ worker: publicWorker(updated), token: credentials.raw });
+  }));
 
   router.post('/me/heartbeat', asyncHandler(async (req: Request, res: Response) => {
     const worker = authenticatedWorker(res);

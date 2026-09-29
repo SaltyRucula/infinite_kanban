@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import crypto from 'crypto';
 import type { WorkerRepository } from '../repositories/worker-types.js';
 import type { Worker } from '../types.js';
+import { WORKER_TOKEN_MAX_AGE_MS } from '@ai-agent-board/shared/constants.js';
 
 export interface AuthenticatedWorker extends Worker {
   readonly tokenHash: string;
@@ -19,7 +20,10 @@ export function workerAuth(repo: WorkerRepository) {
     if (!token) { res.status(401).json({ error: 'worker token required' }); return; }
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const worker = await repo.getByTokenHash(tokenHash);
-    if (!worker || worker.status === 'disabled') { res.status(401).json({ error: 'invalid worker token' }); return; }
+    if (!worker || worker.status === 'disabled' || Date.now() - (worker.tokenIssuedAt ?? worker.registeredAt) > WORKER_TOKEN_MAX_AGE_MS) {
+      res.status(401).json({ error: 'invalid or expired worker token' });
+      return;
+    }
     res.locals.worker = worker;
     next();
   };

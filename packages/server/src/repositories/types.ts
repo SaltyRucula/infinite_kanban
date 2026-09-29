@@ -26,6 +26,8 @@ export interface TaskRepository {
   parkWorkerTaskForClarification(id: string, workerId: string, claimTokenHash: string, now: number, clarificationRequest: TaskClarificationRequest): Promise<Task | undefined>;
   getExpiredWorkerTasks(now: number): Promise<Task[]>;
   getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]>;
+  /** Revoke every assignment for a worker without dispatching work locally. */
+  revokeWorkerAssignments(workerId: string, at: number): Promise<Task[]>;
   update(id: string, updates: Partial<Task>): Promise<Task | undefined>;
   delete(id: string): Promise<boolean>;
   count(): Promise<number>;

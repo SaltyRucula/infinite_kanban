@@ -8,7 +8,7 @@ import type {
 } from './worker-types.js';
 import { coerceAgentType } from '@ai-agent-board/shared/constants.js';
 
-interface WorkerRow { id: string; name: string; token_hash: string; status: Worker['status']; hostname: string | null; version: string | null; agent_types_json: string; max_concurrent_tasks: number; registered_at: number; last_heartbeat_at: number; updated_at: number; disabled_at: number | null }
+interface WorkerRow { id: string; name: string; token_hash: string; status: Worker['status']; hostname: string | null; version: string | null; agent_types_json: string; max_concurrent_tasks: number; registered_at: number; last_heartbeat_at: number; updated_at: number; disabled_at: number | null; token_issued_at?: number | null }
 interface WorkerTaskSessionRow { session_id: string; base_url: string; updated_at: number }
 interface WorkerTaskCommandRow {
   id: string;
@@ -21,8 +21,8 @@ interface WorkerTaskCommandRow {
   answer: string | null;
 }
 
-function rowToWorker(row: WorkerRow): Worker & { readonly tokenHash: string } {
-  return { id: row.id, name: row.name, status: row.status, agentTypes: (JSON.parse(row.agent_types_json) as unknown[]).map(coerceAgentType), hostname: row.hostname ?? undefined, version: row.version ?? undefined, maxConcurrentTasks: row.max_concurrent_tasks, registeredAt: row.registered_at, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at, tokenHash: row.token_hash };
+function rowToWorker(row: WorkerRow): Worker & { readonly tokenHash: string; readonly tokenIssuedAt: number } {
+  return { id: row.id, name: row.name, status: row.status, agentTypes: (JSON.parse(row.agent_types_json) as unknown[]).map(coerceAgentType), hostname: row.hostname ?? undefined, version: row.version ?? undefined, maxConcurrentTasks: row.max_concurrent_tasks, registeredAt: row.registered_at, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at, tokenHash: row.token_hash, tokenIssuedAt: row.token_issued_at ?? row.registered_at };
 }
 
 function rowToTaskSession(row: WorkerTaskSessionRow): RegisteredWorkerOpenCodeSession {
@@ -53,7 +53,7 @@ export class SqliteWorkerRepository implements WorkerRepository {
   constructor(private readonly db: Database.Database) {}
 
   async register(input: WorkerRegistration): Promise<Worker> {
-    this.db.prepare(`INSERT INTO workers (id,name,token_hash,status,hostname,version,agent_types_json,max_concurrent_tasks,registered_at,last_heartbeat_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(input.id, input.name, input.tokenHash, 'online', input.hostname ?? null, input.version ?? null, JSON.stringify(input.agentTypes), input.maxConcurrentTasks, input.registeredAt, input.registeredAt, input.registeredAt);
+    this.db.prepare(`INSERT INTO workers (id,name,token_hash,status,hostname,version,agent_types_json,max_concurrent_tasks,registered_at,last_heartbeat_at,updated_at,token_issued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(input.id, input.name, input.tokenHash, 'online', input.hostname ?? null, input.version ?? null, JSON.stringify(input.agentTypes), input.maxConcurrentTasks, input.registeredAt, input.registeredAt, input.registeredAt, input.registeredAt);
     return this.getById(input.id) as Promise<Worker>;
   }
 
@@ -74,6 +74,20 @@ export class SqliteWorkerRepository implements WorkerRepository {
 
   async list(): Promise<Worker[]> {
     return (this.db.prepare('SELECT * FROM workers ORDER BY name').all() as WorkerRow[]).map(rowToWorker);
+  }
+
+  async setStatus(id: string, status: 'online' | 'disabled', at: number): Promise<Worker | undefined> {
+    this.db.prepare('UPDATE workers SET status=?, disabled_at=?, updated_at=? WHERE id=?').run(status, status === 'disabled' ? at : null, at, id);
+    return this.getById(id);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM workers WHERE id=?').run(id).changes > 0;
+  }
+
+  async rotateToken(id: string, currentTokenHash: string, nextTokenHash: string, at: number): Promise<Worker | undefined> {
+    const result = this.db.prepare('UPDATE workers SET token_hash=?, token_issued_at=?, updated_at=? WHERE id=? AND token_hash=?').run(nextTokenHash, at, at, id, currentTokenHash);
+    return result.changes ? this.getById(id) : undefined;
   }
 
   async markOffline(cutoff: number, at: number): Promise<Worker[]> {

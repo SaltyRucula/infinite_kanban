@@ -50,9 +50,9 @@ const worker: Worker = {
   status: 'online',
   agentTypes: ['opencode'],
   maxConcurrentTasks: 1,
-  registeredAt: 1,
-  lastHeartbeatAt: 1,
-  updatedAt: 1,
+  registeredAt: Date.now(),
+  lastHeartbeatAt: Date.now(),
+  updatedAt: Date.now(),
 };
 
 function createTaskRepo(initialTasks: readonly Task[] = []): {
@@ -152,6 +152,9 @@ function createWorkerRepo(): WorkerRepository {
       return hash === expected ? { ...worker, tokenHash: hash } : undefined;
     },
     async list(): Promise<Worker[]> { return [worker]; },
+    async setStatus(): Promise<Worker> { return worker; },
+    async delete(): Promise<boolean> { return true; },
+    async rotateToken(): Promise<Worker> { return worker; },
     async markOffline(): Promise<Worker[]> { return []; },
     async registerTaskSession(): Promise<void> {},
     async getTaskSessions(): Promise<readonly { sessionId: string; baseUrl: string; updatedAt: number }[]> { return []; },
