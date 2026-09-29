@@ -448,7 +448,12 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     // worker's raw summary sitting in Review — visually indistinguishable
     // from a genuine pass. columnId is only a best-effort signal (see the
     // comment above), so this is a defensive warning, not a settlement.
-    if (req.body.status === 'complete' && reviewVerdict === undefined && completed.columnId === 'review') {
+    // Evaluate against the PRE-completion columnId (`task.columnId`, captured
+    // before completeWorkerTask ran), not `completed.columnId`. This branch's
+    // completeWorkerTask unconditionally forces column_id to 'review' on
+    // every successful completion, so checking the post-completion value here
+    // would make this warning fire on 100% of successful non-review runs too.
+    if (req.body.status === 'complete' && reviewVerdict === undefined && task.columnId === 'review') {
       const warning: AgentEvent = {
         id: uuid(),
         taskId: completed.id,

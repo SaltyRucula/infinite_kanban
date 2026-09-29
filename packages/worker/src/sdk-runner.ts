@@ -244,8 +244,13 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
     systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
-      + `${INPUT_REQUEST_INSTRUCTIONS} `
-      + (review ? `${REVIEW_SYSTEM_PROMPT} ` : '')
+      // A review run only ever scans for REVIEW_VERDICT (see reviewResult
+      // below), never for a clarification marker — including
+      // INPUT_REQUEST_INSTRUCTIONS here as well would hand the reviewer two
+      // contradictory "end your response with this final line" instructions.
+      // A reviewer that needs more information should express that as
+      // changes_requested with the question in its findings instead.
+      + (review ? `${REVIEW_SYSTEM_PROMPT} ` : `${INPUT_REQUEST_INSTRUCTIONS} `)
       // On the review path the title is untrusted task text (e.g. Jira
       // import) interpolated into the system prompt itself; neutralize it
       // the same way buildReviewPrompt neutralizes title/description/labels
@@ -269,7 +274,12 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
           if (question) lastDetectedQuestion = question;
           burstText = '';
         }
-        burstText += event.content;
+        // Mirror verdictText's replace handling: a `replace`-style snapshot
+        // resend is the full current text, not a fragment to concatenate.
+        // Appending it onto a prior no-newline fragment could hide a
+        // genuine NEEDS_INPUT: line from extractInputRequest's
+        // start-of-line anchor.
+        burstText = event.metadata?.replace ? event.content : burstText + event.content;
       }
       lastEventType = event.type;
       const metadata = sanitizeMetadata(event.metadata, input.workingDirectory);
@@ -305,7 +315,13 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
       // a fresh session carrying the question and answer as context. A run
       // started from Review takes precedence over resume — the two are
       // mutually exclusive on any single run (see the module comment on
-      // startAgentSdkTask's two buffers).
+      // startAgentSdkTask's two buffers). Nothing produces this combination
+      // today — INPUT_REQUEST_INSTRUCTIONS (the only thing that can make a
+      // run ask for `resume`) is gated on `!review` — but fail loudly instead
+      // of silently dropping `resume` if that invariant is ever broken.
+      if (review && input.task.resume) {
+        throw new Error('startAgentSdkTask: task.resume must never be set on a review-mode task');
+      }
       const prompt = review
         ? buildReviewPrompt(input.task)
         : `${input.task.title}\n\n${input.task.description}`
@@ -354,7 +370,12 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
     ...(maybeOpenCodeBaseUrl(agentType) ? { baseUrl: maybeOpenCodeBaseUrl(agentType) } : {}),
     done,
     sendMessage: async (message: string, _attachmentIds?: readonly string[]) => {
-      verdictText = '';
+      // verdictText is intentionally NOT reset here (restoring main's
+      // original behavior): it accumulates across the WHOLE run (see its
+      // declaration comment above) so that a review verdict already
+      // detected before this follow-up message is never discarded. Only the
+      // clarification-question scan state is reset — a `/message` follow-up
+      // starts a new assistant turn for that purpose.
       burstText = '';
       lastDetectedQuestion = undefined;
       await session.send(message);

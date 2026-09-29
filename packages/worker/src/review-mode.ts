@@ -1,4 +1,5 @@
 import type { ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { extractInputRequest } from './input-request.js';
 
 // A task started from the Review column has already been implemented, so the
 // agent acts as a reviewer: it validates the existing work and reports a
@@ -127,10 +128,19 @@ export type ReviewRunResult = {
 export function reviewResult(text: string, workspacePath: string): ReviewRunResult {
   const parsed = extractReviewVerdict(text);
   if (!parsed) {
+    // Belt-and-braces: INPUT_REQUEST_INSTRUCTIONS is gated off review runs
+    // (see sdk-runner.ts / local-runner.ts), so a compliant reviewer should
+    // never emit a NEEDS_INPUT: line. But if one slips through anyway (a
+    // model recapping unrelated instructions, a stale system prompt, etc.),
+    // surface it instead of the generic message so the question isn't
+    // silently discarded.
+    const needsInput = extractInputRequest(text);
     return {
       status: 'failed',
       summary: 'Review finished without a verdict',
-      error: `review did not end with a ${REVIEW_VERDICT_MARKER} line; the result cannot be treated as a pass`,
+      error: needsInput
+        ? `review did not end with a ${REVIEW_VERDICT_MARKER} line; it asked instead: ${needsInput}`
+        : `review did not end with a ${REVIEW_VERDICT_MARKER} line; the result cannot be treated as a pass`,
     };
   }
   // Guard against an empty workspacePath: String.replaceAll('', x) inserts x
