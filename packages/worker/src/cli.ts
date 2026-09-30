@@ -1,6 +1,8 @@
+import { execFile as execFileCallback } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import readline from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { stdin as input, stdout as output } from 'node:process';
@@ -36,6 +38,62 @@ export type CommandArgs = Readonly<Record<string, string>>;
 type Args = CommandArgs;
 const configPath = path.join(os.homedir(), '.agentboard-worker', 'config.json');
 const workspaceConfigPath = path.join(os.homedir(), '.agentboard-worker', 'workspace.json');
+const execFile = promisify(execFileCallback);
+
+export type CommandResult = {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+};
+
+export type StartPreflightOptions = {
+  readonly nodeVersion?: string;
+  readonly runCommand?: (command: string, args: readonly string[]) => Promise<CommandResult>;
+};
+
+async function runCommand(command: string, args: readonly string[]): Promise<CommandResult> {
+  const result = await execFile(command, [...args], { windowsHide: true });
+  return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
+}
+
+function hasAuthenticatedOpenCodeProvider(output: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(output) as unknown;
+    if (Array.isArray(parsed)) return parsed.length > 0;
+    return parsed !== null && typeof parsed === 'object' && Object.keys(parsed).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function runStartPreflight(options: StartPreflightOptions = {}): Promise<void> {
+  const nodeVersion = options.nodeVersion ?? process.versions.node;
+  const nodeMajor = Number.parseInt(nodeVersion.split('.')[0] ?? '', 10);
+  if (!Number.isInteger(nodeMajor) || nodeMajor < 22) {
+    throw new Error(`Node.js 22 or newer is required to start a worker (found ${nodeVersion}). Install Node 22+ and retry.`);
+  }
+
+  const command = options.runCommand ?? runCommand;
+  let version: CommandResult;
+  try {
+    version = await command('opencode', ['--version']);
+  } catch {
+    throw new Error('OpenCode CLI is required to start a worker. Install it with `npm install --global @opencode/cli`, then retry.');
+  }
+  if (version.exitCode !== 0) {
+    throw new Error('OpenCode CLI is required to start a worker. Install it with `npm install --global @opencode/cli`, then retry.');
+  }
+
+  let auth: CommandResult;
+  try {
+    auth = await command('opencode', ['auth', 'list', '--format', 'json']);
+  } catch {
+    throw new Error('OpenCode is not authenticated. Run `opencode auth login` and retry.');
+  }
+  if (auth.exitCode !== 0 || !hasAuthenticatedOpenCodeProvider(auth.stdout)) {
+    throw new Error('OpenCode is not authenticated. Run `opencode auth login` and retry.');
+  }
+}
 
 function parseArgs(values: readonly string[]): Args {
   const result: Record<string, string> = {};
@@ -454,6 +512,7 @@ async function run(): Promise<void> {
 }
 
 export type CommandHandlers = {
+  preflight?(): Promise<void>;
   register(args: CommandArgs, enrollmentCode?: string): Promise<void>;
   run(): Promise<void>;
 };
@@ -461,9 +520,10 @@ export type CommandHandlers = {
 export async function dispatchCommand(
   command: string | undefined,
   args: CommandArgs,
-  handlers: CommandHandlers = { register, run },
+  handlers: CommandHandlers = { preflight: runStartPreflight, register, run },
 ): Promise<void> {
   if (command === 'start') {
+    await handlers.preflight?.();
     const code = parseEnrollmentCode(args.code ?? '');
     await handlers.register({ ...args, serverUrl: code.serverUrl }, code.enrollmentCode);
     await handlers.run();

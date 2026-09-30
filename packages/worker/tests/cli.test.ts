@@ -3,7 +3,14 @@ import test from 'node:test';
 import { MAX_DESCRIPTION_LENGTH } from '@ai-agent-board/shared/constants.js';
 import { completeTaskFailure, fetchAssignments, registerTaskSession, requestWithLoggedFailure } from '../src/api.js';
 import { parseWorkspaceSettings } from '../src/local-runner.js';
-import { buildWorkspaceConfig, dispatchCommand, parseEnrollmentCode, resolveRunnerProfile, truncateQuestion } from '../src/cli.js';
+import {
+  buildWorkspaceConfig,
+  dispatchCommand,
+  parseEnrollmentCode,
+  resolveRunnerProfile,
+  runStartPreflight,
+  truncateQuestion,
+} from '../src/cli.js';
 
 // Issue #25: `register`/`start` must write a complete `runner` block into
 // workspace.json so neither runner profile needs a hand-edit. resolveRunnerProfile
@@ -82,19 +89,24 @@ test('parseEnrollmentCode resolves the board URL and one-time credential from a 
   );
 });
 
-test('start dispatches enrollment registration before beginning the worker loop', async () => {
+test('start dispatches preflight before enrollment registration and beginning the worker loop', async () => {
   const calls: Array<{ args: Readonly<Record<string, string>>; enrollmentCode?: string }> = [];
-  let runs = 0;
+  const steps: string[] = [];
 
   await dispatchCommand(
     'start',
     { code: 'https://board.example.test/api/workers/enroll#one-time-secret', workspacePath: '/tmp/workspace' },
     {
-      register: async (args, enrollmentCode) => { calls.push({ args, enrollmentCode }); },
-      run: async () => { runs += 1; },
+      preflight: async () => { steps.push('preflight'); },
+      register: async (args, enrollmentCode) => {
+        steps.push('register');
+        calls.push({ args, enrollmentCode });
+      },
+      run: async () => { steps.push('run'); },
     },
   );
 
+  assert.deepEqual(steps, ['preflight', 'register', 'run']);
   assert.deepEqual(calls, [{
     args: {
       code: 'https://board.example.test/api/workers/enroll#one-time-secret',
@@ -103,7 +115,51 @@ test('start dispatches enrollment registration before beginning the worker loop'
     },
     enrollmentCode: 'one-time-secret',
   }]);
-  assert.equal(runs, 1);
+});
+
+test('runStartPreflight rejects Node versions below 22 without invoking OpenCode', async () => {
+  let invoked = false;
+
+  await assert.rejects(
+    runStartPreflight({
+      nodeVersion: '20.18.0',
+      runCommand: async () => {
+        invoked = true;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    }),
+    /Node\.js 22 or newer is required.*20\.18\.0/,
+  );
+
+  assert.equal(invoked, false);
+});
+
+test('runStartPreflight explains how to install OpenCode when the CLI is missing', async () => {
+  await assert.rejects(
+    runStartPreflight({
+      nodeVersion: '22.0.0',
+      runCommand: async () => { throw new Error('ENOENT'); },
+    }),
+    /npm install --global @opencode\/cli/,
+  );
+});
+
+test('runStartPreflight explains how to authenticate when OpenCode has no credentials', async () => {
+  const commands: string[] = [];
+
+  await assert.rejects(
+    runStartPreflight({
+      nodeVersion: '22.0.0',
+      runCommand: async (command: string, args: readonly string[]) => {
+        commands.push(`${command} ${args.join(' ')}`);
+        if (args[0] === '--version') return { exitCode: 0, stdout: '1.0.0', stderr: '' };
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    }),
+    /OpenCode is not authenticated.*opencode auth login/,
+  );
+
+  assert.deepEqual(commands, ['opencode --version', 'opencode auth list --format json']);
 });
 
 test('requestWithLoggedFailure returns undefined and logs the API failure', async () => {
