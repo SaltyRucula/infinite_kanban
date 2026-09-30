@@ -66,9 +66,38 @@ async function saveConfig(config: Config): Promise<void> {
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 
-async function saveWorkspaceConfig(workspacePath: string): Promise<void> {
+// Issue #25: register/start must write a complete `runner` block into
+// workspace.json so neither runner profile needs a hand-edit. This resolver
+// turns the optional --runner/--agent flags into a concrete RunnerProfile,
+// defaulting to the agent-sdk runner when no flags are supplied.
+export function resolveRunnerProfile(
+  runnerKind: string | undefined,
+  agent: string | undefined,
+): RunnerProfile {
+  const kind = (runnerKind ?? '').trim() || 'agent-sdk';
+  if (kind === 'agent-sdk') {
+    return { kind: 'agent-sdk' };
+  }
+  if (kind === 'opencode-server') {
+    const resolvedAgent = (agent ?? '').trim() || 'build';
+    return { kind: 'opencode-server', agent: resolvedAgent };
+  }
+  throw new Error('runner must be either "agent-sdk" or "opencode-server"');
+}
+
+// Issue #25: build the full workspace.json payload including the runner block,
+// so a registered worker never needs a manual JSON edit to use either profile.
+export function buildWorkspaceConfig(
+  workspacePath: string,
+  runner: RunnerProfile,
+): { readonly workspacePath: string; readonly runner: RunnerProfile } {
+  return { workspacePath, runner };
+}
+
+async function saveWorkspaceConfig(workspacePath: string, runner: RunnerProfile): Promise<void> {
   await fs.mkdir(path.dirname(workspaceConfigPath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(workspaceConfigPath, `${JSON.stringify({ workspacePath }, null, 2)}\n`, { mode: 0o600 });
+  const config = buildWorkspaceConfig(workspacePath, runner);
+  await fs.writeFile(workspaceConfigPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 
 async function loadConfig(): Promise<Config> {
@@ -130,6 +159,10 @@ async function register(args: Args): Promise<void> {
   if (agentTypes.length === 0) {
     throw new Error('agent-types must include at least one supported provider');
   }
+  // Issue #25: resolve the runner from optional --runner/--agent flags (defaults
+  // to the agent-sdk profile) and persist it, so no manual workspace.json edit
+  // is required for either runner profile.
+  const runner = resolveRunnerProfile(args.runner, args.agent);
   const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/workers/register`, {
     method: 'POST',
     headers: {
@@ -147,7 +180,7 @@ async function register(args: Args): Promise<void> {
   }
   const responseBody = body as { worker: { id: string }; token: string };
   await saveConfig({ workerId: responseBody.worker.id, workerToken: responseBody.token, serverUrl });
-  await saveWorkspaceConfig(workspacePath);
+  await saveWorkspaceConfig(workspacePath, runner);
   console.log(`registered worker ${responseBody.worker.id}; credentials saved to ${configPath}`);
 }
 

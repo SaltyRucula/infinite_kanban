@@ -59,7 +59,7 @@ Registration writes two files with `0600` permissions:
 | `agent-sdk` (default when `runner` is omitted) | Uses the `@codewithdan/agent-sdk-core` OpenCode provider. Set `OPENCODE_BASE_URL` to reuse an existing loopback OpenCode server. |
 | `opencode-server` | Starts `opencode serve` and drives the named OpenCode `agent` directly. Runs headlessly: interactive permission prompts and the `question` tool are disabled (the agent ends with a written question instead), and stalled tool calls are retried. |
 
-`register` only writes `workspacePath`; add the `runner` block yourself (the Docker entrypoint does this automatically).
+`register` writes both `workspacePath` and a `runner` block automatically. It defaults to the `agent-sdk` runner; pass `--runner opencode-server` (optionally with `--agent <name>`, default `build`) to write an `opencode-server` block instead. No manual `workspace.json` edit is needed for either profile.
 
 ## Docker
 
