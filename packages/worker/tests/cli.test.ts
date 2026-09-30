@@ -3,7 +3,7 @@ import test from 'node:test';
 import { MAX_DESCRIPTION_LENGTH } from '@ai-agent-board/shared/constants.js';
 import { completeTaskFailure, fetchAssignments, registerTaskSession, requestWithLoggedFailure } from '../src/api.js';
 import { parseWorkspaceSettings } from '../src/local-runner.js';
-import { buildWorkspaceConfig, resolveRunnerProfile, truncateQuestion } from '../src/cli.js';
+import { buildWorkspaceConfig, dispatchCommand, parseEnrollmentCode, resolveRunnerProfile, truncateQuestion } from '../src/cli.js';
 
 // Issue #25: `register`/`start` must write a complete `runner` block into
 // workspace.json so neither runner profile needs a hand-edit. resolveRunnerProfile
@@ -70,6 +70,40 @@ test('buildWorkspaceConfig output is accepted by parseWorkspaceSettings without 
     assert.equal(parsed.workspacePath, '/tmp/workspace');
     assert.deepEqual(parsed.runner, runner);
   }
+});
+
+// Issue #24: `start --code` receives a self-contained enrollment value from
+// the board, so a clean machine learns both the board URL and the one-time
+// credential without a separate JSON edit or server-url flag.
+test('parseEnrollmentCode resolves the board URL and one-time credential from a start code', () => {
+  assert.deepEqual(
+    parseEnrollmentCode('https://board.example.test/api/workers/enroll#one-time-secret'),
+    { serverUrl: 'https://board.example.test', enrollmentCode: 'one-time-secret' },
+  );
+});
+
+test('start dispatches enrollment registration before beginning the worker loop', async () => {
+  const calls: Array<{ args: Readonly<Record<string, string>>; enrollmentCode?: string }> = [];
+  let runs = 0;
+
+  await dispatchCommand(
+    'start',
+    { code: 'https://board.example.test/api/workers/enroll#one-time-secret', workspacePath: '/tmp/workspace' },
+    {
+      register: async (args, enrollmentCode) => { calls.push({ args, enrollmentCode }); },
+      run: async () => { runs += 1; },
+    },
+  );
+
+  assert.deepEqual(calls, [{
+    args: {
+      code: 'https://board.example.test/api/workers/enroll#one-time-secret',
+      workspacePath: '/tmp/workspace',
+      serverUrl: 'https://board.example.test',
+    },
+    enrollmentCode: 'one-time-secret',
+  }]);
+  assert.equal(runs, 1);
 });
 
 test('requestWithLoggedFailure returns undefined and logs the API failure', async () => {

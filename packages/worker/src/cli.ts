@@ -32,7 +32,8 @@ import {
 import { OpenCodeSessionBridge } from './opencode-session-bridge.js';
 import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
 
-type Args = Readonly<Record<string, string>>;
+export type CommandArgs = Readonly<Record<string, string>>;
+type Args = CommandArgs;
 const configPath = path.join(os.homedir(), '.agentboard-worker', 'config.json');
 const workspaceConfigPath = path.join(os.homedir(), '.agentboard-worker', 'workspace.json');
 
@@ -94,6 +95,30 @@ export function buildWorkspaceConfig(
   return { workspacePath, runner };
 }
 
+export type EnrollmentCode = {
+  readonly serverUrl: string;
+  readonly enrollmentCode: string;
+};
+
+// Enrollment links intentionally use the fragment: browsers do not send it to
+// the board when the Add worker UI renders a copy-paste command, while the
+// worker can still recover the board origin and one-time credential locally.
+export function parseEnrollmentCode(value: string): EnrollmentCode {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error('start code must be a valid enrollment URL');
+  }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:')
+    || url.pathname !== '/api/workers/enroll'
+    || url.search
+    || !url.hash.slice(1)) {
+    throw new Error('start code must be an enrollment URL with a one-time code fragment');
+  }
+  return { serverUrl: url.origin, enrollmentCode: decodeURIComponent(url.hash.slice(1)) };
+}
+
 async function saveWorkspaceConfig(workspacePath: string, runner: RunnerProfile): Promise<void> {
   await fs.mkdir(path.dirname(workspaceConfigPath), { recursive: true, mode: 0o700 });
   const config = buildWorkspaceConfig(workspacePath, runner);
@@ -145,11 +170,11 @@ async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string
   return parsed;
 }
 
-async function register(args: Args): Promise<void> {
+async function register(args: Args, enrollmentCode?: string): Promise<void> {
   const serverUrl = await prompt('server URL', args.serverUrl);
-  const token = await prompt('registration token', args.token);
+  const token = enrollmentCode ? undefined : await prompt('registration token', args.token);
   const name = await prompt('worker name', args.name || os.hostname());
-  const workspacePath = await prompt('local workspace path', args.workspacePath);
+  const workspacePath = await prompt('local workspace path', args.workspacePath || process.cwd());
   const workspaceStats = await fs.stat(workspacePath).catch(() => undefined);
   if (!workspaceStats?.isDirectory()) {
     throw new Error('worker workspace configuration must point to a directory');
@@ -166,10 +191,16 @@ async function register(args: Args): Promise<void> {
   const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/workers/register`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${token}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ name, agentTypes, hostname: os.hostname(), version: '0.1.0' }),
+    body: JSON.stringify({
+      name,
+      agentTypes,
+      hostname: os.hostname(),
+      version: '0.1.0',
+      ...(enrollmentCode ? { enrollmentCode } : {}),
+    }),
   });
   const body: unknown = await response.json();
   if (!response.ok) {
@@ -422,16 +453,32 @@ async function run(): Promise<void> {
   }
 }
 
+export type CommandHandlers = {
+  register(args: CommandArgs, enrollmentCode?: string): Promise<void>;
+  run(): Promise<void>;
+};
+
+export async function dispatchCommand(
+  command: string | undefined,
+  args: CommandArgs,
+  handlers: CommandHandlers = { register, run },
+): Promise<void> {
+  if (command === 'start') {
+    const code = parseEnrollmentCode(args.code ?? '');
+    await handlers.register({ ...args, serverUrl: code.serverUrl }, code.enrollmentCode);
+    await handlers.run();
+  } else if (command === 'register') {
+    await handlers.register(args);
+  } else if (command === 'run') {
+    await handlers.run();
+  } else {
+    throw new Error('usage: agentboard-worker start --code <enrollment-url> | register|run [options]');
+  }
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
-  const args = parseArgs(rest);
-  if (command === 'register') {
-    await register(args);
-  } else if (command === 'run') {
-    await run();
-  } else {
-    throw new Error('usage: agentboard-worker register|run [options]');
-  }
+  await dispatchCommand(command, parseArgs(rest));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
