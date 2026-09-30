@@ -9,6 +9,12 @@ interface WorkerPresencePanelProps {
   isModal?: boolean;
   onClose?: () => void;
   onRefresh?: () => void;
+  projectId?: string;
+}
+
+function formatRemainingTime(expiresAt: number, now: number): string {
+  const remainingSeconds = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  return `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')}`;
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -29,10 +35,16 @@ export function WorkerPresencePanel({
   isModal = false,
   onClose,
   onRefresh,
+  projectId,
 }: WorkerPresencePanelProps) {
   const [internalAgents, setInternalAgents] = useState<AgentInfo[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [enrollment, setEnrollment] = useState<{ code: string; expiresAt: number } | null>(null);
+  const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
+  const [creatingEnrollment, setCreatingEnrollment] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState(false);
+  const [now, setNow] = useState(Date.now());
 
   const { workers, loading: loadingWorkers, error: workerError, refetch: refetchWorkers } = useWorkers();
 
@@ -55,6 +67,33 @@ export function WorkerPresencePanel({
       void fetchAgents();
     }
   }, [propAgents]);
+
+  useEffect(() => {
+    if (!enrollment) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [enrollment]);
+
+  const createEnrollment = async () => {
+    setCreatingEnrollment(true);
+    setEnrollmentError(null);
+    setCopiedCommand(false);
+    try {
+      const created = await api.createEnrollmentCode(projectId);
+      setEnrollment(created);
+      setNow(Date.now());
+    } catch (err) {
+      setEnrollmentError(err instanceof Error ? err.message : 'Failed to create enrollment code');
+    } finally {
+      setCreatingEnrollment(false);
+    }
+  };
+
+  const copyCommand = async () => {
+    if (!enrollment) return;
+    await navigator.clipboard.writeText(`npx @ai-agent-board/worker start --code ${enrollment.code}`);
+    setCopiedCommand(true);
+  };
 
   const handleRefreshAll = () => {
     void fetchAgents();
@@ -112,9 +151,18 @@ export function WorkerPresencePanel({
                 Registered Workers
               </h3>
             </div>
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              {onlineWorkersCount}/{workers.length} Online
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                {onlineWorkersCount}/{workers.length} Online
+              </span>
+              <button
+                onClick={() => void createEnrollment()}
+                disabled={creatingEnrollment}
+                className="rounded px-2 py-1 text-[10px] font-semibold bg-[rgba(0,180,216,0.12)] text-[#00b4d8] border border-[rgba(0,180,216,0.3)] hover:bg-[rgba(0,180,216,0.2)] disabled:opacity-50"
+              >
+                {creatingEnrollment ? 'Creating...' : 'Add worker'}
+              </button>
+            </div>
           </div>
 
           {loadingWorkers && workers.length === 0 ? (
@@ -263,6 +311,58 @@ export function WorkerPresencePanel({
           )}
         </div>
       </div>
+      {enrollment && (
+        <div
+          role="dialog"
+          aria-label="Add worker"
+          aria-modal="true"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+        >
+          <div className="w-full max-w-lg rounded-lg border border-[#2c3343] bg-[#0e1015] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Add worker</h3>
+                <p className="mt-1 text-xs text-[#94a3b8]">Run this command on a machine with Node.js and OpenCode.</p>
+              </div>
+              <button
+                onClick={() => setEnrollment(null)}
+                className="rounded px-2 py-1 text-xs text-[#94a3b8] hover:bg-[#1b1f2b] hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-[#94a3b8]">Enrollment code</div>
+                <code className="mt-1 block rounded border border-[#202532] bg-[#14171e] px-3 py-2 text-sm text-[#00b4d8]">{enrollment.code}</code>
+              </div>
+              <label className="block text-[11px] font-semibold uppercase tracking-[0.05em] text-[#94a3b8]">
+                Worker start command
+                <input
+                  aria-label="Worker start command"
+                  readOnly
+                  value={`npx @ai-agent-board/worker start --code ${enrollment.code}`}
+                  className="mt-1 w-full rounded border border-[#202532] bg-[#14171e] px-3 py-2 font-mono text-xs text-white"
+                />
+              </label>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-[#94a3b8]">Expires in {formatRemainingTime(enrollment.expiresAt, now)}</span>
+                <button
+                  onClick={() => void copyCommand()}
+                  className="rounded bg-[#00b4d8] px-3 py-1.5 text-xs font-semibold text-[#08090c] hover:bg-[#48cae4]"
+                >
+                  {copiedCommand ? 'Copied' : 'Copy command'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {enrollmentError && (
+        <div className="absolute bottom-3 left-3 right-3 rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-400">
+          {enrollmentError}
+        </div>
+      )}
     </div>
   );
 

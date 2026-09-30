@@ -346,6 +346,7 @@ export function WorkerConsole({
       {showRosterModal && (
         <WorkerPresencePanel
           isModal
+          projectId={project.id}
           onClose={() => setShowRosterModal(false)}
         />
       )}
