@@ -59,6 +59,18 @@ test.describe('Worker console shell', () => {
   test('has theme toggle button', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'Toggle theme' })).toBeVisible();
   });
+
+  test('enrolls a worker with a copy-paste start command', async ({ page }) => {
+    await page.getByRole('button', { name: 'Agent Roster' }).click();
+    await page.getByRole('button', { name: 'Add worker' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Add worker' });
+    await expect(dialog.getByText('Enrollment code')).toBeVisible();
+    const command = dialog.getByLabel('Worker start command');
+    await expect(command).toHaveValue(/^npx @ai-agent-board\/worker start --code [A-Za-z0-9_-]+$/);
+    await expect(dialog.getByRole('button', { name: 'Copy command' })).toBeVisible();
+    await expect(dialog.getByText(/expires in \d{1,2}:\d{2}/i)).toBeVisible();
+  });
 });
 
 test.describe('Task CRUD', () => {

@@ -17,7 +17,9 @@ const child = spawn(isWindows ? `npx vite --port ${clientPort}` : 'npx', isWindo
   env: {
     ...process.env,
     API_URL: `http://localhost:${serverPort}`,
-    VITE_API_KEY: '',
+    // The E2E server scopes enrollment-code creation to workers:manage, so
+    // the browser needs the deterministic full-scope fixture credential.
+    VITE_API_KEY: 'e2e-full-scope-token',
   },
   shell: isWindows,
   stdio: 'inherit',

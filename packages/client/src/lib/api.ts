@@ -133,6 +133,12 @@ export const api = {
 
   getWorkers: () => request<Worker[]>('/workers'),
 
+  createEnrollmentCode: (projectId?: string) =>
+    request<{ code: string; expiresAt: number }>('/workers/enrollment-codes', {
+      method: 'POST',
+      body: JSON.stringify(projectId ? { projectId } : {}),
+    }),
+
   assignWorker: (taskId: string, assignedWorkerId: string | null) =>
     request<Task>(`/tasks/${taskId}/assign`, { method: 'POST', body: JSON.stringify({ assignedWorkerId }) }),
 
