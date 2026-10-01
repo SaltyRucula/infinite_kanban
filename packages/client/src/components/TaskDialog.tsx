@@ -8,6 +8,7 @@ import {
   Check,
 } from 'lucide-react';
 import type { Task, TaskAttachment, ColumnId, AgentType, Priority } from '@/types';
+import { AGENT_OPTIONS, getAgentDisplay } from '@/lib/agent-config';
 import { PRIORITY_OPTIONS } from '@/lib/priority-config';
 import { cn, slugify } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -363,17 +364,21 @@ export function TaskDialog({ open, onClose, projectId, onSubmit, editTask, onEdi
                 </AnimatePresence>
               </div>
 
-              {/* Agent display & Labels */}
+              {/* Agent engine & Labels */}
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                <label htmlFor="task-agent-engine" className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   Agent Engine
                 </label>
-                <div className="flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
-                  <span className="flex items-center gap-2 font-medium">
-                    OpenCode / Sisyphus Worker
-                  </span>
-                  <span className="text-[10px] text-emerald-500 font-semibold uppercase tracking-wider">Active</span>
-                </div>
+                <select
+                  id="task-agent-engine"
+                  value={agentType}
+                  onChange={(e) => setAgentType(e.target.value as AgentType)}
+                  className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm font-medium text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  {AGENT_OPTIONS.map((agent) => (
+                    <option key={agent.value} value={agent.value}>{agent.label}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Labels */}
@@ -427,7 +432,7 @@ export function TaskDialog({ open, onClose, projectId, onSubmit, editTask, onEdi
 
                   {matchingOnlineWorkers.length === 0 ? (
                     <div className="p-2.5 rounded-lg bg-muted/30 border border-border text-xs text-muted-foreground text-center italic">
-                      No online registered workers currently support <span className="font-mono text-primary">OpenCode</span>.
+                      No online registered workers currently support <span className="font-mono text-primary">{getAgentDisplay(agentType).label}</span>.
                     </div>
                   ) : (
                     matchingOnlineWorkers.map((worker) => {

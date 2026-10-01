@@ -79,7 +79,7 @@ function migrate(db: Database.Database): void {
   if (!projectColNames.has('jira_import_last_total')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_total INTEGER`);
   if (!projectColNames.has('jira_import_last_created')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_created INTEGER`);
   if (!projectColNames.has('jira_import_last_skipped')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_skipped INTEGER`);
-  db.exec(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode'`);
+  db.exec(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
   db.exec(`
@@ -200,7 +200,7 @@ function migrate(db: Database.Database): void {
   if (!colNames.has('worker_attempt')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_attempt INTEGER NOT NULL DEFAULT 0`);
   if (!colNames.has('labels')) db.exec(`ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'`);
   if (!colNames.has('agent_preference')) db.exec(`ALTER TABLE tasks ADD COLUMN agent_preference TEXT`);
-  db.exec(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
+  db.exec(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
@@ -247,7 +247,7 @@ function migrate(db: Database.Database): void {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_enrollment_codes_expiry ON enrollment_codes(expires_at)`);
-  db.exec(`UPDATE workers SET agent_types_json = '["opencode"]'`);
+  db.exec(`UPDATE workers SET agent_types_json = '["opencode"]' WHERE NOT json_valid(agent_types_json) OR NOT EXISTS (SELECT 1 FROM json_each(agent_types_json) WHERE value IN ('opencode', 'codex'))`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS worker_task_sessions (
       task_id TEXT NOT NULL,
@@ -322,24 +322,24 @@ function migrate(db: Database.Database): void {
       created_at    INTEGER NOT NULL
     )
   `);
-  db.exec(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
+  db.exec(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
 
   db.exec(`
     UPDATE tasks
     SET agent_type = 'opencode'
-    WHERE agent_type IS NULL OR agent_type <> 'opencode';
+    WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex');
 
     UPDATE templates
     SET agent_type = 'opencode'
-    WHERE agent_type IS NULL OR agent_type <> 'opencode';
+    WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex');
 
     UPDATE projects
     SET default_agent_type = 'opencode'
-    WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode';
+    WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex');
 
     UPDATE workers
     SET agent_types_json = '["opencode"]'
-    WHERE agent_types_json IS NULL OR agent_types_json <> '["opencode"]';
+    WHERE agent_types_json IS NULL OR NOT json_valid(agent_types_json) OR NOT EXISTS (SELECT 1 FROM json_each(agent_types_json) WHERE value IN ('opencode', 'codex'));
   `);
 
   // Task attachments table
@@ -577,7 +577,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addProjectCol('jira_import_last_total', 'INTEGER');
   await addProjectCol('jira_import_last_created', 'INTEGER');
   await addProjectCol('jira_import_last_skipped', 'INTEGER');
-  await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode'`);
+  await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
   await pool.query(`
@@ -641,7 +641,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addCol('worker_attempt', 'INTEGER NOT NULL DEFAULT 0');
   await addCol('labels', "TEXT NOT NULL DEFAULT '[]'");
   await addCol('agent_preference', 'TEXT');
-  await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
+  await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
@@ -691,7 +691,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_enrollment_codes_expiry ON enrollment_codes(expires_at)`);
-  await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]'`);
+  await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]' WHERE NOT (agent_types_json::jsonb ?| ARRAY['opencode', 'codex'])`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS worker_task_sessions (
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -831,12 +831,12 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       created_at    BIGINT NOT NULL
     )
   `);
-  await pool.query(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type <> 'opencode'`);
+  await pool.query(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
 
-  await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS DISTINCT FROM 'opencode'`);
-  await pool.query(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS DISTINCT FROM 'opencode'`);
-  await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type <> 'opencode'`);
-  await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]' WHERE agent_types_json IS DISTINCT FROM '["opencode"]'`);
+  await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
+  await pool.query(`UPDATE templates SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
+  await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
+  await pool.query(`UPDATE workers SET agent_types_json = '["opencode"]' WHERE NOT (agent_types_json::jsonb ?| ARRAY['opencode', 'codex'])`);
 
   // Task attachments table
   await pool.query(`

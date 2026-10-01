@@ -1,5 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import {
+  CodexProvider,
   OpenCodeProvider,
   type AgentEvent as CoreEvent,
   type AgentProvider,
@@ -131,7 +132,7 @@ function getOpenCodeBaseUrl(): string | undefined {
 }
 
 function providerFor(agentType: AgentType): AgentProvider {
-  if (agentType !== 'opencode') throw new Error(`unsupported agent type: ${agentType}`);
+  if (agentType === 'codex') return new CodexProvider();
   const baseUrl = getOpenCodeBaseUrl();
   return new OpenCodeProvider(baseUrl ? { baseUrl } : undefined);
 }
