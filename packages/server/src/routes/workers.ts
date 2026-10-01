@@ -72,6 +72,12 @@ function taskBelongs(task: Task | undefined, workerId: string): task is Task {
   return !!task && task.assignedWorkerId === workerId;
 }
 
+function consentValues(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim() || item.length > 100)) return undefined;
+  return [...new Set(value.map((item) => item.trim().toLowerCase()))];
+}
+
 const TASK_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 function normalizeLoopbackBridgeUrl(value: unknown, expectedTaskId: string): string | null {
@@ -202,6 +208,8 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     const agentTypes = req.body.agentTypes;
     const maxConcurrentTasks = req.body.maxConcurrentTasks ?? 1;
+    const acceptedProjectIds = consentValues(req.body.acceptedProjectIds);
+    const acceptedLabels = consentValues(req.body.acceptedLabels);
     if (!name || name.length > WORKER_MAX_NAME_LENGTH) {
       res.status(400).json({ error: 'name is required and must be at most 100 characters' });
       return;
@@ -212,6 +220,10 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     if (!isValidMaxConcurrency(maxConcurrentTasks, MAX_GROUP_CHILDREN)) {
       res.status(400).json({ error: 'maxConcurrentTasks must be an integer between 1 and 20' });
+      return;
+    }
+    if (!acceptedProjectIds || !acceptedLabels) {
+      res.status(400).json({ error: 'acceptedProjectIds and acceptedLabels must be arrays of non-empty strings' });
       return;
     }
     if (req.body.hostname !== undefined && typeof req.body.hostname !== 'string') {
@@ -240,6 +252,8 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       tokenHash: credentials.hash,
       agentTypes: agentTypes as AgentType[],
       maxConcurrentTasks,
+      acceptedProjectIds,
+      acceptedLabels,
       registeredAt: now,
       ...(ownerId ? { ownerId } : {}),
       ...(req.body.hostname ? { hostname: req.body.hostname } : {}),
@@ -308,8 +322,14 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     const worker = authenticatedWorker(res);
     const now = Date.now();
     const currentTaskId = req.body.currentTaskId;
+    const acceptedProjectIds = consentValues(req.body.acceptedProjectIds);
+    const acceptedLabels = consentValues(req.body.acceptedLabels);
     if (currentTaskId !== undefined && typeof currentTaskId !== 'string') {
       res.status(400).json({ error: 'currentTaskId must be a string' });
+      return;
+    }
+    if ((req.body.acceptedProjectIds !== undefined && !acceptedProjectIds) || (req.body.acceptedLabels !== undefined && !acceptedLabels)) {
+      res.status(400).json({ error: 'acceptedProjectIds and acceptedLabels must be arrays of non-empty strings' });
       return;
     }
     if (currentTaskId) {
@@ -324,7 +344,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
         return;
       }
     }
-    const updated = await workers.heartbeat(worker.id, now);
+    const updated = await workers.heartbeat(worker.id, now, acceptedProjectIds, acceptedLabels);
     if (!updated) {
       res.status(404).json({ error: 'worker not found' });
       return;

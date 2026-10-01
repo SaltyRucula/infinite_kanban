@@ -61,9 +61,11 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
 
   const matchingOnlineWorkers = useMemo(() => {
     return workers.filter(
-      (w) => w.status === 'online' && w.agentTypes?.includes(agentType),
+      (w) => w.status === 'online'
+        && w.agentTypes?.includes(agentType)
+        && (w.acceptedProjectIds ?? []).includes(editTask?.projectId ?? ''),
     );
-  }, [workers, agentType]);
+  }, [workers, agentType, editTask]);
 
   useEffect(() => {
     if (selectedWorkerId) {

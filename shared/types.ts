@@ -31,6 +31,10 @@ export interface Worker {
   lastHeartbeatAt: number;
   updatedAt: number;
   ownerId?: string;
+  /** Project IDs this worker has explicitly consented to execute tasks from. */
+  acceptedProjectIds?: string[];
+  /** Task labels this worker has explicitly consented to execute. */
+  acceptedLabels?: string[];
 }
 
 export interface Task {

@@ -10,6 +10,8 @@ export interface WorkerRegistration {
   readonly version?: string;
   readonly registeredAt: number;
   readonly ownerId?: string;
+  readonly acceptedProjectIds?: readonly string[];
+  readonly acceptedLabels?: readonly string[];
 }
 
 export type WorkerTaskCommand = {
@@ -31,7 +33,7 @@ export type RegisteredWorkerOpenCodeSession = {
 
 export interface WorkerRepository {
   register(input: WorkerRegistration): Promise<Worker>;
-  heartbeat(id: string, at: number): Promise<Worker | undefined>;
+  heartbeat(id: string, at: number, acceptedProjectIds?: readonly string[], acceptedLabels?: readonly string[]): Promise<Worker | undefined>;
   getById(id: string): Promise<Worker | undefined>;
   getByTokenHash(tokenHash: string): Promise<(Worker & { readonly tokenHash: string; readonly tokenIssuedAt?: number }) | undefined>;
   list(): Promise<Worker[]>;
