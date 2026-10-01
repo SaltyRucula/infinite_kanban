@@ -92,6 +92,8 @@ export interface WorkerTaskAssignment {
   useWorktree?: boolean;
   timeoutMinutes?: number | null;
   labels: string[];
+  /** Text-only project intent; paths and workspace metadata are never sent. */
+  project?: { goal?: string; context?: string };
   agentPreference?: string;
   /**
    * Present when this run resumes a task that paused in `pending` because the
@@ -110,7 +112,7 @@ export interface WorkerTaskAssignment {
 /** The complete public field allowlist for worker task handoffs. */
 export const WORKER_TASK_ASSIGNMENT_KEYS = [
   'id', 'title', 'description', 'priority', 'agentType', 'branchName',
-  'baseBranch', 'useWorktree', 'timeoutMinutes', 'labels', 'agentPreference',
+  'baseBranch', 'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference',
   'resume', 'mode',
 ] as const satisfies readonly (keyof WorkerTaskAssignment)[];
 
@@ -200,6 +202,8 @@ export interface Project {
   defaultUseWorktree?: boolean;
   /** When enabled, consenting capable workers may claim unpinned tasks. */
   workerPoolEnabled?: boolean;
+  goal?: string;
+  context?: string;
   aliases?: string[];
   readonly jiraImportEnabled: boolean;
   readonly jiraImportIntervalMinutes: number;
@@ -223,6 +227,8 @@ export interface CreateProjectRequest {
   defaultBaseBranch?: string;
   defaultUseWorktree?: boolean;
   workerPoolEnabled?: boolean;
+  goal?: string;
+  context?: string;
   aliases?: string[];
   readonly jiraImportEnabled?: boolean;
   readonly jiraImportIntervalMinutes?: number;
@@ -245,6 +251,8 @@ export interface UpdateProjectRequest {
   defaultBaseBranch?: string | null;
   defaultUseWorktree?: boolean | null;
   workerPoolEnabled?: boolean;
+  goal?: string | null;
+  context?: string | null;
   aliases?: string[];
   readonly jiraImportEnabled?: boolean;
   readonly jiraImportIntervalMinutes?: number;

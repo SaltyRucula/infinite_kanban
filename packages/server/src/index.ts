@@ -157,7 +157,7 @@ const agentManager = new AgentManager();
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo, workerRepo));
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));
   app.use('/api/tasks', createGitRouter(taskRepo, agentManager));
-  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo, enrollmentCodeRepo));
+  app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo, enrollmentCodeRepo, projectRepo));
   app.post('/api/tasks/:id/assign', async (req, res, next) => {
     try {
       const task = await taskRepo.getById(String(req.params.id));

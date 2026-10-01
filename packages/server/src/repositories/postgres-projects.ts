@@ -15,6 +15,8 @@ interface ProjectRow {
   default_priority: string | null;
   default_base_branch: string | null;
   default_use_worktree: boolean | null;
+  goal: string | null;
+  context: string | null;
   aliases: string;
   jira_import_enabled: boolean;
   jira_import_interval_minutes: number;
@@ -50,6 +52,8 @@ function rowToProject(row: ProjectRow, taskCounts?: ProjectTaskCounts): Project 
     defaultPriority: (row.default_priority ?? undefined) as Priority | undefined,
     defaultBaseBranch: row.default_base_branch ?? undefined,
     defaultUseWorktree: row.default_use_worktree === null ? undefined : row.default_use_worktree,
+    goal: row.goal ?? undefined,
+    context: row.context ?? undefined,
     aliases: JSON.parse(row.aliases || '[]'),
     jiraImportEnabled: row.jira_import_enabled,
     jiraImportIntervalMinutes: row.jira_import_interval_minutes,
@@ -106,6 +110,8 @@ export class PostgresProjectRepository implements ProjectRepository {
     defaultPriority?: Priority;
     defaultBaseBranch?: string;
     defaultUseWorktree?: boolean;
+    goal?: string;
+    context?: string;
     aliases?: string[];
     jiraImportEnabled?: boolean;
     jiraImportIntervalMinutes?: number;
@@ -125,11 +131,11 @@ export class PostgresProjectRepository implements ProjectRepository {
       await client.query('BEGIN');
       const { rows } = await client.query<ProjectRow>(
         `INSERT INTO projects (id, name, repo_path, repo_url, is_default, created_at, updated_at,
-           default_agent_type, default_priority, default_base_branch, default_use_worktree, aliases,
+           default_agent_type, default_priority, default_base_branch, default_use_worktree, goal, context, aliases,
            jira_import_enabled, jira_import_interval_minutes, jira_import_auto_start, jira_import_last_run_at,
            jira_import_last_completed_at, jira_import_last_success_at, jira_import_last_error,
            jira_import_last_total, jira_import_last_created, jira_import_last_skipped)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
          RETURNING *`,
         [
           input.id,
@@ -142,7 +148,7 @@ export class PostgresProjectRepository implements ProjectRepository {
           input.defaultAgentType ?? null,
           input.defaultPriority ?? null,
           input.defaultBaseBranch ?? null,
-          input.defaultUseWorktree ?? null, JSON.stringify(input.aliases ?? []),
+          input.defaultUseWorktree ?? null, input.goal ?? null, input.context ?? null, JSON.stringify(input.aliases ?? []),
           input.jiraImportEnabled ?? false,
           input.jiraImportIntervalMinutes ?? 15,
           input.jiraImportAutoStart ?? false,
@@ -173,6 +179,8 @@ export class PostgresProjectRepository implements ProjectRepository {
     defaultPriority?: Priority | null;
     defaultBaseBranch?: string | null;
     defaultUseWorktree?: boolean | null;
+    goal?: string | null;
+    context?: string | null;
     aliases?: string[];
     jiraImportEnabled?: boolean;
     jiraImportIntervalMinutes?: number;
@@ -198,11 +206,11 @@ export class PostgresProjectRepository implements ProjectRepository {
       const { rows: updatedRows } = await client.query<ProjectRow>(
         `UPDATE projects
          SET name = $1, repo_path = $2, repo_url = $3, is_default = $4, updated_at = $5,
-           default_agent_type = $6, default_priority = $7, default_base_branch = $8, default_use_worktree = $9, aliases=$10,
-            jira_import_enabled = $11, jira_import_interval_minutes = $12, jira_import_auto_start = $13, jira_import_last_run_at = $14,
-            jira_import_last_completed_at = $15, jira_import_last_success_at = $16, jira_import_last_error = $17,
-            jira_import_last_total = $18, jira_import_last_created = $19, jira_import_last_skipped = $20
-          WHERE id = $21
+           default_agent_type = $6, default_priority = $7, default_base_branch = $8, default_use_worktree = $9, goal = $10, context = $11, aliases=$12,
+            jira_import_enabled = $13, jira_import_interval_minutes = $14, jira_import_auto_start = $15, jira_import_last_run_at = $16,
+            jira_import_last_completed_at = $17, jira_import_last_success_at = $18, jira_import_last_error = $19,
+            jira_import_last_total = $20, jira_import_last_created = $21, jira_import_last_skipped = $22
+          WHERE id = $23
           RETURNING *`,
         [
           updates.name ?? existing.name,
@@ -214,6 +222,8 @@ export class PostgresProjectRepository implements ProjectRepository {
           updates.defaultPriority === undefined ? existing.default_priority : updates.defaultPriority,
           updates.defaultBaseBranch === undefined ? existing.default_base_branch : updates.defaultBaseBranch,
           updates.defaultUseWorktree === undefined ? existing.default_use_worktree : updates.defaultUseWorktree,
+          updates.goal === undefined ? existing.goal : updates.goal,
+          updates.context === undefined ? existing.context : updates.context,
           updates.aliases === undefined ? existing.aliases : JSON.stringify(updates.aliases),
           updates.jiraImportEnabled === undefined ? existing.jira_import_enabled : updates.jiraImportEnabled,
           updates.jiraImportIntervalMinutes ?? existing.jira_import_interval_minutes,

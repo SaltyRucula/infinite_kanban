@@ -16,6 +16,8 @@ interface ProjectRow {
   default_base_branch: string | null;
   default_use_worktree: number | null;
   worker_pool_enabled: number;
+  goal: string | null;
+  context: string | null;
   aliases: string;
   jira_import_enabled: number;
   jira_import_interval_minutes: number;
@@ -52,6 +54,8 @@ function rowToProject(row: ProjectRow, taskCounts?: ProjectTaskCounts): Project 
     defaultBaseBranch: row.default_base_branch ?? undefined,
     defaultUseWorktree: row.default_use_worktree === null ? undefined : Boolean(row.default_use_worktree),
     workerPoolEnabled: Boolean(row.worker_pool_enabled),
+    goal: row.goal ?? undefined,
+    context: row.context ?? undefined,
     aliases: JSON.parse(row.aliases || '[]'),
     jiraImportEnabled: Boolean(row.jira_import_enabled),
     jiraImportIntervalMinutes: row.jira_import_interval_minutes,
@@ -107,6 +111,8 @@ export class SqliteProjectRepository implements ProjectRepository {
     defaultPriority?: Priority;
     defaultBaseBranch?: string;
     defaultUseWorktree?: boolean;
+    goal?: string;
+    context?: string;
     aliases?: string[];
     jiraImportEnabled?: boolean;
     jiraImportIntervalMinutes?: number;
@@ -124,12 +130,12 @@ export class SqliteProjectRepository implements ProjectRepository {
     return this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO projects (id, name, repo_path, repo_url, is_default, created_at, updated_at,
-          default_agent_type, default_priority, default_base_branch, default_use_worktree, aliases,
+          default_agent_type, default_priority, default_base_branch, default_use_worktree, goal, context, aliases,
           jira_import_enabled, jira_import_interval_minutes, jira_import_auto_start, jira_import_last_run_at,
           jira_import_last_completed_at, jira_import_last_success_at, jira_import_last_error,
           jira_import_last_total, jira_import_last_created, jira_import_last_skipped)
         VALUES (@id, @name, @repo_path, @repo_url, @is_default, @created_at, @updated_at,
-          @default_agent_type, @default_priority, @default_base_branch, @default_use_worktree, @aliases,
+          @default_agent_type, @default_priority, @default_base_branch, @default_use_worktree, @goal, @context, @aliases,
           @jira_import_enabled, @jira_import_interval_minutes, @jira_import_auto_start, @jira_import_last_run_at,
           @jira_import_last_completed_at, @jira_import_last_success_at, @jira_import_last_error,
           @jira_import_last_total, @jira_import_last_created, @jira_import_last_skipped)
@@ -145,6 +151,8 @@ export class SqliteProjectRepository implements ProjectRepository {
         default_priority: input.defaultPriority ?? null,
         default_base_branch: input.defaultBaseBranch ?? null,
         default_use_worktree: input.defaultUseWorktree === undefined ? null : input.defaultUseWorktree ? 1 : 0,
+        goal: input.goal ?? null,
+        context: input.context ?? null,
         aliases: JSON.stringify(input.aliases ?? []),
         jira_import_enabled: input.jiraImportEnabled === true ? 1 : 0,
         jira_import_interval_minutes: input.jiraImportIntervalMinutes ?? 15,
@@ -170,6 +178,8 @@ export class SqliteProjectRepository implements ProjectRepository {
     defaultPriority?: Priority | null;
     defaultBaseBranch?: string | null;
     defaultUseWorktree?: boolean | null;
+    goal?: string | null;
+    context?: string | null;
     aliases?: string[];
     jiraImportEnabled?: boolean;
     jiraImportIntervalMinutes?: number;
@@ -199,6 +209,8 @@ export class SqliteProjectRepository implements ProjectRepository {
         default_use_worktree: updates.defaultUseWorktree === undefined
           ? row.default_use_worktree
           : updates.defaultUseWorktree === null ? null : updates.defaultUseWorktree ? 1 : 0,
+        goal: updates.goal === undefined ? row.goal : updates.goal,
+        context: updates.context === undefined ? row.context : updates.context,
         aliases: updates.aliases === undefined ? row.aliases : JSON.stringify(updates.aliases),
         jira_import_enabled: updates.jiraImportEnabled === undefined ? row.jira_import_enabled : updates.jiraImportEnabled ? 1 : 0,
         jira_import_auto_start: updates.jiraImportAutoStart === undefined ? row.jira_import_auto_start : updates.jiraImportAutoStart ? 1 : 0,
@@ -215,7 +227,7 @@ export class SqliteProjectRepository implements ProjectRepository {
         UPDATE projects
         SET name = @name, repo_path = @repo_path, repo_url = @repo_url, is_default = @is_default, updated_at = @updated_at,
           default_agent_type = @default_agent_type, default_priority = @default_priority,
-          default_base_branch = @default_base_branch, default_use_worktree = @default_use_worktree, aliases = @aliases,
+          default_base_branch = @default_base_branch, default_use_worktree = @default_use_worktree, goal = @goal, context = @context, aliases = @aliases,
           jira_import_enabled = @jira_import_enabled, jira_import_interval_minutes = @jira_import_interval_minutes, jira_import_auto_start = @jira_import_auto_start,
           jira_import_last_run_at = @jira_import_last_run_at, jira_import_last_completed_at = @jira_import_last_completed_at,
           jira_import_last_success_at = @jira_import_last_success_at, jira_import_last_error = @jira_import_last_error,

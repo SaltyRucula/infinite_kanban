@@ -14,6 +14,8 @@ export interface ProjectRepository {
     defaultPriority?: Priority;
     defaultBaseBranch?: string;
     defaultUseWorktree?: boolean;
+    goal?: string;
+    context?: string;
     workerPoolEnabled?: boolean;
     aliases?: string[];
     jiraImportEnabled?: boolean;
@@ -37,6 +39,8 @@ export interface ProjectRepository {
     defaultPriority?: Priority | null;
     defaultBaseBranch?: string | null;
     defaultUseWorktree?: boolean | null;
+    goal?: string | null;
+    context?: string | null;
     workerPoolEnabled?: boolean;
     aliases?: string[];
     jiraImportEnabled?: boolean;
