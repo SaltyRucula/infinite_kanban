@@ -6,6 +6,7 @@ import type {
   AgentInfo,
   AgentType,
   Worker,
+  WorkerUsageReport,
   ColumnId,
   Priority,
   WSMessage,
@@ -132,6 +133,8 @@ export const api = {
   getAgents: () => request<AgentInfo[]>('/agents'),
 
   getWorkers: () => request<Worker[]>('/workers'),
+
+  getWorkerUsage: () => request<WorkerUsageReport>('/workers/usage'),
 
   createEnrollmentCode: (projectId?: string) =>
     request<{ code: string; expiresAt: number }>('/workers/enrollment-codes', {

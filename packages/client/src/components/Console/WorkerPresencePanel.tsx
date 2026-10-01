@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Bot, RefreshCw, X, AlertCircle, Server, Cpu } from 'lucide-react';
-import type { AgentInfo } from '@/types';
+import type { AgentInfo, WorkerUsageReport } from '@/types';
 import { api } from '@/lib/api';
 import { useWorkers } from '@/hooks/useWorkers';
 
@@ -44,6 +44,7 @@ export function WorkerPresencePanel({
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [creatingEnrollment, setCreatingEnrollment] = useState(false);
   const [copiedCommand, setCopiedCommand] = useState(false);
+  const [usage, setUsage] = useState<WorkerUsageReport | null>(null);
   const [now, setNow] = useState(Date.now());
 
   const { workers, loading: loadingWorkers, error: workerError, refetch: refetchWorkers } = useWorkers();
@@ -67,6 +68,14 @@ export function WorkerPresencePanel({
       void fetchAgents();
     }
   }, [propAgents]);
+
+  useEffect(() => {
+    let active = true;
+    void api.getWorkerUsage().then((report) => {
+      if (active) setUsage(report);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!enrollment) return;
@@ -176,6 +185,7 @@ export function WorkerPresencePanel({
               {workers.map((worker) => {
                 const isOnline = worker.status === 'online';
                 const isDisabled = worker.status === 'disabled';
+                const workerUsage = usage?.workers.find((item) => item.workerId === worker.id);
 
                 let statusDotColor = 'bg-[#34d399] shadow-[0_0_6px_#34d399]';
                 let statusTextColor = 'text-[#34d399]';
@@ -216,6 +226,16 @@ export function WorkerPresencePanel({
                         <div className="text-[10px] text-[#94a3b8] mt-0.5">
                           Last seen: {formatRelativeTime(worker.lastHeartbeatAt)}
                         </div>
+                        {workerUsage && (
+                          <div className="mt-1 text-[10px] text-[#cbd5e1]">
+                            {workerUsage.totals.totalTokens.toLocaleString()} tokens · ${workerUsage.totals.costUsd.toFixed(2)}
+                            {workerUsage.projects.map((project) => (
+                              <div key={project.projectId} className="text-[#94a3b8]">
+                                {project.projectId}: {project.totals.totalTokens.toLocaleString()} tokens · {project.tasks.length} task{project.tasks.length === 1 ? '' : 's'}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0 pt-0.5">

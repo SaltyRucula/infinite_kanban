@@ -358,10 +358,44 @@ export interface AgentEvent {
     diff?: string;
     agentType?: AgentType;
     duration?: number;
+    /** Read-only usage values emitted by a worker/provider event. */
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
     error?: string;
     clarification_request?: ClarificationRequestPayload;
     clarification_answer?: TaskClarificationAnswer;
   };
+}
+
+export interface WorkerUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+export interface WorkerUsageTask {
+  taskId: string;
+  totals: WorkerUsageTotals;
+}
+
+export interface WorkerUsageProject {
+  projectId: string;
+  totals: WorkerUsageTotals;
+  tasks: WorkerUsageTask[];
+}
+
+export interface WorkerUsageWorker {
+  workerId: string;
+  workerName: string;
+  totals: WorkerUsageTotals;
+  projects: WorkerUsageProject[];
+}
+
+export interface WorkerUsageReport {
+  totals: WorkerUsageTotals;
+  workers: WorkerUsageWorker[];
 }
 
 export interface Column {
