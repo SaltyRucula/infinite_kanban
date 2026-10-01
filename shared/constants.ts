@@ -3,7 +3,7 @@ import type { ColumnId, Priority, AgentStatus, AgentType, WorkerStatus } from '.
 export const VALID_PRIORITIES: readonly Priority[] = ['low', 'medium', 'high', 'critical'] as const;
 export const VALID_COLUMNS: readonly ColumnId[] = ['backlog', 'in-progress', 'pending', 'review', 'done'] as const;
 export const VALID_AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'planning', 'executing', 'awaiting_clarification', 'complete', 'failed'] as const;
-export const VALID_AGENT_TYPES: readonly AgentType[] = ['opencode'] as const;
+export const VALID_AGENT_TYPES: readonly AgentType[] = ['opencode', 'codex'] as const;
 export const VALID_WORKER_STATUSES: readonly WorkerStatus[] = ['online', 'offline', 'disabled'] as const;
 
 export const VALID_AGENT_STATUS_TRANSITIONS: Record<AgentStatus, readonly AgentStatus[]> = {
@@ -41,8 +41,7 @@ export function isValidAgentType(value: unknown): value is AgentType {
 }
 
 export function coerceAgentType(value: unknown): AgentType {
-  void value;
-  return 'opencode';
+  return isValidAgentType(value) ? value : 'opencode';
 }
 
 export function coerceOptionalAgentType(value: unknown): AgentType | undefined {

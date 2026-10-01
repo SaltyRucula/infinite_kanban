@@ -87,7 +87,7 @@ async function openAgentDropdown(page: Page) {
 // Tests – TaskDialog agent engine & labels
 // ---------------------------------------------------------------------------
 
-test.describe('OpenCode Engine and Labels in TaskDialog', () => {
+test.describe('Agent Engine and Labels in TaskDialog', () => {
   let createdTaskIds: string[] = [];
 
   test.beforeEach(async ({ page }) => {
@@ -103,11 +103,15 @@ test.describe('OpenCode Engine and Labels in TaskDialog', () => {
     createdTaskIds = [];
   });
 
-  test('shows static OpenCode engine label and allows editing labels', async ({ page }) => {
+  test('offers OpenCode and Codex engine options and allows editing labels', async ({ page }) => {
     await openCreateDialog(page);
     const dialog = page.locator('[role="dialog"]');
 
-    await expect(dialog.getByText('OpenCode / Sisyphus Worker')).toBeVisible();
+    const agentSelect = dialog.getByLabel('Agent Engine');
+    await expect(agentSelect).toHaveValue('opencode');
+    await expect(agentSelect.locator('option')).toHaveText(['OpenCode', 'OpenAI Codex']);
+    await agentSelect.selectOption('codex');
+    await expect(agentSelect).toHaveValue('codex');
 
     const title = `LabeledTask ${Date.now()}`;
     await page.getByPlaceholder('What needs to be done?').fill(title);

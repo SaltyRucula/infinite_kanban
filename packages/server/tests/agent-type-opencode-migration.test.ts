@@ -32,33 +32,34 @@ async function initFreshSqliteDb(dbPath: string): Promise<void> {
   });
 }
 
-test('shared AgentType validation is opencode-only', () => {
+test('shared AgentType validation supports opencode and codex', () => {
   assert.equal(isValidAgentType('opencode'), true);
-  for (const legacyAgent of ['copilot', 'claude', 'codex', 'hermes', 'openclaw', 'grok']) {
+  assert.equal(isValidAgentType('codex'), true);
+  for (const legacyAgent of ['copilot', 'claude', 'hermes', 'openclaw', 'grok']) {
     assert.equal(isValidAgentType(legacyAgent), false);
   }
 });
 
-test('sqlite migration rewrites legacy persisted agent types to opencode', async () => {
+test('sqlite migration preserves persisted codex agent types', async () => {
   const tempDir = mkdtempSync(path.join(tmpdir(), 'agent-type-sqlite-migration-'));
   const dbPath = path.join(tempDir, 'legacy.db');
 
   await initFreshSqliteDb(dbPath);
 
   const legacyDb = new Database(dbPath);
-  legacyDb.prepare('UPDATE projects SET default_agent_type = ? WHERE id = ?').run('claude', 'default');
+  legacyDb.prepare('UPDATE projects SET default_agent_type = ? WHERE id = ?').run('codex', 'default');
   legacyDb.prepare(`
     INSERT INTO tasks (id, title, description, priority, column_id, agent_status, created_at, agent_type, archived, project_id, labels)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run('task-1', 'Legacy Task', '', 'medium', 'backlog', 'idle', 1, 'codex', 0, 'default', '[]');
+  `).run('task-1', 'Codex Task', '', 'medium', 'backlog', 'idle', 1, 'codex', 0, 'default', '[]');
   legacyDb.prepare(`
     INSERT INTO templates (id, name, title, description, priority, agent_type, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run('tpl-1', 'Legacy Template', 'Template', '', 'medium', 'hermes', 1);
+  `).run('tpl-1', 'Codex Template', 'Template', '', 'medium', 'codex', 1);
   legacyDb.prepare(`
     INSERT INTO workers (id, name, token_hash, status, hostname, version, agent_types_json, max_concurrent_tasks, registered_at, last_heartbeat_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run('worker-1', 'Legacy Worker', 'hash-1', 'online', null, null, '["claude","codex"]', 1, 1, 1, 1);
+  `).run('worker-1', 'Codex Worker', 'hash-1', 'online', null, null, '["codex"]', 1, 1, 1, 1);
   legacyDb.close();
 
   await initFreshSqliteDb(dbPath);
@@ -70,10 +71,10 @@ test('sqlite migration rewrites legacy persisted agent types to opencode', async
     const projectAgentType = migratedDb.prepare('SELECT default_agent_type FROM projects WHERE id = ?').get('default') as { default_agent_type: string | null };
     const workerAgentTypes = migratedDb.prepare('SELECT agent_types_json, token_issued_at FROM workers WHERE id = ?').get('worker-1') as { agent_types_json: string; token_issued_at: number };
 
-    assert.equal(taskAgentType.agent_type, 'opencode');
-    assert.equal(templateAgentType.agent_type, 'opencode');
-    assert.equal(projectAgentType.default_agent_type, 'opencode');
-    assert.equal(workerAgentTypes.agent_types_json, '["opencode"]');
+    assert.equal(taskAgentType.agent_type, 'codex');
+    assert.equal(templateAgentType.agent_type, 'codex');
+    assert.equal(projectAgentType.default_agent_type, 'codex');
+    assert.equal(workerAgentTypes.agent_types_json, '["codex"]');
     assert.equal(workerAgentTypes.token_issued_at, 1);
   } finally {
     migratedDb.close();
@@ -110,7 +111,7 @@ test('sqlite repositories normalize invalid persisted agent types to opencode', 
   }
 });
 
-test('postgres migration includes opencode normalization for persisted agent-type columns', async () => {
+test('postgres migration preserves supported agent types for persisted agent-type columns', async () => {
   const executedSql: string[] = [];
   const pool = {
     async query(queryText: string): Promise<{ rows: Array<{ column_name: string } | { delete_rule: string } | { constraint_name: string } | { indexdef: string }> }> {
@@ -128,10 +129,10 @@ test('postgres migration includes opencode normalization for persisted agent-typ
 
   await initPostgresDatabase(pool as Pool);
 
-  assert.ok(executedSql.some((sql) => /UPDATE\s+tasks\s+SET\s+agent_type\s*=\s*'opencode'/i.test(sql)), 'expected tasks migration normalization query');
-  assert.ok(executedSql.some((sql) => /UPDATE\s+templates\s+SET\s+agent_type\s*=\s*'opencode'/i.test(sql)), 'expected templates migration normalization query');
-  assert.ok(executedSql.some((sql) => /UPDATE\s+projects\s+SET\s+default_agent_type\s*=\s*'opencode'/i.test(sql)), 'expected project migration normalization query');
-  assert.ok(executedSql.some((sql) => /UPDATE\s+workers\s+SET\s+agent_types_json\s*=\s*'\["opencode"\]'/i.test(sql)), 'expected worker migration normalization query');
+  assert.ok(executedSql.some((sql) => /UPDATE\s+tasks\s+SET\s+agent_type\s*=\s*'opencode'.*NOT IN \('opencode', 'codex'\)/i.test(sql)), 'expected tasks migration to preserve codex');
+  assert.ok(executedSql.some((sql) => /UPDATE\s+templates\s+SET\s+agent_type\s*=\s*'opencode'.*NOT IN \('opencode', 'codex'\)/i.test(sql)), 'expected templates migration to preserve codex');
+  assert.ok(executedSql.some((sql) => /UPDATE\s+projects\s+SET\s+default_agent_type\s*=\s*'opencode'.*NOT IN \('opencode', 'codex'\)/i.test(sql)), 'expected project migration to preserve codex');
+  assert.ok(executedSql.some((sql) => /UPDATE\s+workers\s+SET\s+agent_types_json\s*=\s*'\["opencode"\]'.*ARRAY\['opencode', 'codex'\]/i.test(sql)), 'expected worker migration to preserve codex');
   assert.ok(executedSql.some((sql) => /ALTER TABLE workers ADD COLUMN token_issued_at BIGINT/i.test(sql)), 'expected workers token issuance migration column');
   assert.ok(executedSql.some((sql) => /UPDATE\s+workers\s+SET\s+token_issued_at\s*=\s*registered_at\s+WHERE\s+token_issued_at\s+IS NULL/i.test(sql)), 'expected workers token issuance backfill');
 });

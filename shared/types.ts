@@ -1,7 +1,7 @@
 export type Priority = 'low' | 'medium' | 'high' | 'critical';
 export type ColumnId = 'backlog' | 'in-progress' | 'pending' | 'review' | 'done';
 export type AgentStatus = 'idle' | 'planning' | 'executing' | 'awaiting_clarification' | 'complete' | 'failed';
-export type AgentType = 'opencode';
+export type AgentType = 'opencode' | 'codex';
 export type WorkerStatus = 'online' | 'offline' | 'disabled';
 
 export interface AgentInfo {

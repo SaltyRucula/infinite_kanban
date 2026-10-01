@@ -74,6 +74,22 @@ test('startAgentSdkTask reports complete when execute() resolves complete with n
   assert.equal(result.status, 'complete');
 });
 
+test('startAgentSdkTask runs a task assigned to the codex provider', async () => {
+  const provider = createFakeProvider([
+    { id: 'e1', contextId: 'task-1', type: 'output', content: 'did the work', timestamp: Date.now() },
+  ]);
+
+  const live = await startAgentSdkTask({
+    task: { ...task, agentType: 'codex' as WorkerTaskAssignment['agentType'] },
+    workingDirectory: '/tmp/workspace',
+    sendEvent: async () => {},
+    providerFactory: () => provider,
+  });
+  const result = await live.done;
+
+  assert.equal(result.status, 'complete');
+});
+
 test('startAgentSdkTask reports awaiting_input when the agent output ends with a blocking question', async () => {
   const provider = createFakeProvider([
     { id: 'e1', contextId: 'task-1', type: 'output', content: 'Checked the repo. ', timestamp: Date.now() },
