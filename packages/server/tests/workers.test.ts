@@ -86,7 +86,7 @@ class FakeTaskRepository implements TaskRepository {
   async delete(): Promise<boolean> { return false; }
   async count(): Promise<number> { return 0; }
   async insertEvent(event: AgentEvent): Promise<void> { this.events.push(event); }
-  async getEventsByTaskId(): Promise<AgentEvent[]> { return []; }
+  async getEventsByTaskId(taskId: string): Promise<AgentEvent[]> { return this.events.filter((event) => event.taskId === taskId); }
   async deleteEventsByTaskId(): Promise<void> {}
   async getArchivedTasks(): Promise<Task[]> { return []; }
 }
@@ -423,4 +423,37 @@ test('worker session registration rejects bridge URLs with task ids that do not 
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test('worker usage aggregates event telemetry by worker, project, and task', async () => {
+  await withServer(async (baseUrl, taskRepo) => {
+    taskRepo.getAll = async () => [task];
+    taskRepo.events.push({
+      id: 'usage-1',
+      taskId: task.id,
+      type: 'complete',
+      content: 'done',
+      timestamp: 1,
+      metadata: { inputTokens: 120, outputTokens: 80, costUsd: 0.42 } as unknown as AgentEvent['metadata'],
+    });
+
+    const response = await fetch(`${baseUrl}/api/workers/usage`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      totals: { inputTokens: 120, outputTokens: 80, totalTokens: 200, costUsd: 0.42 },
+      workers: [{
+        workerId: 'worker-1',
+        workerName: 'worker',
+        totals: { inputTokens: 120, outputTokens: 80, totalTokens: 200, costUsd: 0.42 },
+        projects: [{
+          projectId: 'project-secret',
+          totals: { inputTokens: 120, outputTokens: 80, totalTokens: 200, costUsd: 0.42 },
+          tasks: [{
+            taskId: 'task-1',
+            totals: { inputTokens: 120, outputTokens: 80, totalTokens: 200, costUsd: 0.42 },
+          }],
+        }],
+      }],
+    });
+  });
 });

@@ -108,6 +108,9 @@ function sanitizeMetadata(
   if (typeof record.diff === 'string') result.diff = sanitizeLocalText(record.diff, workspacePath);
   if (typeof record.agentType === 'string') result.agentType = record.agentType as WorkerMetadata['agentType'];
   if (typeof record.duration === 'number' && Number.isFinite(record.duration)) result.duration = record.duration;
+  if (typeof record.inputTokens === 'number' && Number.isFinite(record.inputTokens) && record.inputTokens >= 0) result.inputTokens = record.inputTokens;
+  if (typeof record.outputTokens === 'number' && Number.isFinite(record.outputTokens) && record.outputTokens >= 0) result.outputTokens = record.outputTokens;
+  if (typeof record.costUsd === 'number' && Number.isFinite(record.costUsd) && record.costUsd >= 0) result.costUsd = record.costUsd;
   if (typeof record.error === 'string') result.error = sanitizeLocalText(record.error, workspacePath);
   if (record.clarification_request) {
     result.clarification_request = record.clarification_request as WorkerMetadata['clarification_request'];

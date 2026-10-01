@@ -37,10 +37,11 @@ function validWorkerEventMetadata(value: unknown): value is NonNullable<AgentEve
   if (value === undefined) return true;
   if (!isPlainRecord(value)) return false;
   const stringKeys = new Set(['file', 'fileEventType', 'language', 'command', 'diff', 'error']);
+  const nonNegativeNumberKeys = new Set(['duration', 'inputTokens', 'outputTokens', 'costUsd']);
   for (const [key, item] of Object.entries(value)) {
     if (stringKeys.has(key) && typeof item === 'string' && item.length <= MAX_DESCRIPTION_LENGTH) continue;
     if (key === 'agentType' && isValidAgentType(item)) continue;
-    if (key === 'duration' && typeof item === 'number' && Number.isFinite(item) && item >= 0) continue;
+    if (nonNegativeNumberKeys.has(key) && typeof item === 'number' && Number.isFinite(item) && item >= 0) continue;
     if ((key === 'clarification_request' || key === 'clarification_answer') && isPlainRecord(item)) continue;
     return false;
   }
@@ -57,6 +58,31 @@ function workerEventRateLimited(timestamps: Map<string, { startedAt: number; cou
   if (current.count >= WORKER_EVENT_RATE_LIMIT_MAX) return true;
   current.count += 1;
   return false;
+}
+
+type UsageTotals = { inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number };
+type UsageTask = { taskId: string; totals: UsageTotals };
+type UsageProject = { projectId: string; totals: UsageTotals; tasks: UsageTask[] };
+type UsageWorker = { workerId: string; workerName: string; totals: UsageTotals; projects: UsageProject[] };
+
+function emptyUsageTotals(): UsageTotals {
+  return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 };
+}
+
+function addUsageTotals(target: UsageTotals, source: UsageTotals): void {
+  target.inputTokens += source.inputTokens;
+  target.outputTokens += source.outputTokens;
+  target.totalTokens += source.totalTokens;
+  target.costUsd += source.costUsd;
+}
+
+function usageFromEvent(event: AgentEvent): UsageTotals | undefined {
+  const metadata = event.metadata;
+  const inputTokens = metadata?.inputTokens ?? 0;
+  const outputTokens = metadata?.outputTokens ?? 0;
+  const costUsd = metadata?.costUsd ?? 0;
+  if (!inputTokens && !outputTokens && !costUsd) return undefined;
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, costUsd };
 }
 
 function publicWorker(worker: Worker & { readonly tokenHash?: string; readonly tokenIssuedAt?: number }): Worker {
@@ -626,6 +652,48 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     broadcastTaskUpdate(settled);
     res.json({ task: toWorkerTaskAssignment(settled) });
+  }));
+
+  router.get('/usage', asyncHandler(async (_req: Request, res: Response) => {
+    const visibleWorkers = res.locals.principal?.kind === 'service'
+      ? (await workers.list()).filter((worker) => worker.ownerId === res.locals.principal.id)
+      : await workers.list();
+    const visibleById = new Map(visibleWorkers.map((worker) => [worker.id, worker]));
+    const usageByWorker = new Map<string, UsageWorker>();
+
+    for (const task of await tasks.getAll()) {
+      const workerId = task.assignedWorkerId;
+      if (!workerId) continue;
+      const worker = visibleById.get(workerId);
+      if (!worker) continue;
+      for (const event of await tasks.getEventsByTaskId(task.id)) {
+        const eventUsage = usageFromEvent(event);
+        if (!eventUsage) continue;
+        let workerUsage = usageByWorker.get(workerId);
+        if (!workerUsage) {
+          workerUsage = { workerId, workerName: worker.name, totals: emptyUsageTotals(), projects: [] };
+          usageByWorker.set(workerId, workerUsage);
+        }
+        let projectUsage = workerUsage.projects.find((project) => project.projectId === task.projectId);
+        if (!projectUsage) {
+          projectUsage = { projectId: task.projectId, totals: emptyUsageTotals(), tasks: [] };
+          workerUsage.projects.push(projectUsage);
+        }
+        let taskUsage = projectUsage.tasks.find((item) => item.taskId === task.id);
+        if (!taskUsage) {
+          taskUsage = { taskId: task.id, totals: emptyUsageTotals() };
+          projectUsage.tasks.push(taskUsage);
+        }
+        addUsageTotals(workerUsage.totals, eventUsage);
+        addUsageTotals(projectUsage.totals, eventUsage);
+        addUsageTotals(taskUsage.totals, eventUsage);
+      }
+    }
+
+    const workersUsage = [...usageByWorker.values()];
+    const totals = emptyUsageTotals();
+    for (const workerUsage of workersUsage) addUsageTotals(totals, workerUsage.totals);
+    res.json({ totals, workers: workersUsage });
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {

@@ -93,6 +93,9 @@ function sanitizeMetadata(
     result.agentType = record.agentType as WorkerEventMetadata['agentType'];
   }
   if (typeof record.duration === 'number' && Number.isFinite(record.duration)) result.duration = record.duration;
+  if (typeof record.inputTokens === 'number' && Number.isFinite(record.inputTokens) && record.inputTokens >= 0) result.inputTokens = record.inputTokens;
+  if (typeof record.outputTokens === 'number' && Number.isFinite(record.outputTokens) && record.outputTokens >= 0) result.outputTokens = record.outputTokens;
+  if (typeof record.costUsd === 'number' && Number.isFinite(record.costUsd) && record.costUsd >= 0) result.costUsd = record.costUsd;
   const error = typeof record.error === 'string' ? sanitizeLocalText(record.error, workspacePath) : undefined;
   if (error) result.error = error;
   if (record.clarification_request) {
