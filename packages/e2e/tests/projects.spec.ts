@@ -874,7 +874,7 @@ test.describe('Projects page', () => {
     const project = await createProject(request, {
       name: `Default Agent Project ${Date.now()}`,
       repoPath,
-      defaultAgentType: 'opencode',
+      defaultAgentType: 'codex',
       defaultPriority: 'high',
     });
     createdProjectIds.push(project.id);
@@ -886,9 +886,9 @@ test.describe('Projects page', () => {
     await waitForBoard(page);
 
     await openNewTaskDialog(page);
-    // OpenCode is the only engine; the project's default priority is prefilled.
+    // The project's selected engine and priority are prefilled in the dialog.
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('OpenCode / Sisyphus Worker')).toBeVisible();
+    await expect(dialog.getByLabel('Agent Engine')).toHaveValue('codex');
     await expect(dialog.getByRole('button', { name: /High/ })).toBeVisible();
   });
 
