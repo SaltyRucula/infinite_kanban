@@ -247,6 +247,8 @@ async function register(args: Args, enrollmentCode?: string): Promise<void> {
   // to the agent-sdk profile) and persist it, so no manual workspace.json edit
   // is required for either runner profile.
   const runner = resolveRunnerProfile(args.runner, args.agent);
+  const acceptedProjectIds = (args['accepted-project-ids'] ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  const acceptedLabels = (args['accepted-labels'] ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/workers/register`, {
     method: 'POST',
     headers: {
@@ -256,6 +258,8 @@ async function register(args: Args, enrollmentCode?: string): Promise<void> {
     body: JSON.stringify({
       name,
       agentTypes,
+      acceptedProjectIds,
+      acceptedLabels,
       hostname: os.hostname(),
       version: '0.1.0',
       ...(enrollmentCode ? { enrollmentCode } : {}),

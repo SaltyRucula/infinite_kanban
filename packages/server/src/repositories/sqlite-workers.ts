@@ -8,7 +8,7 @@ import type {
 } from './worker-types.js';
 import { coerceAgentType } from '@ai-agent-board/shared/constants.js';
 
-interface WorkerRow { id: string; name: string; token_hash: string; status: Worker['status']; hostname: string | null; version: string | null; agent_types_json: string; max_concurrent_tasks: number; registered_at: number; last_heartbeat_at: number; updated_at: number; disabled_at: number | null; token_issued_at?: number | null; owner_id?: string | null }
+interface WorkerRow { id: string; name: string; token_hash: string; status: Worker['status']; hostname: string | null; version: string | null; agent_types_json: string; max_concurrent_tasks: number; registered_at: number; last_heartbeat_at: number; updated_at: number; disabled_at: number | null; token_issued_at?: number | null; owner_id?: string | null; accepted_project_ids_json?: string | null; accepted_labels_json?: string | null }
 interface WorkerTaskSessionRow { session_id: string; base_url: string; updated_at: number }
 interface WorkerTaskCommandRow {
   id: string;
@@ -21,8 +21,13 @@ interface WorkerTaskCommandRow {
   answer: string | null;
 }
 
+function parseStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try { return (JSON.parse(value) as unknown[]).filter((item): item is string => typeof item === 'string'); } catch { return []; }
+}
+
 function rowToWorker(row: WorkerRow): Worker & { readonly tokenHash: string; readonly tokenIssuedAt: number } {
-  return { id: row.id, name: row.name, status: row.status, agentTypes: (JSON.parse(row.agent_types_json) as unknown[]).map(coerceAgentType), hostname: row.hostname ?? undefined, version: row.version ?? undefined, maxConcurrentTasks: row.max_concurrent_tasks, registeredAt: row.registered_at, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at, ownerId: row.owner_id ?? undefined, tokenHash: row.token_hash, tokenIssuedAt: row.token_issued_at ?? row.registered_at };
+  return { id: row.id, name: row.name, status: row.status, agentTypes: (JSON.parse(row.agent_types_json) as unknown[]).map(coerceAgentType), hostname: row.hostname ?? undefined, version: row.version ?? undefined, maxConcurrentTasks: row.max_concurrent_tasks, registeredAt: row.registered_at, lastHeartbeatAt: row.last_heartbeat_at, updatedAt: row.updated_at, ownerId: row.owner_id ?? undefined, acceptedProjectIds: parseStringArray(row.accepted_project_ids_json), acceptedLabels: parseStringArray(row.accepted_labels_json), tokenHash: row.token_hash, tokenIssuedAt: row.token_issued_at ?? row.registered_at };
 }
 
 function rowToTaskSession(row: WorkerTaskSessionRow): RegisteredWorkerOpenCodeSession {
@@ -53,12 +58,12 @@ export class SqliteWorkerRepository implements WorkerRepository {
   constructor(private readonly db: Database.Database) {}
 
   async register(input: WorkerRegistration): Promise<Worker> {
-    this.db.prepare(`INSERT INTO workers (id,name,token_hash,status,hostname,version,agent_types_json,max_concurrent_tasks,registered_at,last_heartbeat_at,updated_at,token_issued_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(input.id, input.name, input.tokenHash, 'online', input.hostname ?? null, input.version ?? null, JSON.stringify(input.agentTypes), input.maxConcurrentTasks, input.registeredAt, input.registeredAt, input.registeredAt, input.registeredAt, input.ownerId ?? null);
+    this.db.prepare(`INSERT INTO workers (id,name,token_hash,status,hostname,version,agent_types_json,max_concurrent_tasks,registered_at,last_heartbeat_at,updated_at,token_issued_at,owner_id,accepted_project_ids_json,accepted_labels_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(input.id, input.name, input.tokenHash, 'online', input.hostname ?? null, input.version ?? null, JSON.stringify(input.agentTypes), input.maxConcurrentTasks, input.registeredAt, input.registeredAt, input.registeredAt, input.registeredAt, input.ownerId ?? null, JSON.stringify(input.acceptedProjectIds ?? []), JSON.stringify(input.acceptedLabels ?? []));
     return this.getById(input.id) as Promise<Worker>;
   }
 
-  async heartbeat(id: string, at: number): Promise<Worker | undefined> {
-    this.db.prepare(`UPDATE workers SET status='online', last_heartbeat_at=?, updated_at=? WHERE id=? AND status <> 'disabled'`).run(at, at, id);
+  async heartbeat(id: string, at: number, acceptedProjectIds?: readonly string[], acceptedLabels?: readonly string[]): Promise<Worker | undefined> {
+    this.db.prepare(`UPDATE workers SET status='online', last_heartbeat_at=?, updated_at=?, accepted_project_ids_json=COALESCE(?, accepted_project_ids_json), accepted_labels_json=COALESCE(?, accepted_labels_json) WHERE id=? AND status <> 'disabled'`).run(at, at, acceptedProjectIds ? JSON.stringify(acceptedProjectIds) : null, acceptedLabels ? JSON.stringify(acceptedLabels) : null, id);
     return this.getById(id);
   }
 

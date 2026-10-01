@@ -6,6 +6,7 @@ import type { TaskRepository } from '../repositories/types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { WorkerRepository } from '../repositories/worker-types.js';
+import { workerAcceptsTask } from '../worker-consent.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
 import { buildOpenCodeSessionUrl } from '../opencode/session-link.js';
@@ -183,6 +184,15 @@ export function createAgentRouter(
     }
     if (!task.assignedWorkerId) {
       res.status(409).json({ error: 'worker assignment is required' });
+      return;
+    }
+    const worker = workerRepo ? await workerRepo.getById(task.assignedWorkerId) : undefined;
+    if (!worker) {
+      res.status(404).json({ error: 'assigned worker not found' });
+      return;
+    }
+    if (!workerAcceptsTask(worker, task)) {
+      res.status(403).json({ error: 'worker has not opted into this task' });
       return;
     }
     if (agentManager.isRunning(task.id)) {

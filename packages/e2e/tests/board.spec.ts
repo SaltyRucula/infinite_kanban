@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { API, waitForBoard } from './helpers';
+import { API, registerWorker, waitForBoard } from './helpers';
 
 // The root view is the Worker Operations Console (saved views + task queue +
 // task detail panel). These specs cover its task workflows; the legacy
@@ -325,9 +325,10 @@ test.describe('Retry Failed Tasks', () => {
   test('failed task can be re-claimed via the run endpoint', async ({ request }) => {
     const task = await createTaskViaApi(request, { title: 'Reclaim Test Task', columnId: 'in-progress' });
     createdTaskIds.push(task.id);
+    const worker = await registerWorker(request, `reclaim-worker-${Date.now()}`);
 
     await request.patch(`${API}/api/tasks/${task.id}`, {
-      data: { agentStatus: 'failed', assignedWorkerId: 'worker-1' },
+      data: { agentStatus: 'failed', assignedWorkerId: worker.id },
     });
 
     const run = await request.post(`${API}/api/tasks/${task.id}/run`);
@@ -352,8 +353,10 @@ test.describe('Worker-owned task git actions', () => {
     const branchFields = { columnId: 'in-progress', branchName: 'task/feature-branch', baseBranch: 'main', useWorktree: true };
     const hostTask = await createTaskViaApi(request, { title: hostTitle, ...branchFields });
     const workerTask = await createTaskViaApi(request, { title: workerTitle, ...branchFields });
+    const worker = await registerWorker(request, `git-actions-worker-${Date.now()}`);
     createdTaskIds.push(hostTask.id, workerTask.id);
-    await request.patch(`${API}/api/tasks/${workerTask.id}`, { data: { assignedWorkerId: 'worker-1' } });
+    const assignment = await request.patch(`${API}/api/tasks/${workerTask.id}`, { data: { assignedWorkerId: worker.id } });
+    expect(assignment.ok()).toBeTruthy();
 
     await page.goto('/');
     await waitForBoard(page);

@@ -157,7 +157,14 @@ export async function startInProcessRun(
 export async function registerWorker(request: any, name: string): Promise<{ id: string; token: string }> {
   const res = await request.post(`${API}/api/workers/register`, {
     headers: workerRegistrationHeaders,
-    data: { name, agentTypes: ['opencode'], maxConcurrentTasks: 1, hostname: `${name}-host` },
+    data: {
+      name,
+      agentTypes: ['opencode'],
+      maxConcurrentTasks: 1,
+      hostname: `${name}-host`,
+      acceptedProjectIds: ['default'],
+      acceptedLabels: [],
+    },
   });
   expect(res.ok()).toBeTruthy();
   const body = await res.json();

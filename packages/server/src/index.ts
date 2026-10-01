@@ -35,6 +35,7 @@ import { PostgresWorkerRepository } from './repositories/postgres-workers.js';
 import type { WorkerRepository } from './repositories/worker-types.js';
 import type { EnrollmentCodeRepository } from './repositories/enrollment-code-types.js';
 import { createWorkersRouter } from './routes/workers.js';
+import { workerAcceptsTask } from './worker-consent.js';
 import { broadcastTaskUpdate, broadcastWorkerUpdate } from './routes/helpers.js';
 import { WORKER_HEARTBEAT_INTERVAL_MS, WORKER_STALE_AFTER_MS } from '@ai-agent-board/shared/constants.js';
 import {
@@ -153,7 +154,7 @@ const agentManager = new AgentManager();
   app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager, () => jiraImportScheduler?.requestTick()));
   app.use('/api/orchestrations', createOrchestrationsRouter(taskRepo, projectRepo, agentManager));
   app.use('/api/jira', createJiraRouter(projectRepo, jiraImportExecutor));
-  app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo));
+  app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo, workerRepo));
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));
   app.use('/api/tasks', createGitRouter(taskRepo, agentManager));
   app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo, enrollmentCodeRepo));
@@ -167,6 +168,7 @@ const agentManager = new AgentManager();
         const worker = await workerRepo.getById(workerId);
         if (!worker) { res.status(404).json({ error: 'worker not found' }); return; }
         if (worker.status === 'disabled') { res.status(409).json({ error: 'worker is disabled' }); return; }
+        if (!workerAcceptsTask(worker, task)) { res.status(403).json({ error: 'worker has not opted into this task' }); return; }
       }
       if (task.agentStatus === 'planning' || task.agentStatus === 'executing') { res.status(409).json({ error: 'cannot assign a running task' }); return; }
       const updated = await taskRepo.assignToWorker(task.id, workerId);

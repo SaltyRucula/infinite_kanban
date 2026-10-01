@@ -319,6 +319,23 @@ test('PATCH /api/tasks/:id rejects repoPath and worktreePath and returns a porta
   });
 });
 
+test('PATCH /api/tasks/:id rejects assignment to a worker that has not opted into the task', async () => {
+  const { repo, calls } = createTaskRepo([makeTask()]);
+  const app = jsonApp();
+  app.use('/api/tasks', createTaskRouter(repo, createManager(calls), createProjectRepo(makeProject()), createWorkerRepo()));
+
+  await withApp(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignedWorkerId: 'worker-1' }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'worker has not opted into this task');
+  });
+});
+
 test('POST /api/tasks/:id/configure rejects repoPath and worktreePath', async () => {
   const { repo, calls } = createTaskRepo([makeTask()]);
   const app = jsonApp();
@@ -354,29 +371,19 @@ test('POST /api/tasks/:id/run requires a worker and never starts AgentManager di
   });
 });
 
-test('POST /api/tasks/:id/run preserves durable worker run request and returns a portable task', async () => {
+test('POST /api/tasks/:id/run rejects a worker that has not opted into the task project', async () => {
   const { repo, calls } = createTaskRepo([makeTask({ id: 'task-2', assignedWorkerId: 'worker-1' })]);
   const app = jsonApp();
-  app.use('/api/tasks', createAgentRouter(repo, createManager(calls), undefined, createProjectRepo(makeProject())));
-  app.use('/api/workers', createWorkersRouter(repo, createWorkerRepo()));
+  app.use('/api/tasks', createAgentRouter(repo, createManager(calls), undefined, createProjectRepo(makeProject()), createWorkerRepo()));
 
   await withApp(app, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/tasks/task-2/run`, { method: 'POST' });
     const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(calls.requestRun, 1);
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'worker has not opted into this task');
+    assert.equal(calls.requestRun, 0);
     assert.equal(calls.claimRun, 0);
     assert.equal(calls.startAgent, 0);
-    assert.equal('repoPath' in body, false);
-    assert.equal('worktreePath' in body, false);
-
-    const claimResponse = await fetch(`${baseUrl}/api/workers/me/tasks/task-2/claim`, {
-      method: 'POST',
-      headers: { authorization: 'Bearer worker-token' },
-    });
-    const claimBody = await claimResponse.json();
-    assert.equal(claimResponse.status, 200);
-    assert.equal(claimBody.task.id, 'task-2');
   });
 });
 

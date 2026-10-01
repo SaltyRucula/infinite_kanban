@@ -17,6 +17,7 @@ import ImageUpload from './ImageUpload';
 interface TaskDialogProps {
   open: boolean;
   onClose: () => void;
+  projectId: string;
   onSubmit: (task: { title: string; description: string; priority: Priority; columnId: ColumnId; agentType: AgentType; autoRun?: boolean; branchName?: string; baseBranch?: string; useWorktree?: boolean; timeoutMinutes?: number | null; labels?: string[] }) => Promise<unknown>;
   /** When set, dialog is in edit mode with pre-populated fields */
   editTask?: Task | null;
@@ -33,7 +34,7 @@ interface TaskDialogProps {
 
 const priorities = PRIORITY_OPTIONS;
 
-export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, projectDefaults }: TaskDialogProps) {
+export function TaskDialog({ open, onClose, projectId, onSubmit, editTask, onEditSubmit, projectDefaults }: TaskDialogProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
@@ -59,20 +60,29 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
   const defaultBaseBranch = projectDefaults?.defaultBaseBranch ?? 'main';
   const defaultUseWorktree = projectDefaults?.defaultUseWorktree ?? false;
 
+  const taskProjectId = editTask?.projectId ?? projectId;
+  const taskLabels = useMemo(() => labelsInput
+    .split(',')
+    .map((label) => label.trim().toLowerCase())
+    .filter(Boolean), [labelsInput]);
+
   const matchingOnlineWorkers = useMemo(() => {
     return workers.filter(
-      (w) => w.status === 'online' && w.agentTypes?.includes(agentType),
+      (w) => w.status === 'online'
+        && w.agentTypes?.includes(agentType)
+        && (w.acceptedProjectIds ?? []).includes(taskProjectId)
+        && taskLabels.every((label) => (w.acceptedLabels ?? []).includes(label)),
     );
-  }, [workers, agentType]);
+  }, [workers, agentType, taskProjectId, taskLabels]);
 
   useEffect(() => {
     if (selectedWorkerId) {
       const currentWorker = workers.find((w) => w.id === selectedWorkerId);
-      if (!currentWorker || !currentWorker.agentTypes?.includes(agentType) || currentWorker.status !== 'online') {
+      if (!currentWorker || !matchingOnlineWorkers.some((worker) => worker.id === currentWorker.id)) {
         setSelectedWorkerId(null);
       }
     }
-  }, [agentType, workers, selectedWorkerId]);
+  }, [matchingOnlineWorkers, selectedWorkerId]);
 
   // Pre-populate fields when editing
   useEffect(() => {
@@ -128,10 +138,7 @@ export function TaskDialog({ open, onClose, onSubmit, editTask, onEditSubmit, pr
       ? (branchName.trim() || `task/${slugify(title.trim())}`)
       : undefined;
 
-    const parsedLabels = labelsInput
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const parsedLabels = taskLabels;
 
     const gitFields = {
       branchName: effectiveBranch,

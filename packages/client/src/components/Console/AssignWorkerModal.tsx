@@ -27,9 +27,12 @@ export function AssignWorkerModal({
   // Filter available registered workers: online + supports opencode agent type
   const matchingOnlineWorkers = useMemo(() => {
     return workers.filter(
-      (w) => w.status === 'online' && (!w.agentTypes || w.agentTypes.includes('opencode')),
+      (w) => w.status === 'online'
+        && (!w.agentTypes || w.agentTypes.includes('opencode'))
+        && (w.acceptedProjectIds ?? []).includes(task?.projectId ?? '')
+        && (task?.labels ?? []).every((label) => (w.acceptedLabels ?? []).includes(label.toLowerCase())),
     );
-  }, [workers]);
+  }, [workers, task]);
 
   useEffect(() => {
     if (isOpen && task) {

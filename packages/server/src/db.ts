@@ -211,7 +211,9 @@ function migrate(db: Database.Database): void {
       updated_at INTEGER NOT NULL,
       disabled_at INTEGER,
       token_issued_at INTEGER,
-      owner_id TEXT
+      owner_id TEXT,
+      accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
+      accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     )
   `);
   const workerCols = db.pragma('table_info(workers)') as { name: string }[];
@@ -220,6 +222,12 @@ function migrate(db: Database.Database): void {
   }
   if (!workerCols.some((column) => column.name === 'owner_id')) {
     db.exec(`ALTER TABLE workers ADD COLUMN owner_id TEXT`);
+  }
+  if (!workerCols.some((column) => column.name === 'accepted_project_ids_json')) {
+    db.exec(`ALTER TABLE workers ADD COLUMN accepted_project_ids_json TEXT NOT NULL DEFAULT '[]'`);
+  }
+  if (!workerCols.some((column) => column.name === 'accepted_labels_json')) {
+    db.exec(`ALTER TABLE workers ADD COLUMN accepted_labels_json TEXT NOT NULL DEFAULT '[]'`);
   }
   db.exec(`UPDATE workers SET token_issued_at = registered_at WHERE token_issued_at IS NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
@@ -641,7 +649,9 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       updated_at BIGINT NOT NULL,
       disabled_at BIGINT,
       token_issued_at BIGINT,
-      owner_id TEXT
+      owner_id TEXT,
+      accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
+      accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     )
   `);
   const { rows: workerColumnRows } = await pool.query(`
@@ -653,6 +663,12 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   }
   if (!workerColumnRows.some((row: { column_name: string }) => row.column_name === 'owner_id')) {
     await pool.query('ALTER TABLE workers ADD COLUMN owner_id TEXT');
+  }
+  if (!workerColumnRows.some((row: { column_name: string }) => row.column_name === 'accepted_project_ids_json')) {
+    await pool.query(`ALTER TABLE workers ADD COLUMN accepted_project_ids_json TEXT NOT NULL DEFAULT '[]'`);
+  }
+  if (!workerColumnRows.some((row: { column_name: string }) => row.column_name === 'accepted_labels_json')) {
+    await pool.query(`ALTER TABLE workers ADD COLUMN accepted_labels_json TEXT NOT NULL DEFAULT '[]'`);
   }
   await pool.query('UPDATE workers SET token_issued_at = registered_at WHERE token_issued_at IS NULL');
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workers_heartbeat ON workers(status, last_heartbeat_at)`);
