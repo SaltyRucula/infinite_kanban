@@ -150,7 +150,7 @@ test('enrollment registration rejects expired codes and registration without eit
   }
 });
 
-test('existing bearer-scoped worker registration remains available without an enrollment code', async () => {
+test('bearer-scoped worker registration remains available and records its derived owner without an enrollment code', async () => {
   const originalServiceTokens = process.env.SERVICE_TOKENS;
   delete process.env.API_KEY;
   process.env.SERVICE_TOKENS = JSON.stringify([{ token: 'worker-registrar', scopes: ['workers:register'] }]);
@@ -164,7 +164,7 @@ test('existing bearer-scoped worker registration remains available without an en
       });
       assert.equal(response.status, 200);
       const body = await response.json() as { worker: { ownerId?: string }; token: string };
-      assert.equal(body.worker.ownerId, undefined);
+      assert.equal(body.worker.ownerId, `service:${crypto.createHash('sha256').update('worker-registrar').digest('hex')}`);
       assert.equal(typeof body.token, 'string');
     });
   } finally {

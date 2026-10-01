@@ -59,7 +59,7 @@ function workerEventRateLimited(timestamps: Map<string, { startedAt: number; cou
 }
 
 function publicWorker(worker: Worker & { readonly tokenHash?: string; readonly tokenIssuedAt?: number }): Worker {
-  const { tokenHash: _tokenHash, tokenIssuedAt: _tokenIssuedAt, ...result } = worker;
+  const { tokenHash: _tokenHash, tokenIssuedAt: _tokenIssuedAt, hostname: _hostname, ...result } = worker;
   return result;
 }
 
@@ -233,6 +233,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     const now = Date.now();
     const credentials = tokenHash();
+    const ownerId = enrollment?.ownerId ?? res.locals.principal?.id;
     const registration: WorkerRegistration = {
       id: uuid(),
       name,
@@ -240,7 +241,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       agentTypes: agentTypes as AgentType[],
       maxConcurrentTasks,
       registeredAt: now,
-      ...(enrollment ? { ownerId: enrollment.ownerId } : {}),
+      ...(ownerId ? { ownerId } : {}),
       ...(req.body.hostname ? { hostname: req.body.hostname } : {}),
       ...(req.body.version ? { version: req.body.version } : {}),
     };
@@ -606,7 +607,10 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
   }));
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {
-    res.json((await workers.list()).map(publicWorker));
+    const visibleWorkers = res.locals.principal?.kind === 'service'
+      ? (await workers.list()).filter((worker) => worker.ownerId === res.locals.principal.id)
+      : await workers.list();
+    res.json(visibleWorkers.map(publicWorker));
   }));
 
   return router;
