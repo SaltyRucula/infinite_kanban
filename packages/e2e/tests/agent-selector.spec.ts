@@ -161,8 +161,10 @@ test.describe('Worker Selection in TaskDialog', () => {
   });
 
   test('lists matching online worker and assigns it on task creation with no path required', async ({ page, request }) => {
+    // The board request fixture is authenticated as the owning principal.
+    // Register through that same context so ownership scoping still exposes
+    // this worker to the user who is creating the task.
     const regRes = await request.post(`${API}/api/workers/register`, {
-      headers: workerRegistrationHeaders,
       data: {
         name: 'OpencodeWorker-1',
         agentTypes: ['opencode'],

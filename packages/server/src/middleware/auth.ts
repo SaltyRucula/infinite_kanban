@@ -4,14 +4,14 @@ import crypto from 'crypto';
 export type ServiceScope = 'projects:read' | 'agents:read' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register' | 'workers:manage';
 const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'];
 
-interface Credential { token?: string; sha256?: string; scopes: ServiceScope[] }
+interface Credential { token?: string; sha256?: string; id?: string; scopes: ServiceScope[] }
 
 function credentials(): Credential[] {
   const raw = process.env.SERVICE_TOKENS;
   if (!raw) return [];
   try {
-    const parsed = JSON.parse(raw) as Array<{ token?: string; sha256?: string; scopes?: string[] }>;
-    return parsed.filter(c => c.token || c.sha256).map(c => ({ token: c.token, sha256: c.sha256?.toLowerCase(), scopes: (c.scopes ?? []).filter(s => ALL_SERVICE_SCOPES.includes(s as ServiceScope)) as ServiceScope[] }));
+    const parsed = JSON.parse(raw) as Array<{ token?: string; sha256?: string; id?: string; scopes?: string[] }>;
+    return parsed.filter(c => c.token || c.sha256).map(c => ({ token: c.token, sha256: c.sha256?.toLowerCase(), ...(typeof c.id === 'string' && c.id.trim() ? { id: c.id.trim() } : {}), scopes: (c.scopes ?? []).filter(s => ALL_SERVICE_SCOPES.includes(s as ServiceScope)) as ServiceScope[] }));
   } catch { console.error('[auth] SERVICE_TOKENS must be a JSON array'); return []; }
 }
 
@@ -19,13 +19,13 @@ function safeEqual(a: string, b: string): boolean {
   const aa=Buffer.from(a), bb=Buffer.from(b); return aa.length === bb.length && crypto.timingSafeEqual(aa,bb);
 }
 
-export function authenticateToken(token: string | undefined): { authenticated: boolean; legacy: boolean; scopes: ServiceScope[] } {
+export function authenticateToken(token: string | undefined): { authenticated: boolean; legacy: boolean; scopes: ServiceScope[]; id?: string } {
   if (!token) return { authenticated: false, legacy: false, scopes: [] };
   const apiKey=process.env.API_KEY;
   if (apiKey && safeEqual(token,apiKey)) return { authenticated:true,legacy:true,scopes:ALL_SERVICE_SCOPES };
   const digest=crypto.createHash('sha256').update(token).digest('hex');
   const match=credentials().find(c => c.token ? safeEqual(token,c.token) : !!c.sha256 && safeEqual(digest,c.sha256));
-  return match ? { authenticated:true,legacy:false,scopes:match.scopes } : { authenticated:false,legacy:false,scopes:[] };
+  return match ? { authenticated:true,legacy:false,scopes:match.scopes, ...(match.id ? { id: match.id } : {}) } : { authenticated:false,legacy:false,scopes:[] };
 }
 
 function requiredScope(req: Request): ServiceScope | undefined {
@@ -56,6 +56,13 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const scope = requiredScope(req);
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+  const auth = authenticateToken(token);
+  if (auth.authenticated) {
+    res.locals.principal = {
+      id: auth.legacy ? 'legacy-admin' : auth.id ?? `service:${digestToken(token ?? '')}`,
+      kind: auth.legacy ? 'legacy-admin' : 'service',
+    };
+  }
   const enrollmentRegistration = req.path === '/workers/register'
     && req.method === 'POST'
     && typeof req.body?.enrollmentCode === 'string'
@@ -69,13 +76,11 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
 
   // API_KEY retains the legacy "protect every API route" behavior.
   if (hasLegacyKey) {
-    const auth = authenticateToken(token);
     if (!auth.authenticated) { res.status(401).json({ error: 'unauthorized' }); return; }
     if (!auth.legacy && (!scope || !auth.scopes.includes(scope))) {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
-    res.locals.principal = { id: auth.legacy ? 'legacy-admin' : `service:${digestToken(token ?? '')}` };
     next();
     return;
   }
@@ -84,10 +89,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // behind its outer access boundary, but requires scoped auth for the narrow
   // orchestration facade and agent refresh mutation.
   if (!scope || (serviceCredentials.length === 0 && scope !== 'workers:register')) { next(); return; }
-  const auth = authenticateToken(token);
   if (!auth.authenticated) { res.status(401).json({ error: 'unauthorized' }); return; }
   if (!auth.scopes.includes(scope)) { res.status(403).json({ error: 'forbidden' }); return; }
-  res.locals.principal = { id: `service:${digestToken(token ?? '')}` };
   next();
 }
 
