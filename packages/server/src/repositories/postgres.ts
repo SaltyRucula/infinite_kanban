@@ -176,12 +176,38 @@ export class PostgresTaskRepository implements TaskRepository {
   }
 
   async getWorkerAssignments(workerId: string, now: number): Promise<Task[]> {
-    const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id = $1 AND run_requested_at IS NOT NULL AND agent_status IN ('idle','planning') AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < $2) ORDER BY run_requested_at`, [workerId, now]);
+    const { rows } = await this.pool.query<TaskRow>(`SELECT tasks.* FROM tasks
+      JOIN projects ON projects.id = tasks.project_id
+      JOIN workers ON workers.id = $1
+      WHERE tasks.run_requested_at IS NOT NULL AND tasks.agent_status IN ('idle','planning')
+        AND (tasks.worker_claim_token_hash IS NULL OR tasks.worker_lease_expires_at < $2)
+        AND (tasks.assigned_worker_id = $1 OR (
+          tasks.assigned_worker_id IS NULL AND projects.worker_pool_enabled = TRUE
+          AND workers.status = 'online'
+          AND workers.agent_types_json::jsonb ? tasks.agent_type
+          AND workers.accepted_project_ids_json::jsonb ? tasks.project_id
+          AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(tasks.labels::jsonb) AS label
+            WHERE NOT workers.accepted_labels_json::jsonb ? lower(label))
+        )) ORDER BY tasks.run_requested_at`, [workerId, now]);
     return rows.map(rowToTask);
   }
 
   async claimWorkerTask(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<Task | undefined> {
-    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET worker_claim_token_hash = $1, worker_claimed_at = $2, worker_lease_expires_at = $3, worker_attempt = worker_attempt + 1, agent_status = 'planning', started_at = COALESCE(started_at, $2) WHERE id = $4 AND assigned_worker_id = $5 AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < $2) AND agent_status IN ('idle','planning') RETURNING *`, [claimTokenHash, now, now + leaseMs, id, workerId]);
+    const { rows } = await this.pool.query<TaskRow>(`UPDATE tasks SET
+      assigned_worker_id = COALESCE(assigned_worker_id, $1), worker_claim_token_hash = $2,
+      worker_claimed_at = $3, worker_lease_expires_at = $4, worker_attempt = worker_attempt + 1,
+      agent_status = 'planning', started_at = COALESCE(started_at, $3)
+      WHERE id = $5 AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL
+        AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < $3)
+        AND agent_status IN ('idle','planning')
+        AND (assigned_worker_id = $1 OR (assigned_worker_id IS NULL AND EXISTS (
+          SELECT 1 FROM projects JOIN workers ON workers.id = $1
+          WHERE projects.id = tasks.project_id AND projects.worker_pool_enabled = TRUE
+            AND workers.status = 'online' AND workers.agent_types_json::jsonb ? tasks.agent_type
+            AND workers.accepted_project_ids_json::jsonb ? tasks.project_id
+            AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(tasks.labels::jsonb) AS label
+              WHERE NOT workers.accepted_labels_json::jsonb ? lower(label))
+        ))) RETURNING *`, [workerId, claimTokenHash, now, now + leaseMs, id]);
     return rows[0] ? rowToTask(rows[0]) : undefined;
   }
 

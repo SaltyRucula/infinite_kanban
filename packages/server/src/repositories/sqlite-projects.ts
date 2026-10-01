@@ -15,6 +15,7 @@ interface ProjectRow {
   default_priority: string | null;
   default_base_branch: string | null;
   default_use_worktree: number | null;
+  worker_pool_enabled: number;
   aliases: string;
   jira_import_enabled: number;
   jira_import_interval_minutes: number;
@@ -50,6 +51,7 @@ function rowToProject(row: ProjectRow, taskCounts?: ProjectTaskCounts): Project 
     defaultPriority: (row.default_priority ?? undefined) as Priority | undefined,
     defaultBaseBranch: row.default_base_branch ?? undefined,
     defaultUseWorktree: row.default_use_worktree === null ? undefined : Boolean(row.default_use_worktree),
+    workerPoolEnabled: Boolean(row.worker_pool_enabled),
     aliases: JSON.parse(row.aliases || '[]'),
     jiraImportEnabled: Boolean(row.jira_import_enabled),
     jiraImportIntervalMinutes: row.jira_import_interval_minutes,

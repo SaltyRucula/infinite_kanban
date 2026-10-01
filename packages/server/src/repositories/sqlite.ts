@@ -213,11 +213,65 @@ export class SqliteTaskRepository implements TaskRepository {
   }
 
   async getWorkerAssignments(workerId: string, now: number): Promise<Task[]> {
-    return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id = ? AND run_requested_at IS NOT NULL AND agent_status IN ('idle','planning') AND (worker_claim_token_hash IS NULL OR worker_lease_expires_at < ?) ORDER BY run_requested_at`).all(workerId, now) as TaskRow[]).map(rowToTask);
+    return (this.db.prepare(`SELECT tasks.* FROM tasks
+      JOIN projects ON projects.id = tasks.project_id
+      WHERE tasks.run_requested_at IS NOT NULL
+        AND tasks.agent_status IN ('idle','planning')
+        AND (tasks.worker_claim_token_hash IS NULL OR tasks.worker_lease_expires_at < ?)
+        AND (
+          tasks.assigned_worker_id = ?
+          OR (
+            tasks.assigned_worker_id IS NULL
+            AND projects.worker_pool_enabled = 1
+            AND EXISTS (
+              SELECT 1 FROM workers
+              WHERE workers.id = ? AND workers.status = 'online'
+                AND EXISTS (SELECT 1 FROM json_each(workers.agent_types_json) AS capability WHERE capability.value = tasks.agent_type)
+                AND EXISTS (SELECT 1 FROM json_each(workers.accepted_project_ids_json) AS project WHERE project.value = tasks.project_id)
+                AND NOT EXISTS (
+                  SELECT 1 FROM json_each(tasks.labels) AS label
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM json_each(workers.accepted_labels_json) AS consent
+                    WHERE lower(consent.value) = lower(label.value)
+                  )
+                )
+            )
+          )
+        )
+      ORDER BY tasks.run_requested_at`).all(now, workerId, workerId) as TaskRow[]).map(rowToTask);
   }
 
   async claimWorkerTask(id: string, workerId: string, claimTokenHash: string, now: number, leaseMs: number): Promise<Task | undefined> {
-    const result = this.db.prepare(`UPDATE tasks SET worker_claim_token_hash = ?, worker_claimed_at = ?, worker_lease_expires_at = ?, worker_attempt = worker_attempt + 1, agent_status = 'planning', started_at = COALESCE(started_at, ?) WHERE id = ? AND assigned_worker_id = ? AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < ?) AND agent_status IN ('idle','planning')`).run(claimTokenHash, now, now + leaseMs, now, id, workerId, now);
+    const result = this.db.prepare(`UPDATE tasks SET
+      assigned_worker_id = CASE WHEN assigned_worker_id IS NULL THEN ? ELSE assigned_worker_id END,
+      worker_claim_token_hash = ?, worker_claimed_at = ?, worker_lease_expires_at = ?,
+      worker_attempt = worker_attempt + 1, agent_status = 'planning', started_at = COALESCE(started_at, ?)
+      WHERE id = ? AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL
+        AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < ?)
+        AND agent_status IN ('idle','planning')
+        AND (
+          assigned_worker_id = ?
+          OR (
+            assigned_worker_id IS NULL
+            AND EXISTS (
+              SELECT 1 FROM projects
+              WHERE projects.id = tasks.project_id AND projects.worker_pool_enabled = 1
+                AND EXISTS (
+                  SELECT 1 FROM workers
+                  WHERE workers.id = ? AND workers.status = 'online'
+                    AND EXISTS (SELECT 1 FROM json_each(workers.agent_types_json) AS capability WHERE capability.value = tasks.agent_type)
+                    AND EXISTS (SELECT 1 FROM json_each(workers.accepted_project_ids_json) AS project WHERE project.value = tasks.project_id)
+                    AND NOT EXISTS (
+                      SELECT 1 FROM json_each(tasks.labels) AS label
+                      WHERE NOT EXISTS (
+                        SELECT 1 FROM json_each(workers.accepted_labels_json) AS consent
+                        WHERE lower(consent.value) = lower(label.value)
+                      )
+                    )
+                )
+            )
+          )
+        )`).run(workerId, claimTokenHash, now, now + leaseMs, now, id, now, workerId, workerId);
     return result.changes ? this.getById(id) : undefined;
   }
 
