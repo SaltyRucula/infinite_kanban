@@ -198,6 +198,8 @@ export interface Project {
   defaultPriority?: Priority;
   defaultBaseBranch?: string;
   defaultUseWorktree?: boolean;
+  /** When enabled, consenting capable workers may claim unpinned tasks. */
+  workerPoolEnabled?: boolean;
   aliases?: string[];
   readonly jiraImportEnabled: boolean;
   readonly jiraImportIntervalMinutes: number;
@@ -220,6 +222,7 @@ export interface CreateProjectRequest {
   defaultPriority?: Priority;
   defaultBaseBranch?: string;
   defaultUseWorktree?: boolean;
+  workerPoolEnabled?: boolean;
   aliases?: string[];
   readonly jiraImportEnabled?: boolean;
   readonly jiraImportIntervalMinutes?: number;
@@ -241,6 +244,7 @@ export interface UpdateProjectRequest {
   defaultPriority?: Priority | null;
   defaultBaseBranch?: string | null;
   defaultUseWorktree?: boolean | null;
+  workerPoolEnabled?: boolean;
   aliases?: string[];
   readonly jiraImportEnabled?: boolean;
   readonly jiraImportIntervalMinutes?: number;

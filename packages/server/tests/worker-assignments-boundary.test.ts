@@ -18,6 +18,7 @@ function createDatabase(): Database.Database {
       jira_import_last_skipped INTEGER
     );
     INSERT INTO projects VALUES ('default', 'Default', NULL, NULL, 1, 1, 1, NULL, NULL, NULL, NULL, '[]', 0, 15, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    ALTER TABLE projects ADD COLUMN worker_pool_enabled INTEGER NOT NULL DEFAULT 0;
     CREATE TABLE task_groups (id TEXT PRIMARY KEY, project_id TEXT, column_id TEXT, archived INTEGER);
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY, project_id TEXT, title TEXT, description TEXT, priority TEXT, column_id TEXT,
@@ -30,6 +31,13 @@ function createDatabase(): Database.Database {
       worker_attempt INTEGER NOT NULL DEFAULT 0, labels TEXT NOT NULL DEFAULT '[]', agent_preference TEXT
     );
     CREATE TABLE events (id TEXT, task_id TEXT, type TEXT, content TEXT, timestamp INTEGER, metadata TEXT, importance TEXT);
+    CREATE TABLE workers (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      agent_types_json TEXT NOT NULL,
+      accepted_project_ids_json TEXT NOT NULL,
+      accepted_labels_json TEXT NOT NULL
+    );
   `);
   return db;
 }
@@ -52,6 +60,58 @@ test('getWorkerAssignments excludes terminal-status tasks even with a stale run_
     const assignments = await repo.getWorkerAssignments('worker-1', 1_000);
 
     assert.deepEqual(assignments.map((task) => task.id), ['eligible-idle']);
+  } finally {
+    db.close();
+  }
+});
+
+test('a consenting capable worker can claim an unpinned task when its project pool is enabled', async () => {
+  const db = createDatabase();
+  try {
+    const repo = new SqliteTaskRepository(db);
+    db.prepare(`UPDATE projects SET worker_pool_enabled = 1 WHERE id = 'default'`).run();
+    db.prepare(`INSERT INTO workers (id, status, agent_types_json, accepted_project_ids_json, accepted_labels_json)
+      VALUES (?, ?, ?, ?, ?)`).run(
+      'worker-1',
+      'online',
+      JSON.stringify(['opencode']),
+      JSON.stringify(['default']),
+      JSON.stringify(['backend']),
+    );
+    const insert = db.prepare(`INSERT INTO tasks (
+      id, project_id, title, description, priority, column_id, agent_status,
+      agent_type, created_at, assigned_worker_id, run_requested_at,
+      worker_claim_token_hash, labels
+    ) VALUES (@id, 'default', @title, '', 'low', 'in-progress', 'idle',
+      @agent_type, 1, NULL, @run_requested_at, NULL, @labels)`);
+    insert.run({
+      id: 'pool-task',
+      title: 'Pool task',
+      agent_type: 'opencode',
+      run_requested_at: 100,
+      labels: JSON.stringify(['backend']),
+    });
+    insert.run({
+      id: 'wrong-capability',
+      title: 'Wrong capability',
+      agent_type: 'copilot',
+      run_requested_at: 200,
+      labels: JSON.stringify(['backend']),
+    });
+    insert.run({
+      id: 'wrong-consent',
+      title: 'Wrong consent',
+      agent_type: 'opencode',
+      run_requested_at: 300,
+      labels: JSON.stringify(['frontend']),
+    });
+
+    const assignments = await repo.getWorkerAssignments('worker-1', 1_000);
+
+    assert.deepEqual(assignments.map((task) => task.id), ['pool-task']);
+    const claimed = await repo.claimWorkerTask('pool-task', 'worker-1', 'claim-hash', 1_000, 60_000);
+    assert.equal(claimed?.assignedWorkerId, 'worker-1');
+    assert.equal(claimed?.agentStatus, 'planning');
   } finally {
     db.close();
   }
