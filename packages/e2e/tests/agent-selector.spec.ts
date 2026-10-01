@@ -153,6 +153,8 @@ test.describe('Worker Selection in TaskDialog', () => {
         agentTypes: ['opencode'],
         maxConcurrentTasks: 1,
         hostname: 'scoped-registration-host',
+        acceptedProjectIds: ['default'],
+        acceptedLabels: [],
       },
     });
 
@@ -170,6 +172,8 @@ test.describe('Worker Selection in TaskDialog', () => {
         agentTypes: ['opencode'],
         maxConcurrentTasks: 2,
         hostname: 'opencode-host-1',
+        acceptedProjectIds: ['default'],
+        acceptedLabels: [],
       },
     });
     expect(regRes.ok()).toBeTruthy();

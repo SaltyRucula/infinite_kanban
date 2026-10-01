@@ -3,6 +3,8 @@ import type { Project, Task } from '../types.js';
 import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
+import type { WorkerRepository } from '../repositories/worker-types.js';
+import { workerAcceptsTask } from '../worker-consent.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
 import {
@@ -12,7 +14,12 @@ import {
   normalizeTaskLabels,
 } from './helpers.js';
 
-export function createTaskRouter(repo: TaskRepository, agentManager: AgentManager, projectRepo: ProjectRepository): Router {
+export function createTaskRouter(
+  repo: TaskRepository,
+  agentManager: AgentManager,
+  projectRepo: ProjectRepository,
+  workerRepo?: WorkerRepository,
+): Router {
   const router = Router();
 
   // GET /api/tasks
@@ -214,6 +221,21 @@ export function createTaskRouter(repo: TaskRepository, agentManager: AgentManage
     if (assignedWorkerId !== undefined && (task.agentStatus === 'executing' || task.agentStatus === 'planning')) {
       res.status(409).json({ error: 'cannot assign a claimed or running task' });
       return;
+    }
+    if (assignedWorkerId !== undefined && assignedWorkerId !== null) {
+      const worker = workerRepo ? await workerRepo.getById(assignedWorkerId) : undefined;
+      if (!worker) {
+        res.status(404).json({ error: 'worker not found' });
+        return;
+      }
+      const taskWithUpdatedLabels = {
+        ...task,
+        ...(labels !== undefined ? { labels: normalizeTaskLabels(labels) } : {}),
+      };
+      if (!workerAcceptsTask(worker, taskWithUpdatedLabels)) {
+        res.status(403).json({ error: 'worker has not opted into this task' });
+        return;
+      }
     }
     // Validate column transition if columnId is changing
     if (columnId && columnId !== task.columnId) {

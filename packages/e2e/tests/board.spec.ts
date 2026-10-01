@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { API, waitForBoard } from './helpers';
+import { API, registerWorker, waitForBoard } from './helpers';
 
 // The root view is the Worker Operations Console (saved views + task queue +
 // task detail panel). These specs cover its task workflows; the legacy
@@ -325,9 +325,10 @@ test.describe('Retry Failed Tasks', () => {
   test('failed task can be re-claimed via the run endpoint', async ({ request }) => {
     const task = await createTaskViaApi(request, { title: 'Reclaim Test Task', columnId: 'in-progress' });
     createdTaskIds.push(task.id);
+    const worker = await registerWorker(request, `reclaim-worker-${Date.now()}`);
 
     await request.patch(`${API}/api/tasks/${task.id}`, {
-      data: { agentStatus: 'failed', assignedWorkerId: 'worker-1' },
+      data: { agentStatus: 'failed', assignedWorkerId: worker.id },
     });
 
     const run = await request.post(`${API}/api/tasks/${task.id}/run`);

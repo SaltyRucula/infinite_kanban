@@ -319,6 +319,23 @@ test('PATCH /api/tasks/:id rejects repoPath and worktreePath and returns a porta
   });
 });
 
+test('PATCH /api/tasks/:id rejects assignment to a worker that has not opted into the task', async () => {
+  const { repo, calls } = createTaskRepo([makeTask()]);
+  const app = jsonApp();
+  app.use('/api/tasks', createTaskRouter(repo, createManager(calls), createProjectRepo(makeProject()), createWorkerRepo()));
+
+  await withApp(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignedWorkerId: 'worker-1' }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'worker has not opted into this task');
+  });
+});
+
 test('POST /api/tasks/:id/configure rejects repoPath and worktreePath', async () => {
   const { repo, calls } = createTaskRepo([makeTask()]);
   const app = jsonApp();
