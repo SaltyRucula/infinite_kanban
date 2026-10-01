@@ -10,7 +10,7 @@ import type { TaskRepository } from '../repositories/types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
 import type { AgentManager } from '../services/agent-manager.js';
 import { broadcast } from '../websocket.js';
-import { MAX_TITLE_LENGTH, isValidAgentType, isValidPriority } from '@ai-agent-board/shared/constants.js';
+import { MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH, isValidAgentType, isValidPriority } from '@ai-agent-board/shared/constants.js';
 import { errorMessage } from '../utils.js';
 import { getConfig, getCloneRoot, setCloneRoot } from '../config.js';
 import { parseJiraImportCreateSchedule, parseJiraImportSchedule } from '../jira/schedule-config.js';
@@ -185,6 +185,15 @@ function parseProjectDefaults(body: Record<string, unknown>, allowNull: boolean)
   return out;
 }
 
+function parseProjectText(value: unknown, allowNull: boolean): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return allowNull ? null : undefined;
+  if (typeof value !== 'string') return 'invalid';
+  const text = value.trim();
+  if (text.length > MAX_DESCRIPTION_LENGTH) return 'invalid';
+  return allowNull && !text ? null : text || undefined;
+}
+
 export function createProjectsRouter(
   projectRepo: ProjectRepository,
   taskRepo: TaskRepository,
@@ -311,6 +320,9 @@ export function createProjectsRouter(
     }
 
     const now = Date.now();
+    const goal = parseProjectText(req.body.goal, false);
+    const context = parseProjectText(req.body.context, false);
+    if (goal === 'invalid' || context === 'invalid') { res.status(400).json({ error: `goal and context must be strings of at most ${MAX_DESCRIPTION_LENGTH} characters` }); return; }
     const defaults = parseProjectDefaults(req.body, false);
     if (typeof defaults === 'string') { res.status(400).json({ error: defaults }); return; }
     const schedule = parseJiraImportCreateSchedule(req.body);
@@ -325,6 +337,8 @@ export function createProjectsRouter(
       defaultPriority: defaults.defaultPriority ?? undefined,
       defaultBaseBranch: defaults.defaultBaseBranch ?? undefined,
       defaultUseWorktree: defaults.defaultUseWorktree ?? undefined, aliases,
+      ...(goal ? { goal } : {}),
+      ...(context ? { context } : {}),
       ...schedule,
       createdAt: now,
       updatedAt: now,

@@ -215,6 +215,8 @@ const STALL_RETRY_NUDGE =
 export function buildTaskPrompt(task: WorkerTaskAssignment): string {
   const labels = task.labels.length > 0 ? task.labels.join(', ') : '(none)';
   return [
+    ...(task.project?.goal ? [`Project goal: ${task.project.goal}`, ''] : []),
+    ...(task.project?.context ? [`Project context: ${task.project.context}`, ''] : []),
     `Task title: ${task.title}`,
     '',
     `Task description: ${task.description}`,

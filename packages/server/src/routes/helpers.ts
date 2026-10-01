@@ -419,7 +419,7 @@ export function broadcastTaskUpdate(task: Task): void {
   broadcast({ type: 'task_updated', payload: toPortableTask(task) });
 }
 
-export function toWorkerTaskAssignment(task: Task): WorkerTaskAssignment {
+export function toWorkerTaskAssignment(task: Task, project?: Pick<Project, 'goal' | 'context'>): WorkerTaskAssignment {
   return {
     id: task.id,
     title: task.title,
@@ -431,6 +431,7 @@ export function toWorkerTaskAssignment(task: Task): WorkerTaskAssignment {
     ...(task.useWorktree === undefined ? {} : { useWorktree: task.useWorktree }),
     ...(task.timeoutMinutes === undefined ? {} : { timeoutMinutes: task.timeoutMinutes }),
     labels: task.labels ?? [],
+    ...(project?.goal || project?.context ? { project: { ...(project.goal ? { goal: project.goal } : {}), ...(project.context ? { context: project.context } : {}) } } : {}),
     ...(task.agentPreference === undefined ? {} : { agentPreference: task.agentPreference }),
     ...workerResume(task),
     // A run started from Review validates the existing work instead of re-implementing it.

@@ -63,6 +63,8 @@ function migrate(db: Database.Database): void {
   if (!projectColNames.has('worker_pool_enabled')) {
     db.exec(`ALTER TABLE projects ADD COLUMN worker_pool_enabled INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!projectColNames.has('goal')) db.exec(`ALTER TABLE projects ADD COLUMN goal TEXT`);
+  if (!projectColNames.has('context')) db.exec(`ALTER TABLE projects ADD COLUMN context TEXT`);
   if (!projectColNames.has('repo_url')) {
     db.exec(`ALTER TABLE projects ADD COLUMN repo_url TEXT`);
   }
@@ -561,6 +563,8 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addProjectCol('default_base_branch', 'TEXT');
   await addProjectCol('default_use_worktree', 'BOOLEAN');
   await addProjectCol('worker_pool_enabled', 'BOOLEAN NOT NULL DEFAULT FALSE');
+  await addProjectCol('goal', 'TEXT');
+  await addProjectCol('context', 'TEXT');
   await addProjectCol('repo_url', 'TEXT');
   await addProjectCol('aliases', "TEXT NOT NULL DEFAULT '[]'");
   await addProjectCol('jira_import_enabled', 'BOOLEAN NOT NULL DEFAULT FALSE');

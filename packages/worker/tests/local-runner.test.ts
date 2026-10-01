@@ -21,6 +21,10 @@ const task: WorkerTaskAssignment = {
   priority: 'high',
   labels: ['orioninit', 'worker-local'],
   agentType: 'opencode',
+  project: {
+    goal: 'Ship a reliable board for distributed engineering teams.',
+    context: 'Replace the manual spreadsheet workflow without disrupting users.',
+  },
 };
 
 class FakeOpenCodeProcess extends EventEmitter implements OpenCodeProcess {
@@ -288,6 +292,10 @@ test('startOpenCodeServerTask starts a task-titled session and prompts with the 
   assert.equal(state.turns[0]?.sessionId, 'ses_worker_1');
   assert.equal(state.turns[0]?.agent, 'sisyphus');
   assert.equal(state.turns[0]?.text, [
+    'Project goal: Ship a reliable board for distributed engineering teams.',
+    '',
+    'Project context: Replace the manual spreadsheet workflow without disrupting users.',
+    '',
     'Task title: Implement local runner seam',
     '',
     'Task description: Wire worker to opencode run with a local profile',

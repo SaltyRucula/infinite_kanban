@@ -15,6 +15,7 @@ import type { AgentEvent, AgentType, Task, Worker } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { WorkerRegistration, WorkerRepository } from '../repositories/worker-types.js';
 import type { EnrollmentCodeRepository } from '../repositories/enrollment-code-types.js';
+import type { ProjectRepository } from '../repositories/project-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
 import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
@@ -162,7 +163,7 @@ async function settleReviewRun(
   return await tasks.update(completed.id, updates) ?? completed;
 }
 
-export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository, enrollmentCodes?: EnrollmentCodeRepository): Router {
+export function createWorkersRouter(tasks: TaskRepository, workers: WorkerRepository, enrollmentCodes?: EnrollmentCodeRepository, projects?: ProjectRepository): Router {
   const router = Router();
   const workerEventTimestamps = new Map<string, { startedAt: number; count: number }>();
   const taskId = (req: Request): string => {
@@ -362,7 +363,8 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
 
   router.get('/me/assignments', asyncHandler(async (_req: Request, res: Response) => {
     const worker = authenticatedWorker(res);
-    res.json({ tasks: (await tasks.getWorkerAssignments(worker.id, Date.now())).map(toWorkerTaskAssignment) });
+    const assignments = await tasks.getWorkerAssignments(worker.id, Date.now());
+    res.json({ tasks: await Promise.all(assignments.map(async (task) => toWorkerTaskAssignment(task, await projects?.getById(task.projectId)))) });
   }));
 
   router.post('/me/tasks/:taskId/claim', asyncHandler(async (req: Request, res: Response) => {
@@ -384,7 +386,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       return;
     }
     await workers.clearTaskCommands(task.id);
-    res.json({ task: toWorkerTaskAssignment(claimed), leaseExpiresAt: now + WORKER_TASK_LEASE_MS, claimToken: claim.raw });
+    res.json({ task: toWorkerTaskAssignment(claimed, await projects?.getById(claimed.projectId)), leaseExpiresAt: now + WORKER_TASK_LEASE_MS, claimToken: claim.raw });
   }));
 
   router.post('/me/tasks/:taskId/session', asyncHandler(async (req: Request, res: Response) => {

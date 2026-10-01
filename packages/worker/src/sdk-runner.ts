@@ -324,7 +324,7 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
       }
       const prompt = review
         ? buildReviewPrompt(input.task)
-        : `${input.task.title}\n\n${input.task.description}`
+        : `${input.task.project?.goal ? `Project goal: ${input.task.project.goal}\n\n` : ''}${input.task.project?.context ? `Project context: ${input.task.project.context}\n\n` : ''}${input.task.title}\n\n${input.task.description}`
           + (input.task.resume ? `\n\n${buildResumeContext(input.task.resume)}` : '');
       const result = await session.execute(prompt);
       if (result.status === 'complete') {

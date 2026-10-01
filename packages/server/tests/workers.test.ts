@@ -54,6 +54,11 @@ const task: Task = {
   assignedWorkerId: worker.id,
 };
 
+const projectContext = {
+  goal: 'Ship a dependable board for distributed engineering teams.',
+  context: 'This project replaces a spreadsheet workflow; favor safe incremental delivery.',
+};
+
 class FakeTaskRepository implements TaskRepository {
   private claimed = false;
   readonly events: AgentEvent[] = [];
@@ -294,10 +299,11 @@ test('WorkerTaskAssignment has an allowlisted, secret-free handoff contract', ()
     columnId: 'review',
     clarificationRequest: { requestId: 'request-1', sessionId: 'session-1', prompt: 'Need a choice', timestamp: 2 },
     clarificationAnswer: { requestId: 'request-1', sessionId: 'session-1', answer: 'Use the safe option', timestamp: 3 },
-  });
+  }, projectContext);
 
   assert.deepEqual(Object.keys(assignment).sort(), [...WORKER_TASK_ASSIGNMENT_KEYS].sort());
   assert.equal(WORKER_TASK_ASSIGNMENT_KEYS.some((key) => /path|secret|token|key/i.test(key)), false);
+  assert.deepEqual(assignment.project, projectContext);
 });
 
 test('worker can register a task OpenCode session link and poll queued commands', async () => {
