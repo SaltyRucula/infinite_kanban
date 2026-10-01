@@ -1,12 +1,23 @@
 {
   "name": "@ai-agent-board/worker",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "agentboard-worker": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx watch src/cli.ts run",
     "build": "tsc -b tsconfig.build.json",
-    "test": "node --import tsx/esm --test tests/*.test.ts"
+    "test": "node --import tsx/esm --test tests/*.test.ts",
+    "test:package": "node --import tsx/esm --test tests/package-contract.pack.ts",
+    "prepack": "npm run build && npm run build -w @ai-agent-board/shared && npm run build -w @ai-agent-board/opencode-compat && node scripts/stage-internal-dependencies.cjs",
+    "postpack": "node scripts/cleanup-staged-dependencies.cjs"
   },
   "dependencies": {
     "@ai-agent-board/shared": "*",
@@ -15,6 +26,10 @@
     "@opencode-ai/sdk": "^1.17.7"
     ,"uuid": "^11.0.0"
   },
+  "bundleDependencies": [
+    "@ai-agent-board/opencode-compat",
+    "@ai-agent-board/shared"
+  ],
   "devDependencies": {
     "tsx": "^4.22.4",
     "typescript": "~5.7.0"

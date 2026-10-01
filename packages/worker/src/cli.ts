@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { execFile as execFileCallback } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
