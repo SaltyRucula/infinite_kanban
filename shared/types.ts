@@ -103,6 +103,22 @@ export interface WorkerTaskAssignment {
   mode?: 'review';
 }
 
+/** The complete public field allowlist for worker task handoffs. */
+export const WORKER_TASK_ASSIGNMENT_KEYS = [
+  'id', 'title', 'description', 'priority', 'agentType', 'branchName',
+  'baseBranch', 'useWorktree', 'timeoutMinutes', 'labels', 'agentPreference',
+  'resume', 'mode',
+] as const satisfies readonly (keyof WorkerTaskAssignment)[];
+
+type WorkerTaskAssignmentKeyCoverage = Exclude<
+  keyof WorkerTaskAssignment,
+  typeof WORKER_TASK_ASSIGNMENT_KEYS[number]
+> extends never ? true : never;
+
+// Keep the declared assignment interface and runtime allowlist in lockstep.
+const workerTaskAssignmentKeyCoverage: WorkerTaskAssignmentKeyCoverage = true;
+void workerTaskAssignmentKeyCoverage;
+
 export interface WorkerTaskResume {
   sessionId: string;
   question: string;

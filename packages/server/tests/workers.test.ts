@@ -4,6 +4,8 @@ import express from 'express';
 import test from 'node:test';
 import crypto from 'node:crypto';
 import { createWorkersRouter } from '../src/routes/workers.js';
+import { toWorkerTaskAssignment } from '../src/routes/helpers.js';
+import { WORKER_TASK_ASSIGNMENT_KEYS } from '@ai-agent-board/shared/types.js';
 import type { TaskRepository } from '../src/repositories/types.js';
 import type { WorkerRepository } from '../src/repositories/worker-types.js';
 import type { AgentEvent, Task, Worker } from '../src/types.js';
@@ -284,6 +286,18 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal('worktreePath' in completion.task, false);
     assert.equal('projectId' in completion.task, false);
   });
+});
+
+test('WorkerTaskAssignment has an allowlisted, secret-free handoff contract', () => {
+  const assignment = toWorkerTaskAssignment({
+    ...task,
+    columnId: 'review',
+    clarificationRequest: { requestId: 'request-1', sessionId: 'session-1', prompt: 'Need a choice', timestamp: 2 },
+    clarificationAnswer: { requestId: 'request-1', sessionId: 'session-1', answer: 'Use the safe option', timestamp: 3 },
+  });
+
+  assert.deepEqual(Object.keys(assignment).sort(), [...WORKER_TASK_ASSIGNMENT_KEYS].sort());
+  assert.equal(WORKER_TASK_ASSIGNMENT_KEYS.some((key) => /path|secret|token|key/i.test(key)), false);
 });
 
 test('worker can register a task OpenCode session link and poll queued commands', async () => {
