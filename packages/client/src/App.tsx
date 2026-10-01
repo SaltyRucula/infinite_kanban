@@ -452,6 +452,7 @@ export function BoardPage({
       <TaskDialog
         open={dialogOpen}
         onClose={handleCloseDialog}
+        projectId={project.id}
         onSubmit={handleCreateTask}
         editTask={editingTask}
         onEditSubmit={updateTask}

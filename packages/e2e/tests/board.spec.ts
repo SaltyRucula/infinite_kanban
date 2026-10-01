@@ -353,8 +353,10 @@ test.describe('Worker-owned task git actions', () => {
     const branchFields = { columnId: 'in-progress', branchName: 'task/feature-branch', baseBranch: 'main', useWorktree: true };
     const hostTask = await createTaskViaApi(request, { title: hostTitle, ...branchFields });
     const workerTask = await createTaskViaApi(request, { title: workerTitle, ...branchFields });
+    const worker = await registerWorker(request, `git-actions-worker-${Date.now()}`);
     createdTaskIds.push(hostTask.id, workerTask.id);
-    await request.patch(`${API}/api/tasks/${workerTask.id}`, { data: { assignedWorkerId: 'worker-1' } });
+    const assignment = await request.patch(`${API}/api/tasks/${workerTask.id}`, { data: { assignedWorkerId: worker.id } });
+    expect(assignment.ok()).toBeTruthy();
 
     await page.goto('/');
     await waitForBoard(page);
