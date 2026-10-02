@@ -73,6 +73,18 @@ test.describe('Worker console shell', () => {
   });
 
   test('prompts for a worker-management credential after enrollment is forbidden', async ({ page }) => {
+    await page.evaluate(() => {
+      const originalFetch = window.fetch.bind(window);
+      const enrollmentAuthorizations: string[] = [];
+      window.fetch = (input, init) => {
+        if (String(input).includes('/api/workers/enrollment-codes')) {
+          enrollmentAuthorizations.push(new Headers(init?.headers).get('Authorization') ?? '');
+        }
+        return originalFetch(input, init);
+      };
+      (window as typeof window & { enrollmentAuthorizations: string[] }).enrollmentAuthorizations = enrollmentAuthorizations;
+    });
+
     let attempts = 0;
     await page.route('**/api/workers/enrollment-codes', async (route) => {
       attempts += 1;
@@ -80,7 +92,6 @@ test.describe('Worker console shell', () => {
         await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) });
         return;
       }
-      expect(route.request().headers().authorization).toBe('Bearer worker-management-token');
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -97,6 +108,10 @@ test.describe('Worker console shell', () => {
     await credentialDialog.getByRole('button', { name: 'Create enrollment code' }).click();
 
     await expect(page.getByRole('dialog', { name: 'Add worker' }).getByText('Enrollment code')).toBeVisible();
+    expect(await page.evaluate(() => (window as typeof window & { enrollmentAuthorizations: string[] }).enrollmentAuthorizations)).toEqual([
+      'Bearer e2e-full-scope-token',
+      'Bearer worker-management-token',
+    ]);
     expect(attempts).toBe(2);
   });
 });

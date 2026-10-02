@@ -62,9 +62,13 @@ function authHeaders(): Record<string, string> {
 }
 
 async function request<T>(url: string, opts?: RequestInit): Promise<T> {
+  const headers = {
+    ...authHeaders(),
+    ...(opts?.headers ?? {}),
+  };
   const res = await fetch(`${BASE}${url}`, {
-    headers: authHeaders(),
     ...opts,
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
