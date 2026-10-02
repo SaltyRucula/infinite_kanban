@@ -45,6 +45,7 @@ export function WorkerPresencePanel({
   const [needsEnrollmentCredential, setNeedsEnrollmentCredential] = useState(false);
   const [enrollmentCredential, setEnrollmentCredential] = useState('');
   const [creatingEnrollment, setCreatingEnrollment] = useState(false);
+  const [removingWorkerId, setRemovingWorkerId] = useState<string | null>(null);
   const [copiedCommand, setCopiedCommand] = useState(false);
   const [usage, setUsage] = useState<WorkerUsageReport | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -116,6 +117,19 @@ export function WorkerPresencePanel({
   const handleRefreshAll = () => {
     void fetchAgents();
     void refetchWorkers();
+  };
+
+  const removeWorker = async (id: string) => {
+    setRemovingWorkerId(id);
+    setEnrollmentError(null);
+    try {
+      await api.removeWorker(id);
+      await refetchWorkers();
+    } catch (err) {
+      setEnrollmentError(err instanceof Error ? err.message : 'Failed to remove worker');
+    } finally {
+      setRemovingWorkerId(null);
+    }
   };
 
   const agentsList = propAgents ?? internalAgents;
@@ -252,6 +266,15 @@ export function WorkerPresencePanel({
                         <span className={`text-[11px] font-medium ${statusTextColor}`}>
                           {statusLabel}
                         </span>
+                        <button
+                          type="button"
+                          aria-label={`Remove worker ${worker.name}`}
+                          onClick={() => void removeWorker(worker.id)}
+                          disabled={removingWorkerId === worker.id}
+                          className="rounded px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          {removingWorkerId === worker.id ? 'Removing...' : 'Remove'}
+                        </button>
                       </div>
                     </div>
 
