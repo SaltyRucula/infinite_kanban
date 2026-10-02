@@ -71,6 +71,34 @@ test.describe('Worker console shell', () => {
     await expect(dialog.getByRole('button', { name: 'Copy command' })).toBeVisible();
     await expect(dialog.getByText(/expires in \d{1,2}:\d{2}/i)).toBeVisible();
   });
+
+  test('prompts for a worker-management credential after enrollment is forbidden', async ({ page }) => {
+    let attempts = 0;
+    await page.route('**/api/workers/enrollment-codes', async (route) => {
+      attempts += 1;
+      if (attempts === 1) {
+        await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) });
+        return;
+      }
+      expect(route.request().headers().authorization).toBe('Bearer worker-management-token');
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 'temporary-enrollment-code', expiresAt: Date.now() + 15 * 60 * 1_000 }),
+      });
+    });
+
+    await page.getByRole('button', { name: 'Agent Roster' }).click();
+    await page.getByRole('button', { name: 'Add worker' }).click();
+
+    const credentialDialog = page.getByRole('dialog', { name: 'Worker enrollment credential' });
+    await expect(credentialDialog).toBeVisible();
+    await credentialDialog.getByLabel('Worker-management credential').fill('worker-management-token');
+    await credentialDialog.getByRole('button', { name: 'Create enrollment code' }).click();
+
+    await expect(page.getByRole('dialog', { name: 'Add worker' }).getByText('Enrollment code')).toBeVisible();
+    expect(attempts).toBe(2);
+  });
 });
 
 test.describe('Task CRUD', () => {

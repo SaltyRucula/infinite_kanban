@@ -136,9 +136,10 @@ export const api = {
 
   getWorkerUsage: () => request<WorkerUsageReport>('/workers/usage'),
 
-  createEnrollmentCode: (projectId?: string) =>
+  createEnrollmentCode: (projectId?: string, credential?: string) =>
     request<{ code: string; expiresAt: number }>('/workers/enrollment-codes', {
       method: 'POST',
+      ...(credential ? { headers: { ...authHeaders(), Authorization: `Bearer ${credential}` } } : {}),
       body: JSON.stringify(projectId ? { projectId } : {}),
     }),
 

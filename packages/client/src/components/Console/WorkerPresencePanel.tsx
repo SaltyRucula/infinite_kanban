@@ -42,6 +42,8 @@ export function WorkerPresencePanel({
   const [agentError, setAgentError] = useState<string | null>(null);
   const [enrollment, setEnrollment] = useState<{ code: string; expiresAt: number } | null>(null);
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
+  const [needsEnrollmentCredential, setNeedsEnrollmentCredential] = useState(false);
+  const [enrollmentCredential, setEnrollmentCredential] = useState('');
   const [creatingEnrollment, setCreatingEnrollment] = useState(false);
   const [copiedCommand, setCopiedCommand] = useState(false);
   const [usage, setUsage] = useState<WorkerUsageReport | null>(null);
@@ -88,11 +90,18 @@ export function WorkerPresencePanel({
     setEnrollmentError(null);
     setCopiedCommand(false);
     try {
-      const created = await api.createEnrollmentCode(projectId);
+      const created = await api.createEnrollmentCode(projectId, enrollmentCredential || undefined);
       setEnrollment(created);
       setNow(Date.now());
+      setNeedsEnrollmentCredential(false);
+      setEnrollmentCredential('');
     } catch (err) {
-      setEnrollmentError(err instanceof Error ? err.message : 'Failed to create enrollment code');
+      const message = err instanceof Error ? err.message : 'Failed to create enrollment code';
+      if (message === 'unauthorized' || message === 'forbidden') {
+        setNeedsEnrollmentCredential(true);
+        return;
+      }
+      setEnrollmentError(message);
     } finally {
       setCreatingEnrollment(false);
     }
@@ -376,6 +385,52 @@ export function WorkerPresencePanel({
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {needsEnrollmentCredential && (
+        <div
+          role="dialog"
+          aria-label="Worker enrollment credential"
+          aria-modal="true"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+        >
+          <form
+            className="w-full max-w-md rounded-lg border border-[#2c3343] bg-[#0e1015] p-5 shadow-2xl"
+            onSubmit={(event) => { event.preventDefault(); void createEnrollment(); }}
+          >
+            <h3 className="text-sm font-semibold text-white">Worker enrollment credential</h3>
+            <p className="mt-1 text-xs text-[#94a3b8]">
+              This deployment requires a credential with the <code>workers:manage</code> scope to create an enrollment code.
+            </p>
+            <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[#94a3b8]">
+              Worker-management credential
+              <input
+                aria-label="Worker-management credential"
+                type="password"
+                autoComplete="off"
+                value={enrollmentCredential}
+                onChange={(event) => setEnrollmentCredential(event.target.value)}
+                className="mt-1 w-full rounded border border-[#202532] bg-[#14171e] px-3 py-2 text-sm text-white"
+                required
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setNeedsEnrollmentCredential(false); setEnrollmentCredential(''); }}
+                className="rounded px-3 py-1.5 text-xs text-[#94a3b8] hover:bg-[#1b1f2b] hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={creatingEnrollment}
+                className="rounded bg-[#00b4d8] px-3 py-1.5 text-xs font-semibold text-[#08090c] hover:bg-[#48cae4] disabled:opacity-50"
+              >
+                {creatingEnrollment ? 'Creating...' : 'Create enrollment code'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
       {enrollmentError && (
