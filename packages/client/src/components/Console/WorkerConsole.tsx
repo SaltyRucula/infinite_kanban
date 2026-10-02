@@ -13,6 +13,7 @@ import {
   WifiOff,
   ChevronDown,
   Download,
+  Kanban,
 } from 'lucide-react';
 import type { Task, Project, AgentType } from '@/types';
 import { useTasks } from '@/hooks/useTasks';
@@ -33,6 +34,7 @@ interface WorkerConsoleProps {
   toggleTheme: () => void;
   onBackToProjects: () => void;
   onSelectProject: (project: Project) => void;
+  onOpenBoard?: () => void;
   initialTaskId?: string;
 }
 
@@ -43,6 +45,7 @@ export function WorkerConsole({
   toggleTheme,
   onBackToProjects,
   onSelectProject,
+  onOpenBoard,
   initialTaskId,
 }: WorkerConsoleProps) {
   const {
@@ -280,6 +283,17 @@ export function WorkerConsole({
               <Download className="w-3.5 h-3.5 text-[#94a3b8]" />
               <span>Import Jira</span>
             </button>
+
+            {onOpenBoard && (
+              <button
+                onClick={onOpenBoard}
+                aria-label="Board view"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-[12px] font-medium text-[#e2e8f0] hover:bg-[#1b1f2b] transition-colors"
+              >
+                <Kanban className="w-3.5 h-3.5 text-[#94a3b8]" />
+                <span>Board View</span>
+              </button>
+            )}
           </div>
         </div>
 
