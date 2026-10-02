@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a reproducible problem in the board, API, agent runtime, worker, or developer workflow.
+title: "[Bug]: "
+labels: ["bug", "defect"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Do not include credentials, API keys, or other secrets.
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Select every area affected by this problem.
+      multiple: true
+      options:
+        - Client / board UI
+        - Server / REST API / WebSocket
+        - Agent runtime
+        - Worker
+        - Git or worktree operations
+        - CI, deployment, or documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and its impact.
+      placeholder: Tell us what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest reliable sequence that triggers the problem.
+      placeholder: |
+        1. Start from ...
+        2. Do ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include relevant browser, operating system, app revision, provider, logs, or screenshots. Remove secrets before posting.
+      placeholder: |
+        - Browser / OS:
+        - App revision or deployment:
+        - Agent provider/model (if relevant):
+        - Logs or screenshots:
+    validations:
+      required: true
