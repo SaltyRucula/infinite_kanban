@@ -1,0 +1,67 @@
+name: Engineering task
+description: Create a scoped work item with acceptance criteria, dependencies, and risk context.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for planned engineering work. State dependencies explicitly and do not include credentials, API keys, or other secrets.
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Primary area
+      description: Choose the primary area of ownership.
+      options:
+        - Client / board UI
+        - Server / REST API / WebSocket
+        - Agent runtime
+        - Worker
+        - Git or worktree operations
+        - CI, deployment, or documentation
+        - Shared contracts
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Describe the problem or outcome and the intended boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List observable, testable completion conditions.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and ordering
+      description: List blocking issues, pull requests, decisions, or say "None". State the required implementation order if there is one.
+      placeholder: "None"
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      description: Choose the highest risk surface this work may touch.
+      options:
+        - P0 - security, auth, agent runtime, git/worktree, data integrity, or task-group queue
+        - P1 - user workflow or API behavior
+        - P2 - isolated UI, docs, or low-risk maintenance
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Name the focused tests and required gate evidence expected before completion.
+    validations:
+      required: true
+title: "[Task]: "

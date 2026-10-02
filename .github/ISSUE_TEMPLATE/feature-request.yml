@@ -1,0 +1,63 @@
+name: Feature request
+description: Propose a user-visible improvement with a clear problem and outcome.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem before prescribing an implementation. Do not include credentials, API keys, or other secrets.
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Select every likely area.
+      multiple: true
+      options:
+        - Client / board UI
+        - Server / REST API / WebSocket
+        - Agent runtime
+        - Worker
+        - Git or worktree operations
+        - CI, deployment, or documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Who encounters the problem, and what blocks them today?
+    validations:
+      required: true
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired outcome
+      description: State the observable behavior or workflow that would make this successful.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-approach
+    attributes:
+      label: Proposed approach
+      description: Optional. Share ideas, constraints, or links that may help implementation.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What existing workarounds or other approaches have you considered?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List the checks that would show the request is complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+title: "[Feature]: "
+labels: ["enhancement"]
