@@ -19,7 +19,7 @@ import type { WorkerRegistration, WorkerRepository } from '../repositories/worke
 import type { EnrollmentCodeRepository } from '../repositories/enrollment-code-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
-import { countPendingWorkRequests } from '../services/work-requests.js';
+import { countPendingWorkRequests, withWorkRequestLock } from '../services/work-requests.js';
 import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
 const COMMAND_POLL_LIMIT_DEFAULT = 20;
@@ -525,13 +525,21 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       res.status(400).json({ error: 'invalid agent event' });
       return;
     }
-    if (submittedEvent.type === 'request_work' && await countPendingWorkRequests(tasks, task) >= MAX_PENDING_WORK_REQUESTS) {
-      console.warn(`[workers] rejected work request for task ${task.id} from worker ${worker.id}: ${MAX_PENDING_WORK_REQUESTS} requests already pending`);
-      res.status(409).json({ error: `too many pending work requests (max ${MAX_PENDING_WORK_REQUESTS}); approve or dismiss existing requests first` });
-      return;
-    }
     const event: AgentEvent = { ...submittedEvent, id: uuid() };
-    await tasks.insertEvent(event);
+    if (submittedEvent.type === 'request_work') {
+      const accepted = await withWorkRequestLock(`pending-work-requests:${task.id}`, async () => {
+        if (await countPendingWorkRequests(tasks, task) >= MAX_PENDING_WORK_REQUESTS) return false;
+        await tasks.insertEvent(event);
+        return true;
+      });
+      if (!accepted) {
+        console.warn(`[workers] rejected work request for task ${task.id} from worker ${worker.id}: ${MAX_PENDING_WORK_REQUESTS} requests already pending`);
+        res.status(409).json({ error: `too many pending work requests (max ${MAX_PENDING_WORK_REQUESTS}); approve or dismiss existing requests first` });
+        return;
+      }
+    } else {
+      await tasks.insertEvent(event);
+    }
     const renewed = await tasks.renewWorkerLease(task.id, worker.id, claim, Date.now(), WORKER_TASK_LEASE_MS);
     if (!renewed) {
       res.status(409).json({ error: 'task claim is expired' });

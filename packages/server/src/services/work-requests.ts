@@ -1,6 +1,24 @@
 import type { AgentEvent, Task } from '../types.js';
 import type { TaskRepository } from '../repositories/types.js';
 
+const workRequestLocks = new Map<string, Promise<void>>();
+
+/** Serialize related work-request decisions in this server process. */
+export async function withWorkRequestLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = workRequestLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  workRequestLocks.set(key, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (workRequestLocks.get(key) === queued) workRequestLocks.delete(key);
+  }
+}
+
 /** Approved proposals become tasks keyed by this external identity. */
 export const WORK_REQUEST_EXTERNAL_SOURCE = 'work-request';
 

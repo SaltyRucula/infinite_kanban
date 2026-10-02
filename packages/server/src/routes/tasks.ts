@@ -6,7 +6,7 @@ import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { WorkerRepository } from '../repositories/worker-types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
-import { WORK_REQUEST_EXTERNAL_SOURCE, workRequestExternalKey } from '../services/work-requests.js';
+import { WORK_REQUEST_EXTERNAL_SOURCE, workRequestExternalKey, withWorkRequestLock } from '../services/work-requests.js';
 import { workerAcceptsTask } from '../worker-consent.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
@@ -93,7 +93,23 @@ export function createTaskRouter(
       }),
       ...groupPlacement,
     };
-    const creation = await repo.createIdempotent(task);
+    let creation: { task: Task; created: boolean } | undefined;
+    if (groupPlacement && groupRepo) {
+      creation = await withWorkRequestLock(`work-request-group:${groupPlacement.groupId}`, async () => {
+        const existingTask = await repo.getByExternalIdentity(source.projectId, WORK_REQUEST_EXTERNAL_SOURCE, externalKey);
+        if (existingTask) return { task: existingTask, created: false };
+        const children = await groupRepo.getChildTasks(groupPlacement.groupId);
+        if (children.length >= MAX_GROUP_CHILDREN) return undefined;
+        const groupOrder = children.reduce((max, child) => Math.max(max, (child.groupOrder ?? -1) + 1), children.length);
+        return repo.createIdempotent({ ...task, groupOrder });
+      });
+      if (!creation) {
+        res.status(409).json({ error: `group already has the maximum of ${MAX_GROUP_CHILDREN} children` });
+        return;
+      }
+    } else {
+      creation = await repo.createIdempotent(task);
+    }
     if (creation.created) broadcastTaskUpdate(creation.task);
     res.status(creation.created ? 201 : 200).json(toPortableTask(creation.task));
   }));

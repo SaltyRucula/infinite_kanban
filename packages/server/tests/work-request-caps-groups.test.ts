@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import express from 'express';
-import { MAX_PENDING_WORK_REQUESTS } from '@ai-agent-board/shared/constants.js';
+import { MAX_GROUP_CHILDREN, MAX_PENDING_WORK_REQUESTS } from '@ai-agent-board/shared/constants.js';
 import { createTaskRouter } from '../src/routes/tasks.js';
 import { createWorkersRouter } from '../src/routes/workers.js';
 import type { AgentEvent, Task, TaskGroup, Worker } from '../src/types.js';
@@ -56,12 +56,40 @@ class Store {
   readonly tasks = new Map<string, Task>([[origin.id, origin]]);
   readonly events: AgentEvent[] = [];
   readonly groups = new Map<string, TaskGroup>();
+  private eventReadsToBlock = 0;
+  private eventReadGate?: Promise<void>;
+  private releaseEventReadGate?: () => void;
+  private eventReadsBlocked?: () => void;
+
+  blockEventReads(count: number): Promise<void> {
+    this.eventReadsToBlock = count;
+    this.eventReadGate = new Promise((resolve) => { this.releaseEventReadGate = resolve; });
+    return new Promise((resolve) => { this.eventReadsBlocked = resolve; });
+  }
+
+  releaseBlockedEventReads(): void {
+    this.releaseEventReadGate?.();
+  }
+
+  private async eventsForTask(taskId: string): Promise<AgentEvent[]> {
+    if (this.eventReadsToBlock > 0) {
+      this.eventReadsToBlock -= 1;
+      if (this.eventReadsToBlock === 0) this.eventReadsBlocked?.();
+      await this.eventReadGate;
+    }
+    return this.events.filter((event) => event.taskId === taskId);
+  }
 
   taskRepo(): TaskRepository {
     return {
       getById: async (id: string) => this.tasks.get(id),
-      getEventsByTaskId: async (taskId: string) => this.events.filter((event) => event.taskId === taskId),
+      getEventsByTaskId: async (taskId: string) => this.eventsForTask(taskId),
       insertEvent: async (event: AgentEvent) => { this.events.push(event); },
+      insertWorkRequestIfBelowPendingLimit: async (event: AgentEvent, _projectId: string, limit: number) => {
+        if (storedRequests(this).length >= limit) return false;
+        this.events.push(event);
+        return true;
+      },
       getByExternalIdentity: async (projectId: string, source: string, key: string) => [...this.tasks.values()]
         .find((task) => task.projectId === projectId && task.externalSource === source && task.externalKey === key),
       createIdempotent: async (task: Task) => {
@@ -70,6 +98,17 @@ class Store {
         if (existing) return { task: existing, created: false };
         this.tasks.set(task.id, task);
         return { task, created: true };
+      },
+      createIdempotentInGroup: async (task: Task, maxChildren: number) => {
+        const existing = [...this.tasks.values()].find((candidate) => candidate.projectId === task.projectId
+          && candidate.externalSource === task.externalSource && candidate.externalKey === task.externalKey);
+        if (existing) return { task: existing, created: false, groupFull: false };
+        const children = [...this.tasks.values()].filter((candidate) => candidate.groupId === task.groupId);
+        if (children.length >= maxChildren) return { task: undefined, created: false, groupFull: true };
+        const groupOrder = children.reduce((max, child) => Math.max(max, (child.groupOrder ?? -1) + 1), children.length);
+        const created = { ...task, groupOrder };
+        this.tasks.set(created.id, created);
+        return { task: created, created: true, groupFull: false };
       },
       isWorkerClaimValid: async () => true,
       renewWorkerLease: async () => true,
@@ -175,6 +214,18 @@ test('worker ingress rejects work requests over the pending cap without storing 
   });
 });
 
+test('concurrent worker ingress never exceeds the pending work-request cap', async () => {
+  const store = new Store();
+  await withServer(store, async (baseUrl) => {
+    for (let i = 0; i < MAX_PENDING_WORK_REQUESTS - 1; i += 1) {
+      assert.equal((await postWorkRequest(baseUrl, i)).status, 200);
+    }
+    const responses = await Promise.all([postWorkRequest(baseUrl, 100), postWorkRequest(baseUrl, 101)]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+    assert.equal(storedRequests(store).length, MAX_PENDING_WORK_REQUESTS);
+  });
+});
+
 test('worker ingress rejects a request_work event without a structured proposal', async () => {
   const store = new Store();
   await withServer(store, async (baseUrl) => {
@@ -241,6 +292,25 @@ test('approving into a valid group places the task in that group without running
     assert.equal(replay.status, 200);
     assert.equal((await replay.json() as Task).id, created.id);
     assert.equal([...store.tasks.values()].filter((task) => task.groupId === 'group-a').length, 2);
+  });
+});
+
+test('concurrent approvals cannot overfill a group or reuse its group order', async () => {
+  const store = new Store();
+  store.groups.set('group-a', makeGroup());
+  for (let i = 0; i < MAX_GROUP_CHILDREN - 1; i += 1) {
+    store.tasks.set(`existing-child-${i}`, {
+      ...origin, id: `existing-child-${i}`, assignedWorkerId: undefined, columnId: 'backlog', agentStatus: 'idle', groupId: 'group-a', groupOrder: i,
+    });
+  }
+  await withServer(store, async (baseUrl) => {
+    assert.equal((await postWorkRequest(baseUrl, 1)).status, 200);
+    assert.equal((await postWorkRequest(baseUrl, 2)).status, 200);
+    const responses = await Promise.all(storedRequests(store).map((event) => approve(baseUrl, event.id, { groupId: 'group-a' })));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+    const children = [...store.tasks.values()].filter((task) => task.groupId === 'group-a');
+    assert.equal(children.length, MAX_GROUP_CHILDREN);
+    assert.deepEqual(children.map((task) => task.groupOrder).sort((a, b) => a! - b!), Array.from({ length: MAX_GROUP_CHILDREN }, (_, index) => index));
   });
 });
 
