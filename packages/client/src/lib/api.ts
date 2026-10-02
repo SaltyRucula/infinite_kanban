@@ -138,6 +138,9 @@ export const api = {
 
   getWorkers: () => request<Worker[]>('/workers'),
 
+  removeWorker: (id: string) =>
+    request<void>(`/workers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   getWorkerUsage: () => request<WorkerUsageReport>('/workers/usage'),
 
   createEnrollmentCode: (projectId?: string, credential?: string) =>
