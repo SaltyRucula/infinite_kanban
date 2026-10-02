@@ -37,6 +37,32 @@ export function createTaskRouter(
     res.json((await repo.getArchivedTasks(project.id)).map(toPortableTask));
   }));
 
+  // POST /api/tasks/:id/work-requests/:eventId/approve — turn a worker proposal
+  // into a safe backlog task. The originating event is immutable; use its ID as
+  // the idempotency identity so repeated clicks cannot create duplicate work.
+  router.post('/:id/work-requests/:eventId/approve', asyncHandler(async (req: Request, res: Response) => {
+    const source = await repo.getById(paramId(req));
+    if (!source) { res.status(404).json({ error: 'source task not found' }); return; }
+    const eventId = req.params.eventId;
+    if (typeof eventId !== 'string' || !eventId) { res.status(400).json({ error: 'eventId is required' }); return; }
+    const event = (await repo.getEventsByTaskId(source.id)).find((candidate) => candidate.id === eventId);
+    const proposal = event?.type === 'request_work' ? event.metadata?.workRequest : undefined;
+    if (!proposal) { res.status(404).json({ error: 'work request not found' }); return; }
+
+    const task = buildTask({
+      title: proposal.title,
+      description: proposal.description,
+      agentType: proposal.agentType,
+      columnId: 'backlog',
+      projectId: source.projectId,
+      externalSource: 'work-request',
+      externalKey: `${source.id}:${eventId}`,
+    });
+    const creation = await repo.createIdempotent(task);
+    if (creation.created) broadcastTaskUpdate(creation.task);
+    res.status(creation.created ? 201 : 200).json(toPortableTask(creation.task));
+  }));
+
   // POST /api/tasks
   router.post('/', asyncHandler(async (req: Request, res: Response) => {
     const project = await getProjectForRequest(projectRepo, req.body.projectId);
