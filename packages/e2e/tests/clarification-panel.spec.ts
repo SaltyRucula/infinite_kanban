@@ -13,6 +13,11 @@ type ResumeCall = {
   readonly answer: string;
 };
 
+type WorkRequestApprovalCall = {
+  readonly method: string;
+  readonly url: string;
+};
+
 async function fulfillJson(route: Route, body: unknown): Promise<void> {
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
@@ -234,5 +239,63 @@ test.describe('Task detail clarification card', () => {
     await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
     await expect(page.getByTestId('clarification-card').getByText(PROMPT)).toBeVisible();
     await expect(page.getByText(`Submitted: ${CHOICES[1]}`)).toBeVisible();
+  });
+
+  test('shows a worker follow-up proposal and approves it explicitly without starting it', async ({ page }) => {
+    const calls: ResumeCall[] = [];
+    const approvals: WorkRequestApprovalCall[] = [];
+    let runRequests = 0;
+    const eventId = 'evt-work-request-1';
+    const proposalTitle = 'Review the database migration';
+    const proposalDescription = 'Validate rollout safety before deployment.';
+
+    await mockClarificationBoard(
+      page,
+      { agentStatus: 'executing' },
+      [{
+        id: eventId,
+        taskId: TASK_ID,
+        type: 'request_work',
+        content: 'Requesting a database review',
+        timestamp: Date.now() - 5_000,
+        metadata: {
+          workRequest: {
+            title: proposalTitle,
+            description: proposalDescription,
+            agentType: 'codex',
+          },
+        },
+      }],
+      calls,
+    );
+    await page.route(`**/api/tasks/${TASK_ID}/work-requests/${eventId}/approve`, async (route) => {
+      approvals.push({ method: route.request().method(), url: route.request().url() });
+      await fulfillJson(route, {
+        id: 'created-follow-up',
+        title: proposalTitle,
+        description: proposalDescription,
+        columnId: 'backlog',
+        agentStatus: 'idle',
+      });
+    });
+    await page.route(`**/api/tasks/${TASK_ID}/run`, async (route) => {
+      runRequests += 1;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'follow-up must not auto-run' }) });
+    });
+
+    await page.goto('/');
+    await waitForBoard(page);
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
+
+    const card = page.getByTestId('work-request-card');
+    await expect(card.getByText('Suggested follow-up work')).toBeVisible();
+    await expect(card.getByText(proposalTitle)).toBeVisible();
+    await expect(card.getByText(proposalDescription)).toBeVisible();
+    await page.getByRole('button', { name: 'Add to backlog' }).click();
+
+    await expect.poll(() => approvals).toHaveLength(1);
+    expect(approvals[0]?.method).toBe('POST');
+    expect(runRequests).toBe(0);
+    await expect(card.getByText('Added to backlog')).toBeVisible();
   });
 });
