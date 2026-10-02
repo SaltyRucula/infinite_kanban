@@ -74,8 +74,19 @@ test.describe('Worker console shell', () => {
 
   test('lets an operator remove an unavailable worker from the roster', async ({ page, request }) => {
     const name = `unavailable-worker-${Date.now()}`;
-    const worker = await registerWorker(request, name);
-    const disable = await request.patch(`${API}/api/workers/${worker.id}/status`, { data: { status: 'disabled' } });
+    const registration = await request.post(`${API}/api/workers/register`, {
+      data: {
+        name,
+        agentTypes: ['opencode'],
+        maxConcurrentTasks: 1,
+        hostname: `${name}-host`,
+        acceptedProjectIds: ['default'],
+        acceptedLabels: [],
+      },
+    });
+    expect(registration.ok()).toBeTruthy();
+    const worker = (await registration.json()) as { worker: { id: string } };
+    const disable = await request.patch(`${API}/api/workers/${worker.worker.id}/status`, { data: { status: 'disabled' } });
     expect(disable.status()).toBe(200);
 
     await page.getByRole('button', { name: 'Agent Roster' }).click();
@@ -84,7 +95,7 @@ test.describe('Worker console shell', () => {
 
     await expect(page.getByText(name)).not.toBeVisible();
     const workers = await (await request.get(`${API}/api/workers`)).json() as Array<{ id: string }>;
-    expect(workers.some((registered) => registered.id === worker.id)).toBe(false);
+    expect(workers.some((registered) => registered.id === worker.worker.id)).toBe(false);
   });
 
   test('prompts for a worker-management credential after enrollment is forbidden', async ({ page }) => {
