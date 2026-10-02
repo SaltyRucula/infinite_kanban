@@ -292,6 +292,7 @@ export type AgentEventType =
   | 'command_output'
   | 'output'
   | 'test_result'
+  | 'request_work'
   | 'error'
   | 'complete';
 
@@ -325,6 +326,7 @@ export function classifyAgentEventImportance(type: AgentEventType): AgentEventIm
     case 'file_edit':
     case 'command':
     case 'test_result':
+    case 'request_work':
     case 'error':
     case 'complete':
       return 'milestone';
@@ -365,6 +367,12 @@ export interface AgentEvent {
     error?: string;
     clarification_request?: ClarificationRequestPayload;
     clarification_answer?: TaskClarificationAnswer;
+    /** A follow-up task proposal that requires human approval before creation. */
+    workRequest?: {
+      title: string;
+      description: string;
+      agentType: AgentType;
+    };
   };
 }
 

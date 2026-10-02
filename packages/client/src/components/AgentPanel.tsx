@@ -52,6 +52,7 @@ const eventIconMap: Record<AgentEventType, React.ElementType> = {
   command_output: Terminal,
   output: Terminal,
   test_result: CheckCircle2,
+  request_work: GitBranch,
   error: AlertCircle,
   complete: CheckCircle2,
 };
@@ -66,6 +67,7 @@ const eventColorMap: Record<AgentEventType, string> = {
   command_output: 'text-zinc-500 dark:text-zinc-400',
   output: 'text-zinc-500 dark:text-zinc-400',
   test_result: 'text-emerald-500 dark:text-emerald-400',
+  request_work: 'text-violet-500 dark:text-violet-400',
   error: 'text-red-500 dark:text-red-400',
   complete: 'text-emerald-500 dark:text-emerald-400',
 };
@@ -80,6 +82,7 @@ const eventLabelMap: Record<AgentEventType, string> = {
   command_output: 'Output',
   output: 'Output',
   test_result: 'Test Result',
+  request_work: 'Work Request',
   error: 'Error',
   complete: 'Complete',
 };

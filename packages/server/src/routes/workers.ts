@@ -26,7 +26,7 @@ const WORKER_EVENT_RATE_LIMIT_WINDOW_MS = 60_000;
 const ENROLLMENT_CODE_TTL_MS = 15 * 60 * 1000;
 const VALID_AGENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set([
   'thinking', 'tool_call', 'file_read', 'file_write', 'file_edit', 'command',
-  'command_output', 'output', 'test_result', 'error', 'complete',
+  'command_output', 'output', 'test_result', 'request_work', 'error', 'complete',
 ]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -43,9 +43,21 @@ function validWorkerEventMetadata(value: unknown): value is NonNullable<AgentEve
     if (key === 'agentType' && isValidAgentType(item)) continue;
     if (nonNegativeNumberKeys.has(key) && typeof item === 'number' && Number.isFinite(item) && item >= 0) continue;
     if ((key === 'clarification_request' || key === 'clarification_answer') && isPlainRecord(item)) continue;
+    if (key === 'workRequest' && validWorkRequest(item)) continue;
     return false;
   }
   return true;
+}
+
+function validWorkRequest(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  const { title, description, agentType } = value;
+  return typeof title === 'string'
+    && title.trim().length > 0
+    && title.length <= MAX_DESCRIPTION_LENGTH
+    && typeof description === 'string'
+    && description.length <= MAX_DESCRIPTION_LENGTH
+    && isValidAgentType(agentType);
 }
 
 function workerEventRateLimited(timestamps: Map<string, { startedAt: number; count: number }>, workerId: string): boolean {
