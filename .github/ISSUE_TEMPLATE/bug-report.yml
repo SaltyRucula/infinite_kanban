@@ -1,7 +1,5 @@
 name: Bug report
 description: Report a reproducible problem in the board, API, agent runtime, worker, or developer workflow.
-title: "[Bug]: "
-labels: ["bug", "defect"]
 body:
   - type: markdown
     attributes:
@@ -61,3 +59,5 @@ body:
         - Logs or screenshots:
     validations:
       required: true
+title: "[Bug]: "
+labels: ["bug", "defect"]

@@ -1,6 +1,5 @@
 name: Engineering task
 description: Create a scoped work item with acceptance criteria, dependencies, and risk context.
-title: "[Task]: "
 body:
   - type: markdown
     attributes:
@@ -65,3 +64,4 @@ body:
       description: Name the focused tests and required gate evidence expected before completion.
     validations:
       required: true
+title: "[Task]: "

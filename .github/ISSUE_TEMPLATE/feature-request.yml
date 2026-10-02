@@ -1,7 +1,5 @@
 name: Feature request
 description: Propose a user-visible improvement with a clear problem and outcome.
-title: "[Feature]: "
-labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
@@ -61,3 +59,5 @@ body:
         - [ ] ...
     validations:
       required: true
+title: "[Feature]: "
+labels: ["enhancement"]
