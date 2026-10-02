@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import type { Project, Task } from '../types.js';
+import { v4 as uuid } from 'uuid';
+import type { AgentEvent, Project, Task } from '../types.js';
 import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
@@ -61,6 +62,36 @@ export function createTaskRouter(
     const creation = await repo.createIdempotent(task);
     if (creation.created) broadcastTaskUpdate(creation.task);
     res.status(creation.created ? 201 : 200).json(toPortableTask(creation.task));
+  }));
+
+  // POST /api/tasks/:id/work-requests/:eventId/dismiss — record a durable
+  // operator decision so a dismissed proposal stays hidden after refresh.
+  router.post('/:id/work-requests/:eventId/dismiss', asyncHandler(async (req: Request, res: Response) => {
+    const source = await repo.getById(paramId(req));
+    if (!source) { res.status(404).json({ error: 'source task not found' }); return; }
+    const eventId = req.params.eventId;
+    if (typeof eventId !== 'string' || !eventId) { res.status(400).json({ error: 'eventId is required' }); return; }
+    const events = await repo.getEventsByTaskId(source.id);
+    const proposal = events.find((candidate) => candidate.id === eventId);
+    if (proposal?.type !== 'request_work' || !proposal.metadata?.workRequest) {
+      res.status(404).json({ error: 'work request not found' });
+      return;
+    }
+    if (events.some((event) => event.metadata?.dismissedWorkRequestEventId === eventId)) {
+      res.status(204).end();
+      return;
+    }
+    const dismissal: AgentEvent = {
+      id: uuid(),
+      taskId: source.id,
+      type: 'output',
+      content: 'Work request dismissed by operator.',
+      timestamp: Date.now(),
+      metadata: { dismissedWorkRequestEventId: eventId },
+    };
+    await repo.insertEvent(dismissal);
+    broadcast({ type: 'agent_event', payload: dismissal });
+    res.status(204).end();
   }));
 
   // POST /api/tasks

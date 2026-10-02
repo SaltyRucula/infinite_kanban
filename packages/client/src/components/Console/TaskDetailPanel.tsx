@@ -39,7 +39,7 @@ interface WorkRequest {
   agentType: string;
 }
 
-type WorkRequestState = 'approving' | 'approved' | 'dismissed' | 'error';
+type WorkRequestState = 'approving' | 'approved' | 'dismissing' | 'dismissed' | 'error';
 
 function parseWorkRequest(event: AgentEvent): WorkRequest | null {
   if (event.type !== 'request_work') return null;
@@ -142,9 +142,12 @@ export function TaskDetailPanel({
       ? localSubmission.answer
       : null;
   const canAnswerClarification = task.agentStatus === 'awaiting_clarification' && !submittedAnswer;
+  const dismissedWorkRequestIds = new Set(
+    events.flatMap((event) => event.metadata?.dismissedWorkRequestEventId ? [event.metadata.dismissedWorkRequestEventId] : []),
+  );
   const workRequests = events
     .map(parseWorkRequest)
-    .filter((request): request is WorkRequest => request !== null);
+    .filter((request): request is WorkRequest => request !== null && !dismissedWorkRequestIds.has(request.eventId));
 
   const handleClarificationSubmit = async (answerText?: string) => {
     const textToSubmit = answerText ?? clarificationAnswer;
@@ -217,6 +220,20 @@ export function TaskDetailPanel({
       setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approved' }));
     } catch (error) {
       console.error('Failed to approve work request:', error);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
+    }
+  };
+
+  const dismissWorkRequest = async (request: WorkRequest) => {
+    const state = workRequestStates[request.eventId];
+    if (state === 'approving' || state === 'dismissing' || state === 'dismissed') return;
+
+    setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissing' }));
+    try {
+      await api.dismissWorkRequest(task.id, request.eventId);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissed' }));
+    } catch (error) {
+      console.error('Failed to dismiss work request:', error);
       setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
     }
   };
@@ -409,11 +426,11 @@ export function TaskDetailPanel({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissed' }))}
-                    disabled={state === 'approving'}
+                    onClick={() => void dismissWorkRequest(request)}
+                    disabled={state === 'approving' || state === 'dismissing'}
                     className="px-2.5 py-1 rounded text-[11px] text-[#94a3b8] hover:bg-[#1b1f2b] hover:text-white transition-colors disabled:opacity-50"
                   >
-                    Dismiss
+                    {state === 'dismissing' ? 'Dismissing...' : 'Dismiss'}
                   </button>
                 </div>
               )}

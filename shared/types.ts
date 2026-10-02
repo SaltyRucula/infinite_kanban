@@ -373,6 +373,8 @@ export interface AgentEvent {
       description: string;
       agentType: AgentType;
     };
+    /** The event id of a follow-up proposal dismissed by an operator. */
+    dismissedWorkRequestEventId?: string;
   };
 }
 

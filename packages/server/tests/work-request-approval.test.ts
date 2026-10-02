@@ -88,3 +88,44 @@ test('approving a worker work request creates one backlog task without auto-runn
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test('dismissing a worker work request persists the decision without creating or running work', async () => {
+  const inserted: AgentEvent[] = [];
+  let createCalls = 0;
+  const repo = {
+    getById: async (id: string) => id === origin.id ? origin : undefined,
+    getEventsByTaskId: async (taskId: string) => taskId === origin.id ? [workRequest] : [],
+    insertEvent: async (event: AgentEvent) => { inserted.push(event); },
+    createIdempotent: async () => {
+      createCalls += 1;
+      throw new Error('dismissing must not create work');
+    },
+  } as unknown as TaskRepository;
+  const projects = {
+    getById: async () => ({ id: 'default', name: 'Default', isDefault: true }),
+    getDefault: async () => ({ id: 'default', name: 'Default', isDefault: true }),
+  };
+  const manager = { isRunning: () => false, stopAgent: () => {}, clearEvents: () => {} };
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/tasks', createTaskRouter(repo, manager as any, projects as any));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/tasks/${origin.id}/work-requests/${workRequest.id}/dismiss`, {
+      method: 'POST',
+    });
+
+    assert.equal(response.status, 204);
+    assert.equal(createCalls, 0);
+    assert.equal(inserted.length, 1);
+    assert.equal(inserted[0]?.taskId, origin.id);
+    assert.equal(inserted[0]?.metadata?.dismissedWorkRequestEventId, workRequest.id);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});

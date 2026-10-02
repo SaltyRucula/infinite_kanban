@@ -137,6 +137,9 @@ export const api = {
   approveWorkRequest: (taskId: string, eventId: string) =>
     request<Task>(`/tasks/${taskId}/work-requests/${eventId}/approve`, { method: 'POST' }),
 
+  dismissWorkRequest: (taskId: string, eventId: string) =>
+    request<void>(`/tasks/${taskId}/work-requests/${eventId}/dismiss`, { method: 'POST' }),
+
   getAgents: () => request<AgentInfo[]>('/agents'),
 
   getWorkers: () => request<Worker[]>('/workers'),

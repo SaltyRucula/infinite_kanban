@@ -324,10 +324,15 @@ test.describe('Task detail clarification card', () => {
       calls,
     );
     let approvalRequests = 0;
+    let dismissalRequests = 0;
     let runRequests = 0;
     await page.route(`**/api/tasks/${TASK_ID}/work-requests/${eventId}/approve`, async (route) => {
       approvalRequests += 1;
       await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'dismiss must not approve' }) });
+    });
+    await page.route(`**/api/tasks/${TASK_ID}/work-requests/${eventId}/dismiss`, async (route) => {
+      dismissalRequests += 1;
+      await route.fulfill({ status: 204 });
     });
     await page.route(`**/api/tasks/${TASK_ID}/run`, async (route) => {
       runRequests += 1;
@@ -343,6 +348,7 @@ test.describe('Task detail clarification card', () => {
     await page.getByRole('button', { name: 'Dismiss' }).click();
 
     await expect(card).toHaveCount(0);
+    await expect.poll(() => dismissalRequests).toBe(1);
     expect(approvalRequests).toBe(0);
     expect(runRequests).toBe(0);
   });

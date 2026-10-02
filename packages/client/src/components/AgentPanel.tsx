@@ -615,7 +615,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
   const [clarificationError, setClarificationError] = useState<string | null>(null);
   const [localClarificationAnswer, setLocalClarificationAnswer] = useState<TaskClarificationAnswer | null>(null);
-  const [workRequestStates, setWorkRequestStates] = useState<Record<string, 'approving' | 'approved' | 'dismissed' | 'error'>>({});
+  const [workRequestStates, setWorkRequestStates] = useState<Record<string, 'approving' | 'approved' | 'dismissing' | 'dismissed' | 'error'>>({});
   const clarificationSubmitInFlightRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [descExpanded, setDescExpanded] = useState(false);
@@ -637,7 +637,14 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const errorEvents = useMemo(() => events.filter((event) => event.type === 'error'), [events]);
   const latestError = errorEvents[errorEvents.length - 1];
   const workRequests = useMemo(
-    () => events.map(parseWorkRequest).filter((request): request is RenderWorkRequest => request !== null),
+    () => {
+      const dismissedIds = new Set(
+        events.flatMap((event) => event.metadata?.dismissedWorkRequestEventId ? [event.metadata.dismissedWorkRequestEventId] : []),
+      );
+      return events
+        .map(parseWorkRequest)
+        .filter((request): request is RenderWorkRequest => request !== null && !dismissedIds.has(request.eventId));
+    },
     [events],
   );
 
@@ -1015,6 +1022,18 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     }
   };
 
+  const dismissWorkRequest = async (request: RenderWorkRequest) => {
+    if (!task || workRequestStates[request.eventId] === 'approving' || workRequestStates[request.eventId] === 'dismissing' || workRequestStates[request.eventId] === 'dismissed') return;
+    setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissing' }));
+    try {
+      await api.dismissWorkRequest(task.id, request.eventId);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissed' }));
+    } catch (error) {
+      console.error('[AgentPanel] failed to dismiss work request:', error);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
+    }
+  };
+
   return (
     <AnimatePresence>
       {task && (
@@ -1348,11 +1367,11 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
                       </button>
                       <button
                         type="button"
-                        onClick={() => setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissed' }))}
-                        disabled={state === 'approving'}
+                        onClick={() => void dismissWorkRequest(request)}
+                        disabled={state === 'approving' || state === 'dismissing'}
                         className="rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Dismiss
+                        {state === 'dismissing' ? 'Dismissing...' : 'Dismiss'}
                       </button>
                     </div>
                   )}
