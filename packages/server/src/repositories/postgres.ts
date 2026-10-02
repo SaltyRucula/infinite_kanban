@@ -165,6 +165,53 @@ export class PostgresTaskRepository implements TaskRepository {
       if (err?.code === '23505' && task.externalSource && task.externalKey) { const existing=await this.getByExternalIdentity(task.projectId,task.externalSource,task.externalKey); if(existing) return {task:existing,created:false}; } throw err;
     }
   }
+
+  async createIdempotentInGroup(task: Task, maxChildren: number): Promise<{ task?: Task; created: boolean; groupFull: boolean }> {
+    if (!task.groupId) throw new Error('groupId is required for grouped task creation');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT id FROM task_groups WHERE id = $1 FOR UPDATE', [task.groupId]);
+      const existing = await client.query<TaskRow>('SELECT * FROM tasks WHERE project_id = $1 AND external_source = $2 AND external_key = $3', [task.projectId, task.externalSource, task.externalKey]);
+      if (existing.rows[0]) {
+        await client.query('COMMIT');
+        return { task: rowToTask(existing.rows[0]), created: false, groupFull: false };
+      }
+      const capacity = await client.query<{ count: string; next_order: number }>(
+        'SELECT COUNT(*) AS count, COALESCE(MAX(group_order), -1) + 1 AS next_order FROM tasks WHERE group_id = $1',
+        [task.groupId],
+      );
+      if (Number(capacity.rows[0]?.count ?? 0) >= maxChildren) {
+        await client.query('ROLLBACK');
+        return { created: false, groupFull: true };
+      }
+      const groupOrder = Number(capacity.rows[0]?.next_order ?? 0);
+      const { rows } = await client.query<TaskRow>(
+        `INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type,
+          created_at, started_at, completed_at, repo_path, branch_name, base_branch, use_worktree, worktree_path, archived,
+          group_id, group_order, summary, external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes, clarification_request, clarification_answer, assigned_worker_id, labels, agent_preference)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+         RETURNING *`,
+        [
+          task.id, task.projectId, task.title, task.description, task.priority, task.columnId, task.agentStatus, task.agentType ?? 'opencode',
+          task.createdAt, task.startedAt ?? null, task.completedAt ?? null, task.repoPath ?? null, task.branchName ?? null,
+          task.baseBranch ?? null, task.useWorktree ?? null, task.worktreePath ?? null, task.archived ?? false, task.groupId,
+          groupOrder, task.summary ?? null, task.externalSource ?? null, task.externalKey ?? null,
+          task.provenance ? JSON.stringify(task.provenance) : null, task.runRequestedAt ?? null, task.runClaimedAt ?? null,
+          task.timeoutMinutes ?? null, task.clarificationRequest ? JSON.stringify(task.clarificationRequest) : null,
+          task.clarificationAnswer ? JSON.stringify(task.clarificationAnswer) : null, task.assignedWorkerId ?? null,
+          JSON.stringify(task.labels ?? []), task.agentPreference ?? null,
+        ],
+      );
+      await client.query('COMMIT');
+      return { task: rowToTask(rows[0]!), created: true, groupFull: false };
+    } catch (err: unknown) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
   async requestRun(id:string,at:number) { const {rows}=await this.pool.query<TaskRow>('UPDATE tasks SET run_requested_at=$1,run_claimed_at=NULL WHERE id=$2 RETURNING *',[at,id]); return rows[0]?rowToTask(rows[0]):undefined; }
   async claimRun(id:string,at:number) { const staleBefore=at-30_000; const {rows}=await this.pool.query<TaskRow>(`UPDATE tasks SET run_claimed_at=$1 WHERE id=$2 AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < $3) AND agent_status IN (${CLAIMABLE_AGENT_STATUS_SQL_LIST}) RETURNING *`,[at,id,staleBefore]); return rows[0]?rowToTask(rows[0]):undefined; }
   async clearRun(id:string) { const {rows}=await this.pool.query<TaskRow>('UPDATE tasks SET run_requested_at=NULL,run_claimed_at=NULL WHERE id=$1 RETURNING *',[id]); return rows[0]?rowToTask(rows[0]):undefined; }

@@ -56,6 +56,7 @@ class Store {
   readonly tasks = new Map<string, Task>([[origin.id, origin]]);
   readonly events: AgentEvent[] = [];
   readonly groups = new Map<string, TaskGroup>();
+  groupedCreateCalls = 0;
   private eventReadsToBlock = 0;
   private eventReadGate?: Promise<void>;
   private releaseEventReadGate?: () => void;
@@ -100,6 +101,7 @@ class Store {
         return { task, created: true };
       },
       createIdempotentInGroup: async (task: Task, maxChildren: number) => {
+        this.groupedCreateCalls += 1;
         const existing = [...this.tasks.values()].find((candidate) => candidate.projectId === task.projectId
           && candidate.externalSource === task.externalSource && candidate.externalKey === task.externalKey);
         if (existing) return { task: existing, created: false, groupFull: false };
@@ -286,6 +288,7 @@ test('approving into a valid group places the task in that group without running
     assert.equal(created.agentStatus, 'idle');
     assert.equal(created.projectId, origin.projectId);
     assert.equal(store.tasks.get(created.id)?.runRequestedAt, undefined);
+    assert.equal(store.groupedCreateCalls, 1, 'group approval must delegate capacity and ordering to the atomic repository operation');
 
     // Idempotent replay returns the same task and creates nothing new.
     const replay = await approve(baseUrl, eventId, { groupId: 'group-a' });

@@ -6,7 +6,7 @@ import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { WorkerRepository } from '../repositories/worker-types.js';
 import type { TaskGroupRepository } from '../repositories/group-types.js';
-import { WORK_REQUEST_EXTERNAL_SOURCE, workRequestExternalKey, withWorkRequestLock } from '../services/work-requests.js';
+import { WORK_REQUEST_EXTERNAL_SOURCE, workRequestExternalKey } from '../services/work-requests.js';
 import { workerAcceptsTask } from '../worker-consent.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
@@ -60,7 +60,7 @@ export function createTaskRouter(
 
     // Optional placement into an existing, not-yet-started group of the same project.
     const groupId = req.body?.groupId;
-    let groupPlacement: { groupId: string; groupOrder: number } | undefined;
+    let groupPlacement: { groupId: string } | undefined;
     if (groupId !== undefined && groupId !== null && groupId !== '') {
       if (typeof groupId !== 'string') { res.status(400).json({ error: 'groupId must be a string' }); return; }
       if (!groupRepo) { res.status(400).json({ error: 'task groups are not available' }); return; }
@@ -73,12 +73,7 @@ export function createTaskRouter(
       if (group.columnId !== 'backlog' || agentManager.isGroupRunning(group.id)) {
         res.status(409).json({ error: 'can only add work to a group that has not started (backlog)' }); return;
       }
-      const children = await groupRepo.getChildTasks(group.id);
-      if (children.length >= MAX_GROUP_CHILDREN) {
-        res.status(409).json({ error: `group already has the maximum of ${MAX_GROUP_CHILDREN} children` }); return;
-      }
-      const groupOrder = children.reduce((max, child) => Math.max(max, (child.groupOrder ?? -1) + 1), children.length);
-      groupPlacement = { groupId: group.id, groupOrder };
+      groupPlacement = { groupId: group.id };
     }
 
     const task: Task = {
@@ -94,19 +89,14 @@ export function createTaskRouter(
       ...groupPlacement,
     };
     let creation: { task: Task; created: boolean } | undefined;
-    if (groupPlacement && groupRepo) {
-      creation = await withWorkRequestLock(`work-request-group:${groupPlacement.groupId}`, async () => {
-        const existingTask = await repo.getByExternalIdentity(source.projectId, WORK_REQUEST_EXTERNAL_SOURCE, externalKey);
-        if (existingTask) return { task: existingTask, created: false };
-        const children = await groupRepo.getChildTasks(groupPlacement.groupId);
-        if (children.length >= MAX_GROUP_CHILDREN) return undefined;
-        const groupOrder = children.reduce((max, child) => Math.max(max, (child.groupOrder ?? -1) + 1), children.length);
-        return repo.createIdempotent({ ...task, groupOrder });
-      });
-      if (!creation) {
+    if (groupPlacement) {
+      if (!repo.createIdempotentInGroup) throw new Error('task repository does not support atomic group creation');
+      const result = await repo.createIdempotentInGroup(task, MAX_GROUP_CHILDREN);
+      if (result.groupFull || !result.task) {
         res.status(409).json({ error: `group already has the maximum of ${MAX_GROUP_CHILDREN} children` });
         return;
       }
+      creation = { task: result.task, created: result.created };
     } else {
       creation = await repo.createIdempotent(task);
     }

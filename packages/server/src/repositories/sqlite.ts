@@ -202,6 +202,37 @@ export class SqliteTaskRepository implements TaskRepository {
       } throw err;
     }
   }
+
+  async createIdempotentInGroup(task: Task, maxChildren: number): Promise<{ task?: Task; created: boolean; groupFull: boolean }> {
+    if (!task.groupId) throw new Error('groupId is required for grouped task creation');
+    return this.db.transaction((candidate: Task, limit: number) => {
+      const existing = this.db.prepare('SELECT * FROM tasks WHERE project_id = ? AND external_source = ? AND external_key = ?')
+        .get(candidate.projectId, candidate.externalSource, candidate.externalKey) as TaskRow | undefined;
+      if (existing) return { task: rowToTask(existing), created: false, groupFull: false };
+
+      const capacity = this.db.prepare(`SELECT COUNT(*) AS count, COALESCE(MAX(group_order), -1) + 1 AS next_order FROM tasks WHERE group_id = ?`)
+        .get(candidate.groupId) as { count: number; next_order: number };
+      if (capacity.count >= limit) return { created: false, groupFull: true };
+
+      const grouped = { ...candidate, groupOrder: capacity.next_order };
+      this.stmts.insert.run({
+        id: grouped.id, project_id: grouped.projectId, title: grouped.title, description: grouped.description,
+        priority: grouped.priority, column_id: grouped.columnId, agent_status: grouped.agentStatus, agent_type: grouped.agentType ?? 'opencode',
+        created_at: grouped.createdAt, started_at: grouped.startedAt ?? null, completed_at: grouped.completedAt ?? null,
+        repo_path: grouped.repoPath ?? null, branch_name: grouped.branchName ?? null, base_branch: grouped.baseBranch ?? null,
+        use_worktree: grouped.useWorktree != null ? (grouped.useWorktree ? 1 : 0) : null, worktree_path: grouped.worktreePath ?? null,
+        archived: grouped.archived ? 1 : 0, group_id: grouped.groupId, group_order: grouped.groupOrder,
+        summary: grouped.summary ?? null, external_source: grouped.externalSource ?? null, external_key: grouped.externalKey ?? null,
+        provenance: grouped.provenance ? JSON.stringify(grouped.provenance) : null, run_requested_at: grouped.runRequestedAt ?? null,
+        run_claimed_at: grouped.runClaimedAt ?? null, timeout_minutes: grouped.timeoutMinutes ?? null,
+        clarification_request: grouped.clarificationRequest ? JSON.stringify(grouped.clarificationRequest) : null,
+        clarification_answer: grouped.clarificationAnswer ? JSON.stringify(grouped.clarificationAnswer) : null,
+        assigned_worker_id: grouped.assignedWorkerId ?? null, worker_attempt: 0, labels: JSON.stringify(grouped.labels ?? []),
+        agent_preference: grouped.agentPreference ?? null,
+      });
+      return { task: grouped, created: true, groupFull: false };
+    })(task, maxChildren);
+  }
   async requestRun(id: string, at: number) { this.db.prepare('UPDATE tasks SET run_requested_at=?, run_claimed_at=NULL WHERE id=?').run(at,id); return this.getById(id); }
   async claimRun(id: string, at: number) { const staleBefore=at-30_000; const r=this.db.prepare(`UPDATE tasks SET run_claimed_at=? WHERE id=? AND run_requested_at IS NOT NULL AND (run_claimed_at IS NULL OR run_claimed_at < ?) AND agent_status IN (${CLAIMABLE_AGENT_STATUS_SQL_LIST})`).run(at,id,staleBefore); return r.changes ? this.getById(id) : undefined; }
   async clearRun(id: string) { this.db.prepare('UPDATE tasks SET run_requested_at=NULL, run_claimed_at=NULL WHERE id=?').run(id); return this.getById(id); }
