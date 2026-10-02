@@ -65,6 +65,8 @@ export const MIN_AGENT_TIMEOUT_MINUTES = 1;
 export const MAX_AGENT_TIMEOUT_MINUTES = 240;
 export const MAX_GROUP_CHILDREN = 20;
 export const MIN_GROUP_CHILDREN = 2;
+/** Max agent-proposed follow-up tasks awaiting an operator decision, per source task. */
+export const MAX_PENDING_WORK_REQUESTS = 5;
 
 export function isValidAgentTimeoutMinutes(value: unknown): value is number {
   return typeof value === 'number'

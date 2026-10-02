@@ -6,6 +6,8 @@ import {
   isValidMaxConcurrency,
   MAX_DESCRIPTION_LENGTH,
   MAX_GROUP_CHILDREN,
+  MAX_PENDING_WORK_REQUESTS,
+  MAX_TITLE_LENGTH,
   WORKER_HEARTBEAT_INTERVAL_MS,
   WORKER_MAX_NAME_LENGTH,
   WORKER_STALE_AFTER_MS,
@@ -17,6 +19,7 @@ import type { WorkerRegistration, WorkerRepository } from '../repositories/worke
 import type { EnrollmentCodeRepository } from '../repositories/enrollment-code-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
+import { countPendingWorkRequests } from '../services/work-requests.js';
 import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
 const COMMAND_POLL_LIMIT_DEFAULT = 20;
@@ -54,7 +57,7 @@ function validWorkRequest(value: unknown): boolean {
   const { title, description, agentType } = value;
   return typeof title === 'string'
     && title.trim().length > 0
-    && title.length <= MAX_DESCRIPTION_LENGTH
+    && title.length <= MAX_TITLE_LENGTH
     && typeof description === 'string'
     && description.length <= MAX_DESCRIPTION_LENGTH
     && isValidAgentType(agentType);
@@ -517,8 +520,14 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       || submittedEvent.content.length > MAX_DESCRIPTION_LENGTH
       || !Number.isFinite(submittedEvent.timestamp)
       || !validWorkerEventMetadata(submittedEvent.metadata)
+      || (submittedEvent.type === 'request_work' && !submittedEvent.metadata?.workRequest)
     ) {
       res.status(400).json({ error: 'invalid agent event' });
+      return;
+    }
+    if (submittedEvent.type === 'request_work' && await countPendingWorkRequests(tasks, task) >= MAX_PENDING_WORK_REQUESTS) {
+      console.warn(`[workers] rejected work request for task ${task.id} from worker ${worker.id}: ${MAX_PENDING_WORK_REQUESTS} requests already pending`);
+      res.status(409).json({ error: `too many pending work requests (max ${MAX_PENDING_WORK_REQUESTS}); approve or dismiss existing requests first` });
       return;
     }
     const event: AgentEvent = { ...submittedEvent, id: uuid() };
