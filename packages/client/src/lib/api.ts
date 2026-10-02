@@ -62,9 +62,13 @@ function authHeaders(): Record<string, string> {
 }
 
 async function request<T>(url: string, opts?: RequestInit): Promise<T> {
+  const headers = {
+    ...authHeaders(),
+    ...(opts?.headers ?? {}),
+  };
   const res = await fetch(`${BASE}${url}`, {
-    headers: authHeaders(),
     ...opts,
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -136,9 +140,10 @@ export const api = {
 
   getWorkerUsage: () => request<WorkerUsageReport>('/workers/usage'),
 
-  createEnrollmentCode: (projectId?: string) =>
+  createEnrollmentCode: (projectId?: string, credential?: string) =>
     request<{ code: string; expiresAt: number }>('/workers/enrollment-codes', {
       method: 'POST',
+      ...(credential ? { headers: { ...authHeaders(), Authorization: `Bearer ${credential}` } } : {}),
       body: JSON.stringify(projectId ? { projectId } : {}),
     }),
 
