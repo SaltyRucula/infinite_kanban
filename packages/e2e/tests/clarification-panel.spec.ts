@@ -298,4 +298,52 @@ test.describe('Task detail clarification card', () => {
     expect(runRequests).toBe(0);
     await expect(card.getByText('Added to backlog')).toBeVisible();
   });
+
+  test('dismisses a worker follow-up proposal without creating or starting work', async ({ page }) => {
+    const calls: ResumeCall[] = [];
+    const eventId = 'evt-work-request-dismiss-1';
+    const proposalTitle = 'Document the migration rollback plan';
+
+    await mockClarificationBoard(
+      page,
+      { agentStatus: 'executing' },
+      [{
+        id: eventId,
+        taskId: TASK_ID,
+        type: 'request_work',
+        content: 'Requesting documentation follow-up',
+        timestamp: Date.now() - 5_000,
+        metadata: {
+          workRequest: {
+            title: proposalTitle,
+            description: 'Record the rollback steps before release.',
+            agentType: 'codex',
+          },
+        },
+      }],
+      calls,
+    );
+    let approvalRequests = 0;
+    let runRequests = 0;
+    await page.route(`**/api/tasks/${TASK_ID}/work-requests/${eventId}/approve`, async (route) => {
+      approvalRequests += 1;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'dismiss must not approve' }) });
+    });
+    await page.route(`**/api/tasks/${TASK_ID}/run`, async (route) => {
+      runRequests += 1;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'dismiss must not run' }) });
+    });
+
+    await page.goto('/');
+    await waitForBoard(page);
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
+
+    const card = page.getByTestId('work-request-card');
+    await expect(card.getByText(proposalTitle)).toBeVisible();
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+
+    await expect(card).toHaveCount(0);
+    expect(approvalRequests).toBe(0);
+    expect(runRequests).toBe(0);
+  });
 });
