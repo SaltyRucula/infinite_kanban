@@ -2,8 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 import { API, registerWorker, waitForBoard } from './helpers';
 
 // The root view is the Worker Operations Console (saved views + task queue +
-// task detail panel). These specs cover its task workflows; the legacy
-// drag-and-drop Kanban board is no longer mounted.
+// task detail panel). These specs cover its task workflows; the drag-and-drop
+// Kanban board lives at /board and is covered by board-route.spec.ts.
 
 async function openCreateDialog(page: Page) {
   await page.getByRole('button', { name: 'New Task' }).click();

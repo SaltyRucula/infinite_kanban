@@ -49,6 +49,7 @@ export function BoardPage({
   theme,
   toggleTheme,
   onBackToProjects,
+  onOpenConsole,
   initialTaskId,
 }: {
   project: Project;
@@ -56,6 +57,7 @@ export function BoardPage({
   theme: 'dark' | 'light';
   toggleTheme: () => void;
   onBackToProjects: () => void;
+  onOpenConsole?: () => void;
   initialTaskId?: string;
 }) {
   const lockedRepoPath = project.repoPath;
@@ -402,6 +404,7 @@ export function BoardPage({
       <Header
         title={project.name === 'Default' ? 'AI Agent Board' : project.name}
         onBackToProjects={onBackToProjects}
+        onOpenConsole={onOpenConsole}
         theme={theme}
         toggleTheme={toggleTheme}
         searchQuery={searchQuery}
@@ -517,7 +520,8 @@ export function BoardPage({
 
 type RouteState =
   | { view: 'projects'; initialCreate?: ProjectDialogInitialValues }
-  | { view: 'board'; projectId?: string; taskId?: string };
+  | { view: 'board'; projectId?: string; taskId?: string }
+  | { view: 'kanban'; projectId?: string; taskId?: string };
 
 function parseCreateQuery(search: string): ProjectDialogInitialValues {
   const params = new URLSearchParams(search);
@@ -569,6 +573,11 @@ function readRoute(): RouteState {
     return { view: 'projects', initialCreate: parseCreateQuery(window.location.search) };
   }
   if (path === '/projects') return { view: 'projects' };
+  if (path === '/board') return { view: 'kanban' };
+  const boardTaskMatch = path.match(/^\/projects\/([^/]+)\/board\/tasks\/([^/]+)$/);
+  if (boardTaskMatch) return { view: 'kanban', projectId: decodeURIComponent(boardTaskMatch[1]), taskId: decodeURIComponent(boardTaskMatch[2]) };
+  const boardMatch = path.match(/^\/projects\/([^/]+)\/board$/);
+  if (boardMatch) return { view: 'kanban', projectId: decodeURIComponent(boardMatch[1]) };
   const taskMatch = path.match(/^\/projects\/([^/]+)\/tasks\/([^/]+)$/);
   if (taskMatch) return { view: 'board', projectId: decodeURIComponent(taskMatch[1]), taskId: decodeURIComponent(taskMatch[2]) };
   const match = path.match(/^\/projects\/([^/]+)$/);
@@ -608,13 +617,17 @@ export function App() {
     navigate(project.isDefault ? '/' : `/projects/${encodeURIComponent(project.id)}`);
   }, [navigate]);
 
+  const openBoard = useCallback((project: Project) => {
+    navigate(project.isDefault ? '/board' : `/projects/${encodeURIComponent(project.id)}/board`);
+  }, [navigate]);
+
   const defaultProject = useMemo(
     () => projects.find((project) => project.isDefault) ?? projects.find((project) => project.id === 'default') ?? projects[0],
     [projects],
   );
 
   const selectedProject = useMemo(() => {
-    if (route.view !== 'board') return undefined;
+    if (route.view === 'projects') return undefined;
     if (route.projectId) return projects.find((project) => project.id === route.projectId);
     return defaultProject;
   }, [defaultProject, projects, route]);
@@ -652,6 +665,21 @@ export function App() {
     );
   }
 
+  if (route.view === 'kanban') {
+    return (
+      <BoardPage
+        key={selectedProject.id}
+        project={selectedProject}
+        projects={projects}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        onBackToProjects={() => navigate('/projects')}
+        onOpenConsole={() => openProject(selectedProject)}
+        initialTaskId={route.taskId}
+      />
+    );
+  }
+
   return (
     <WorkerConsole
       project={selectedProject}
@@ -660,6 +688,7 @@ export function App() {
       toggleTheme={toggleTheme}
       onBackToProjects={() => navigate('/projects')}
       onSelectProject={openProject}
+      onOpenBoard={() => openBoard(selectedProject)}
       initialTaskId={route.view === 'board' ? route.taskId : undefined}
     />
   );
