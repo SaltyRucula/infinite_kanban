@@ -38,6 +38,7 @@ test('approving a worker work request creates one backlog task without auto-runn
   const repo = {
     getById: async (id: string) => id === origin.id ? origin : undefined,
     getEventsByTaskId: async (taskId: string) => taskId === origin.id ? [workRequest] : [],
+    getByExternalIdentity: async () => undefined,
     createIdempotent: async (task: Task) => {
       created.push(task);
       return { task, created: true };

@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import type { AgentEvent, Project, Task } from '../types.js';
-import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
+import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES, MAX_GROUP_CHILDREN } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { WorkerRepository } from '../repositories/worker-types.js';
+import type { TaskGroupRepository } from '../repositories/group-types.js';
+import { WORK_REQUEST_EXTERNAL_SOURCE, workRequestExternalKey } from '../services/work-requests.js';
 import { workerAcceptsTask } from '../worker-consent.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
@@ -20,6 +22,7 @@ export function createTaskRouter(
   agentManager: AgentManager,
   projectRepo: ProjectRepository,
   workerRepo?: WorkerRepository,
+  groupRepo?: TaskGroupRepository,
 ): Router {
   const router = Router();
 
@@ -50,15 +53,46 @@ export function createTaskRouter(
     const proposal = event?.type === 'request_work' ? event.metadata?.workRequest : undefined;
     if (!proposal) { res.status(404).json({ error: 'work request not found' }); return; }
 
-    const task = buildTask({
-      title: proposal.title,
-      description: proposal.description,
-      agentType: proposal.agentType,
-      columnId: 'backlog',
-      projectId: source.projectId,
-      externalSource: 'work-request',
-      externalKey: `${source.id}:${eventId}`,
-    });
+    const externalKey = workRequestExternalKey(source.id, eventId);
+    // Idempotent replay: an already-approved proposal returns its task as-is.
+    const existing = await repo.getByExternalIdentity(source.projectId, WORK_REQUEST_EXTERNAL_SOURCE, externalKey);
+    if (existing) { res.status(200).json(toPortableTask(existing)); return; }
+
+    // Optional placement into an existing, not-yet-started group of the same project.
+    const groupId = req.body?.groupId;
+    let groupPlacement: { groupId: string; groupOrder: number } | undefined;
+    if (groupId !== undefined && groupId !== null && groupId !== '') {
+      if (typeof groupId !== 'string') { res.status(400).json({ error: 'groupId must be a string' }); return; }
+      if (!groupRepo) { res.status(400).json({ error: 'task groups are not available' }); return; }
+      const group = await groupRepo.getById(groupId);
+      if (!group) { res.status(404).json({ error: 'group not found' }); return; }
+      if ((group.projectId ?? 'default') !== source.projectId) {
+        res.status(400).json({ error: 'group belongs to a different project' }); return;
+      }
+      if (group.archived) { res.status(409).json({ error: 'cannot add work to an archived group' }); return; }
+      if (group.columnId !== 'backlog' || agentManager.isGroupRunning(group.id)) {
+        res.status(409).json({ error: 'can only add work to a group that has not started (backlog)' }); return;
+      }
+      const children = await groupRepo.getChildTasks(group.id);
+      if (children.length >= MAX_GROUP_CHILDREN) {
+        res.status(409).json({ error: `group already has the maximum of ${MAX_GROUP_CHILDREN} children` }); return;
+      }
+      const groupOrder = children.reduce((max, child) => Math.max(max, (child.groupOrder ?? -1) + 1), children.length);
+      groupPlacement = { groupId: group.id, groupOrder };
+    }
+
+    const task: Task = {
+      ...buildTask({
+        title: proposal.title,
+        description: proposal.description,
+        agentType: proposal.agentType,
+        columnId: 'backlog',
+        projectId: source.projectId,
+        externalSource: WORK_REQUEST_EXTERNAL_SOURCE,
+        externalKey,
+      }),
+      ...groupPlacement,
+    };
     const creation = await repo.createIdempotent(task);
     if (creation.created) broadcastTaskUpdate(creation.task);
     res.status(creation.created ? 201 : 200).json(toPortableTask(creation.task));

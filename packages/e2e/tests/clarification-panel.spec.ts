@@ -352,4 +352,72 @@ test.describe('Task detail clarification card', () => {
     expect(approvalRequests).toBe(0);
     expect(runRequests).toBe(0);
   });
+
+  test('places an approved follow-up proposal into an existing unstarted group without starting it', async ({ page }) => {
+    const calls: ResumeCall[] = [];
+    const approvalBodies: unknown[] = [];
+    let runRequests = 0;
+    const eventId = 'evt-work-request-group-1';
+    const proposalTitle = 'Add rollback smoke test';
+    const groupBase = {
+      projectId: 'default',
+      priority: 'medium',
+      maxConcurrency: 1,
+      createdAt: Date.now() - 30_000,
+      children: [],
+    };
+
+    await mockClarificationBoard(
+      page,
+      { agentStatus: 'executing' },
+      [{
+        id: eventId,
+        taskId: TASK_ID,
+        type: 'request_work',
+        content: 'Requesting a rollback test',
+        timestamp: Date.now() - 5_000,
+        metadata: {
+          workRequest: {
+            title: proposalTitle,
+            description: 'Cover the rollback path before release.',
+            agentType: 'codex',
+          },
+        },
+      }],
+      calls,
+    );
+    await page.route('**/api/groups?**', (route) => fulfillJson(route, [
+      { ...groupBase, id: 'group-backlog', title: 'Release hardening', columnId: 'backlog' },
+      { ...groupBase, id: 'group-started', title: 'Already running group', columnId: 'in-progress' },
+    ]));
+    await page.route(`**/api/tasks/${TASK_ID}/work-requests/${eventId}/approve`, async (route) => {
+      approvalBodies.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'created-grouped-follow-up', title: proposalTitle, columnId: 'backlog', agentStatus: 'idle', groupId: 'group-backlog' }),
+      });
+    });
+    await page.route(`**/api/tasks/${TASK_ID}/run`, async (route) => {
+      runRequests += 1;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'follow-up must not auto-run' }) });
+    });
+
+    await page.goto('/');
+    await waitForBoard(page);
+    await page.locator('div.group').filter({ hasText: 'Clarification UI task' }).click();
+
+    const card = page.getByTestId('work-request-card');
+    await expect(card.getByText(proposalTitle)).toBeVisible();
+    const selector = card.getByRole('combobox', { name: 'Place in group' });
+    await expect(selector).toBeVisible();
+    await expect(selector.locator('option')).toHaveText(['No group', 'Release hardening']);
+    await selector.selectOption('group-backlog');
+    await card.getByRole('button', { name: 'Add to backlog' }).click();
+
+    await expect.poll(() => approvalBodies).toHaveLength(1);
+    expect(approvalBodies[0]).toEqual({ groupId: 'group-backlog' });
+    await expect(card.getByText('Added to group: Release hardening')).toBeVisible();
+    expect(runRequests).toBe(0);
+  });
 });

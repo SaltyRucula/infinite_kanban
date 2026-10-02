@@ -40,6 +40,7 @@ import { TerminalView } from './TerminalView';
 import { api, connectWS } from '@/lib/api';
 import type { ResumeClarificationRequest, ResumeClarificationResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useWorkRequestGroups } from '@/hooks/useWorkRequestGroups';
 import { SK_EVENT_VIEW_MODE } from '@/lib/storage-keys';
 
 const eventIconMap: Record<AgentEventType, React.ElementType> = {
@@ -616,6 +617,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const [clarificationError, setClarificationError] = useState<string | null>(null);
   const [localClarificationAnswer, setLocalClarificationAnswer] = useState<TaskClarificationAnswer | null>(null);
   const [workRequestStates, setWorkRequestStates] = useState<Record<string, 'approving' | 'approved' | 'dismissing' | 'dismissed' | 'error'>>({});
+  const [workRequestGroupIds, setWorkRequestGroupIds] = useState<Record<string, string>>({});
   const clarificationSubmitInFlightRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [descExpanded, setDescExpanded] = useState(false);
@@ -647,6 +649,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     },
     [events],
   );
+  const workRequestGroups = useWorkRequestGroups(task?.projectId, workRequests.length > 0);
 
   const taskClarificationRequest = useMemo(
     () => parseClarificationRequestPayload(task?.clarificationRequest),
@@ -750,6 +753,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     setClarificationError(null);
     setLocalClarificationAnswer(null);
     setWorkRequestStates({});
+    setWorkRequestGroupIds({});
     // Allow the auto-default tab to apply for the newly selected task
     userSelectedTabRef.current = false;
 
@@ -1014,7 +1018,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     if (!task || workRequestStates[request.eventId] === 'approving' || workRequestStates[request.eventId] === 'approved') return;
     setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approving' }));
     try {
-      await api.approveWorkRequest(task.id, request.eventId);
+      await api.approveWorkRequest(task.id, request.eventId, workRequestGroupIds[request.eventId] || undefined);
       setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approved' }));
     } catch (error) {
       console.error('[AgentPanel] failed to approve work request:', error);
@@ -1346,6 +1350,8 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
           {workRequests.map((request) => {
             const state = workRequestStates[request.eventId];
             if (state === 'dismissed') return null;
+            const selectedGroupId = workRequestGroupIds[request.eventId] ?? '';
+            const selectedGroup = workRequestGroups.find((group) => group.id === selectedGroupId);
             return (
               <div key={request.eventId} className="shrink-0 border-b border-border px-4 py-3" data-testid="work-request-card">
                 <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 p-3">
@@ -1354,9 +1360,25 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
                   <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">{request.description}</p>
                   <p className="mt-2 text-[10px] text-violet-700/75 dark:text-violet-300/75">Suggested agent: {request.agentType}</p>
                   {state === 'approved' ? (
-                    <p className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-2 text-xs text-emerald-700 dark:text-emerald-300">Added to backlog</p>
+                    <p className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+                      {selectedGroup ? `Added to group: ${selectedGroup.title}` : 'Added to backlog'}
+                    </p>
                   ) : (
-                    <div className="mt-3 flex items-center gap-2">
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {workRequestGroups.length > 0 && (
+                        <select
+                          aria-label="Place in group"
+                          value={selectedGroupId}
+                          onChange={(event) => setWorkRequestGroupIds((ids) => ({ ...ids, [request.eventId]: event.target.value }))}
+                          disabled={state === 'approving'}
+                          className="rounded-md border border-violet-500/30 bg-card px-2 py-1.5 text-xs text-foreground disabled:opacity-50"
+                        >
+                          <option value="">No group</option>
+                          {workRequestGroups.map((group) => (
+                            <option key={group.id} value={group.id}>{group.title}</option>
+                          ))}
+                        </select>
+                      )}
                       <button
                         type="button"
                         onClick={() => void approveWorkRequest(request)}
