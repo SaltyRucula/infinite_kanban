@@ -59,7 +59,7 @@ export function buildReviewPrompt(task: WorkerTaskAssignment): string {
   // spurious match as an unneutralized title/description.
   const labels = task.labels.length > 0 ? task.labels.map(neutralizeVerdictMarker).join(', ') : '(none)';
   const branch = task.branchName
-    ? `Review the changes on branch \`${task.branchName}\` compared with \`${task.baseBranch || 'main'}\`.`
+    ? `Review the changes on branch \`${neutralizeVerdictMarker(task.branchName)}\` compared with \`${neutralizeVerdictMarker(task.baseBranch || 'main')}\`.`
     : 'No task branch is recorded; review the uncommitted and most recent changes in the repository.';
   return [
     'Review the implementation of this task.',

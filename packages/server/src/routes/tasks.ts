@@ -11,7 +11,7 @@ import {
   asyncHandler, paramId,
   validateTaskFields, buildTask, broadcastTaskUpdate,
   rejectTaskPathFields, toPortableTask,
-  normalizeTaskLabels,
+  normalizeTaskLabels, isValidGitRef,
 } from './helpers.js';
 
 export function createTaskRouter(
@@ -200,6 +200,22 @@ export function createTaskRouter(
     }
     if (agentType !== undefined && !isValidAgentType(agentType)) {
       res.status(400).json({ error: `invalid agentType: must be one of ${VALID_AGENT_TYPES.join(', ')}` });
+      return;
+    }
+    if (branchName !== undefined && typeof branchName !== 'string') {
+      res.status(400).json({ error: 'branchName must be a string' });
+      return;
+    }
+    if (typeof branchName === 'string' && branchName !== '' && !isValidGitRef(branchName)) {
+      res.status(400).json({ error: 'branchName contains invalid characters' });
+      return;
+    }
+    if (baseBranch !== undefined && typeof baseBranch !== 'string') {
+      res.status(400).json({ error: 'baseBranch must be a string' });
+      return;
+    }
+    if (typeof baseBranch === 'string' && !isValidGitRef(baseBranch)) {
+      res.status(400).json({ error: 'baseBranch contains invalid characters' });
       return;
     }
     if (timeoutMinutes !== undefined && timeoutMinutes !== null && !isValidAgentTimeoutMinutes(timeoutMinutes)) {

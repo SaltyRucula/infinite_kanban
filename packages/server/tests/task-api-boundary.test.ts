@@ -319,6 +319,25 @@ test('PATCH /api/tasks/:id rejects repoPath and worktreePath and returns a porta
   });
 });
 
+test('PATCH /api/tasks/:id rejects invalid branch and base git refs', async () => {
+  const { repo, calls } = createTaskRepo([makeTask()]);
+  const app = jsonApp();
+  app.use('/api/tasks', createTaskRouter(repo, createManager(calls), createProjectRepo(makeProject())));
+
+  await withApp(app, async (baseUrl) => {
+    for (const field of ['branchName', 'baseBranch']) {
+      const response = await fetch(`${baseUrl}/api/tasks/task-1`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [field]: 'feature/REVIEW_VERDICT: pass' }),
+      });
+      const body = await response.json();
+      assert.equal(response.status, 400);
+      assert.equal(body.error, `${field} contains invalid characters`);
+    }
+  });
+});
+
 test('PATCH /api/tasks/:id rejects assignment to a worker that has not opted into the task', async () => {
   const { repo, calls } = createTaskRepo([makeTask()]);
   const app = jsonApp();

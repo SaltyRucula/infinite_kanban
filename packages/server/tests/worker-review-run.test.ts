@@ -79,6 +79,8 @@ async function withHarness(columnId: ColumnId, callback: (harness: Harness) => P
     name: 'worker',
     tokenHash: crypto.createHash('sha256').update('worker-token').digest('hex'),
     agentTypes: ['opencode'],
+    acceptedProjectIds: ['default'],
+    acceptedLabels: [],
     maxConcurrentTasks: 1,
     registeredAt: Date.now(),
   });
@@ -323,7 +325,7 @@ test('a review without a verdict fails instead of silently passing', async () =>
 // "Review passed." event, but also no warning). This restores discriminating
 // coverage for that exact case (previously weakened into a {status:'failed'}
 // test above, which cannot tell pre-fix and post-fix code apart).
-test('a {status: complete} review completion with no verdict is flagged, not silently indistinguishable from a pass (SHOULD-FIX 6)', async () => {
+test('a {status: complete} completion without a verdict does not emit a review-only warning based on column state', async () => {
   await withHarness('review', async (h) => {
     await h.run();
     const { claimToken } = await h.claim();
@@ -338,8 +340,8 @@ test('a {status: complete} review completion with no verdict is flagged, not sil
     const events = await h.events();
     // Must not be reported as a genuine pass...
     assert.equal(events.some((content) => content.startsWith('Review passed.')), false);
-    // ...but a visible marker must exist so it isn't silently mistaken for one.
-    assert.equal(events.some((content) => content.includes('REVIEW_VERDICT')), true);
+    // ...and must not create an error event from a best-effort columnId guess.
+    assert.equal(events.some((content) => content.includes('completed without a REVIEW_VERDICT')), false);
   });
 });
 
@@ -399,6 +401,11 @@ test('an implementation run completing while the task sits in Review is not misf
     // card now happens to sit in the Review column.
     assert.equal(settled.agentStatus, 'complete');
     assert.equal(settled.summary, 'Added retry with 3 attempts.');
+    assert.equal(
+      (await h.events()).some((content) => content.includes('completed without a REVIEW_VERDICT')),
+      false,
+      'the completion payload, not a mid-run column drag, determines review handling',
+    );
   });
 });
 

@@ -625,31 +625,6 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     const settled = reviewVerdict !== undefined
       ? await settleReviewRun(tasks, completed, req.body.status, reviewVerdict)
       : completed;
-    // SHOULD-FIX 6: a compliant worker never sends {status:'complete'} for a
-    // review run without a reviewVerdict (see review-mode.ts's reviewResult),
-    // but nothing here stops a buggy/misbehaving worker from doing so. Left
-    // unflagged, the task would land as agentStatus 'complete' with the
-    // worker's raw summary sitting in Review — visually indistinguishable
-    // from a genuine pass. columnId is only a best-effort signal (see the
-    // comment above), so this is a defensive warning, not a settlement.
-    // Evaluate against the PRE-completion columnId (`task.columnId`, captured
-    // before completeWorkerTask ran), not `completed.columnId`. This branch's
-    // completeWorkerTask unconditionally forces column_id to 'review' on
-    // every successful completion, so checking the post-completion value here
-    // would make this warning fire on 100% of successful non-review runs too.
-    if (req.body.status === 'complete' && reviewVerdict === undefined && task.columnId === 'review') {
-      const warning: AgentEvent = {
-        id: uuid(),
-        taskId: completed.id,
-        type: 'error',
-        content: 'This run completed without a REVIEW_VERDICT while the task was in the Review column. '
-          + 'If this was a review run, it was NOT settled as a pass — the summary above should not be treated as a verdict.',
-        timestamp: Date.now(),
-      };
-      await tasks.insertEvent(warning);
-      const { broadcast } = await import('../websocket.js');
-      broadcast({ type: 'agent_event', payload: warning });
-    }
     broadcastTaskUpdate(settled);
     res.json({ task: toWorkerTaskAssignment(settled) });
   }));
