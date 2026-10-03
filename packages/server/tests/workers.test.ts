@@ -234,6 +234,28 @@ test('worker event ingress retains only approved metadata for valid events', asy
   });
 });
 
+test('worker event ingress accepts a structured request_work proposal', async () => {
+  await withServer(async (baseUrl, taskRepo) => {
+    const headers = await claimEventHeaders(baseUrl);
+    const metadata = {
+      workRequest: {
+        title: 'Review the migration plan',
+        description: 'Validate the database migration before release.',
+        agentType: 'codex',
+      },
+    };
+    const response = await fetch(`${baseUrl}/api/workers/me/tasks/task-1/events`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(workerEvent({ type: 'request_work', content: 'Requesting follow-up work', metadata })),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(taskRepo.events.length, 1);
+    assert.deepEqual(taskRepo.events[0]?.metadata, metadata);
+  });
+});
+
 test('worker event ingress rate limits a worker after 100 events in one minute', async () => {
   await withServer(async (baseUrl) => {
     const headers = await claimEventHeaders(baseUrl);

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Task, AgentEvent, Priority, ColumnId } from '@/types';
 import { api, connectWS } from '@/lib/api';
+import { useWorkRequestGroups } from '@/hooks/useWorkRequestGroups';
 
 interface TaskDetailPanelProps {
   task: Task | null;
@@ -30,6 +31,27 @@ interface TaskDetailPanelProps {
     data: { requestId: string; sessionId: string; answer: string }
   ) => Promise<unknown>;
   onOpenAssignModal?: (task: Task) => void;
+}
+
+interface WorkRequest {
+  eventId: string;
+  title: string;
+  description: string;
+  agentType: string;
+}
+
+type WorkRequestState = 'approving' | 'approved' | 'dismissing' | 'dismissed' | 'error';
+
+function parseWorkRequest(event: AgentEvent): WorkRequest | null {
+  if (event.type !== 'request_work') return null;
+  const proposal = event.metadata?.workRequest;
+  if (!proposal || !event.id || !proposal.title.trim() || !proposal.description.trim()) return null;
+  return {
+    eventId: event.id,
+    title: proposal.title,
+    description: proposal.description,
+    agentType: proposal.agentType,
+  };
 }
 
 export function TaskDetailPanel({
@@ -55,6 +77,8 @@ export function TaskDetailPanel({
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [openCodeSessionUrl, setOpenCodeSessionUrl] = useState<string | null>(null);
+  const [workRequestStates, setWorkRequestStates] = useState<Record<string, WorkRequestState>>({});
+  const [workRequestGroupIds, setWorkRequestGroupIds] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!task?.id || !isOpen || task.agentType !== 'opencode') {
@@ -88,9 +112,13 @@ export function TaskDetailPanel({
       setEvents([]);
       setPrUrl(null);
       setActionMessage(null);
+      setWorkRequestStates({});
+      setWorkRequestGroupIds({});
       return;
     }
 
+    setWorkRequestStates({});
+    setWorkRequestGroupIds({});
     setLoadingEvents(true);
     api
       .getEvents(task.id)
@@ -105,6 +133,11 @@ export function TaskDetailPanel({
     });
   }, [task?.id, isOpen]);
 
+  const workRequestGroups = useWorkRequestGroups(
+    task?.projectId,
+    Boolean(isOpen && events.some((event) => event.type === 'request_work')),
+  );
+
   if (!isOpen || !task) return null;
 
   const isRunning = task.agentStatus === 'executing' || task.agentStatus === 'planning';
@@ -118,6 +151,12 @@ export function TaskDetailPanel({
       ? localSubmission.answer
       : null;
   const canAnswerClarification = task.agentStatus === 'awaiting_clarification' && !submittedAnswer;
+  const dismissedWorkRequestIds = new Set(
+    events.flatMap((event) => event.metadata?.dismissedWorkRequestEventId ? [event.metadata.dismissedWorkRequestEventId] : []),
+  );
+  const workRequests = events
+    .map(parseWorkRequest)
+    .filter((request): request is WorkRequest => request !== null && !dismissedWorkRequestIds.has(request.eventId));
 
   const handleClarificationSubmit = async (answerText?: string) => {
     const textToSubmit = answerText ?? clarificationAnswer;
@@ -177,6 +216,34 @@ export function TaskDetailPanel({
       setActionMessage('Worktree cleaned up');
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const approveWorkRequest = async (request: WorkRequest) => {
+    const state = workRequestStates[request.eventId];
+    if (state === 'approving' || state === 'approved') return;
+
+    setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approving' }));
+    try {
+      await api.approveWorkRequest(task.id, request.eventId, workRequestGroupIds[request.eventId] || undefined);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approved' }));
+    } catch (error) {
+      console.error('Failed to approve work request:', error);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
+    }
+  };
+
+  const dismissWorkRequest = async (request: WorkRequest) => {
+    const state = workRequestStates[request.eventId];
+    if (state === 'approving' || state === 'dismissing' || state === 'dismissed') return;
+
+    setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissing' }));
+    try {
+      await api.dismissWorkRequest(task.id, request.eventId);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissed' }));
+    } catch (error) {
+      console.error('Failed to dismiss work request:', error);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
     }
   };
 
@@ -341,6 +408,63 @@ export function TaskDetailPanel({
             )}
           </div>
         )}
+
+        {workRequests.map((request) => {
+          const state = workRequestStates[request.eventId];
+          if (state === 'dismissed') return null;
+          const selectedGroupId = workRequestGroupIds[request.eventId] ?? '';
+          const selectedGroup = workRequestGroups.find((group) => group.id === selectedGroupId);
+          return (
+            <div key={request.eventId} data-testid="work-request-card" className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30 text-[12px] space-y-2">
+              <div className="flex items-center gap-1.5 font-semibold text-violet-300">
+                <GitBranch className="w-4 h-4 shrink-0" />
+                <span>Suggested follow-up work</span>
+              </div>
+              <p className="font-medium text-white">{request.title}</p>
+              <p className="text-violet-100/80 whitespace-pre-wrap">{request.description}</p>
+              <p className="text-[10px] text-violet-200/70">Suggested agent: {request.agentType}</p>
+              {state === 'approved' ? (
+                <p className="text-[11px] text-emerald-300">
+                  {selectedGroup ? `Added to group: ${selectedGroup.title}` : 'Added to backlog'}
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {workRequestGroups.length > 0 && (
+                    <select
+                      aria-label="Place in group"
+                      value={selectedGroupId}
+                      onChange={(event) => setWorkRequestGroupIds((ids) => ({ ...ids, [request.eventId]: event.target.value }))}
+                      disabled={state === 'approving'}
+                      className="px-2 py-1 rounded text-[11px] bg-[#08090c] text-violet-100 border border-violet-500/40 disabled:opacity-50"
+                    >
+                      <option value="">No group</option>
+                      {workRequestGroups.map((group) => (
+                        <option key={group.id} value={group.id}>{group.title}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void approveWorkRequest(request)}
+                    disabled={state === 'approving'}
+                    className="px-2.5 py-1 rounded text-[11px] bg-violet-500/20 hover:bg-violet-500/40 text-violet-100 border border-violet-500/40 transition-colors disabled:opacity-50"
+                  >
+                    {state === 'approving' ? 'Adding...' : 'Add to backlog'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void dismissWorkRequest(request)}
+                    disabled={state === 'approving' || state === 'dismissing'}
+                    className="px-2.5 py-1 rounded text-[11px] text-[#94a3b8] hover:bg-[#1b1f2b] hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    {state === 'dismissing' ? 'Dismissing...' : 'Dismiss'}
+                  </button>
+                </div>
+              )}
+              {state === 'error' && <p className="text-[11px] text-red-300">Could not add this suggestion. Try again.</p>}
+            </div>
+          );
+        })}
 
         {actionMessage && (
           <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px]">

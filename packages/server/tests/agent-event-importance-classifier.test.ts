@@ -8,6 +8,7 @@ const MILESTONE_TYPES: AgentEventType[] = [
   'file_edit',
   'command',
   'test_result',
+  'request_work',
   'error',
   'complete',
 ];
@@ -32,10 +33,10 @@ test('classifyAgentEventImportance classifies streaming/read-only chatter as det
   }
 });
 
-test('classifyAgentEventImportance covers all 11 AgentEventType values exactly once', () => {
+test('classifyAgentEventImportance covers all 12 AgentEventType values exactly once', () => {
   const all = [...MILESTONE_TYPES, ...DETAIL_TYPES];
-  assert.equal(all.length, 11);
-  assert.equal(new Set(all).size, 11);
+  assert.equal(all.length, 12);
+  assert.equal(new Set(all).size, 12);
 });
 
 test('classifyAgentEventImportance always marks error and complete as milestone (never collapsed)', () => {

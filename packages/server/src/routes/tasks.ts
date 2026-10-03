@@ -1,9 +1,12 @@
 import { Router, Request, Response } from 'express';
-import type { Project, Task } from '../types.js';
-import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
+import { v4 as uuid } from 'uuid';
+import type { AgentEvent, Project, Task } from '../types.js';
+import { isValidPriority, isValidColumnId, isValidAgentStatus, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, VALID_TRANSITIONS, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES, MAX_GROUP_CHILDREN } from '@ai-agent-board/shared/constants.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { WorkerRepository } from '../repositories/worker-types.js';
+import type { TaskGroupRepository } from '../repositories/group-types.js';
+import { WORK_REQUEST_EXTERNAL_SOURCE, workRequestExternalKey } from '../services/work-requests.js';
 import { workerAcceptsTask } from '../worker-consent.js';
 import { broadcast } from '../websocket.js';
 import type { AgentManager } from '../services/agent-manager.js';
@@ -19,6 +22,7 @@ export function createTaskRouter(
   agentManager: AgentManager,
   projectRepo: ProjectRepository,
   workerRepo?: WorkerRepository,
+  groupRepo?: TaskGroupRepository,
 ): Router {
   const router = Router();
 
@@ -35,6 +39,98 @@ export function createTaskRouter(
     const project = await getProjectForRequest(projectRepo, req.query.projectId);
     if (!project) { res.status(404).json({ error: 'project not found' }); return; }
     res.json((await repo.getArchivedTasks(project.id)).map(toPortableTask));
+  }));
+
+  // POST /api/tasks/:id/work-requests/:eventId/approve — turn a worker proposal
+  // into a safe backlog task. The originating event is immutable; use its ID as
+  // the idempotency identity so repeated clicks cannot create duplicate work.
+  router.post('/:id/work-requests/:eventId/approve', asyncHandler(async (req: Request, res: Response) => {
+    const source = await repo.getById(paramId(req));
+    if (!source) { res.status(404).json({ error: 'source task not found' }); return; }
+    const eventId = req.params.eventId;
+    if (typeof eventId !== 'string' || !eventId) { res.status(400).json({ error: 'eventId is required' }); return; }
+    const event = (await repo.getEventsByTaskId(source.id)).find((candidate) => candidate.id === eventId);
+    const proposal = event?.type === 'request_work' ? event.metadata?.workRequest : undefined;
+    if (!proposal) { res.status(404).json({ error: 'work request not found' }); return; }
+
+    const externalKey = workRequestExternalKey(source.id, eventId);
+    // Idempotent replay: an already-approved proposal returns its task as-is.
+    const existing = await repo.getByExternalIdentity(source.projectId, WORK_REQUEST_EXTERNAL_SOURCE, externalKey);
+    if (existing) { res.status(200).json(toPortableTask(existing)); return; }
+
+    // Optional placement into an existing, not-yet-started group of the same project.
+    const groupId = req.body?.groupId;
+    let groupPlacement: { groupId: string } | undefined;
+    if (groupId !== undefined && groupId !== null && groupId !== '') {
+      if (typeof groupId !== 'string') { res.status(400).json({ error: 'groupId must be a string' }); return; }
+      if (!groupRepo) { res.status(400).json({ error: 'task groups are not available' }); return; }
+      const group = await groupRepo.getById(groupId);
+      if (!group) { res.status(404).json({ error: 'group not found' }); return; }
+      if ((group.projectId ?? 'default') !== source.projectId) {
+        res.status(400).json({ error: 'group belongs to a different project' }); return;
+      }
+      if (group.archived) { res.status(409).json({ error: 'cannot add work to an archived group' }); return; }
+      if (group.columnId !== 'backlog' || agentManager.isGroupRunning(group.id)) {
+        res.status(409).json({ error: 'can only add work to a group that has not started (backlog)' }); return;
+      }
+      groupPlacement = { groupId: group.id };
+    }
+
+    const task: Task = {
+      ...buildTask({
+        title: proposal.title,
+        description: proposal.description,
+        agentType: proposal.agentType,
+        columnId: 'backlog',
+        projectId: source.projectId,
+        externalSource: WORK_REQUEST_EXTERNAL_SOURCE,
+        externalKey,
+      }),
+      ...groupPlacement,
+    };
+    let creation: { task: Task; created: boolean } | undefined;
+    if (groupPlacement) {
+      const result = await repo.createIdempotentInGroup(task, MAX_GROUP_CHILDREN);
+      if (result.groupFull || !result.task) {
+        res.status(409).json({ error: `group already has the maximum of ${MAX_GROUP_CHILDREN} children` });
+        return;
+      }
+      creation = { task: result.task, created: result.created };
+    } else {
+      creation = await repo.createIdempotent(task);
+    }
+    if (creation.created) broadcastTaskUpdate(creation.task);
+    res.status(creation.created ? 201 : 200).json(toPortableTask(creation.task));
+  }));
+
+  // POST /api/tasks/:id/work-requests/:eventId/dismiss — record a durable
+  // operator decision so a dismissed proposal stays hidden after refresh.
+  router.post('/:id/work-requests/:eventId/dismiss', asyncHandler(async (req: Request, res: Response) => {
+    const source = await repo.getById(paramId(req));
+    if (!source) { res.status(404).json({ error: 'source task not found' }); return; }
+    const eventId = req.params.eventId;
+    if (typeof eventId !== 'string' || !eventId) { res.status(400).json({ error: 'eventId is required' }); return; }
+    const events = await repo.getEventsByTaskId(source.id);
+    const proposal = events.find((candidate) => candidate.id === eventId);
+    if (proposal?.type !== 'request_work' || !proposal.metadata?.workRequest) {
+      res.status(404).json({ error: 'work request not found' });
+      return;
+    }
+    if (events.some((event) => event.metadata?.dismissedWorkRequestEventId === eventId)) {
+      res.status(204).end();
+      return;
+    }
+    const dismissal: AgentEvent = {
+      id: uuid(),
+      taskId: source.id,
+      type: 'output',
+      content: 'Work request dismissed by operator.',
+      timestamp: Date.now(),
+      metadata: { dismissedWorkRequestEventId: eventId },
+    };
+    await repo.insertEvent(dismissal);
+    broadcast({ type: 'agent_event', payload: dismissal });
+    res.status(204).end();
   }));
 
   // POST /api/tasks

@@ -6,6 +6,8 @@ import {
   isValidMaxConcurrency,
   MAX_DESCRIPTION_LENGTH,
   MAX_GROUP_CHILDREN,
+  MAX_PENDING_WORK_REQUESTS,
+  MAX_TITLE_LENGTH,
   WORKER_HEARTBEAT_INTERVAL_MS,
   WORKER_MAX_NAME_LENGTH,
   WORKER_STALE_AFTER_MS,
@@ -26,7 +28,7 @@ const WORKER_EVENT_RATE_LIMIT_WINDOW_MS = 60_000;
 const ENROLLMENT_CODE_TTL_MS = 15 * 60 * 1000;
 const VALID_AGENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set([
   'thinking', 'tool_call', 'file_read', 'file_write', 'file_edit', 'command',
-  'command_output', 'output', 'test_result', 'error', 'complete',
+  'command_output', 'output', 'test_result', 'request_work', 'error', 'complete',
 ]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -43,9 +45,21 @@ function validWorkerEventMetadata(value: unknown): value is NonNullable<AgentEve
     if (key === 'agentType' && isValidAgentType(item)) continue;
     if (nonNegativeNumberKeys.has(key) && typeof item === 'number' && Number.isFinite(item) && item >= 0) continue;
     if ((key === 'clarification_request' || key === 'clarification_answer') && isPlainRecord(item)) continue;
+    if (key === 'workRequest' && validWorkRequest(item)) continue;
     return false;
   }
   return true;
+}
+
+function validWorkRequest(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  const { title, description, agentType } = value;
+  return typeof title === 'string'
+    && title.trim().length > 0
+    && title.length <= MAX_TITLE_LENGTH
+    && typeof description === 'string'
+    && description.length <= MAX_DESCRIPTION_LENGTH
+    && isValidAgentType(agentType);
 }
 
 function workerEventRateLimited(timestamps: Map<string, { startedAt: number; count: number }>, workerId: string): boolean {
@@ -505,12 +519,22 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       || submittedEvent.content.length > MAX_DESCRIPTION_LENGTH
       || !Number.isFinite(submittedEvent.timestamp)
       || !validWorkerEventMetadata(submittedEvent.metadata)
+      || (submittedEvent.type === 'request_work' && !submittedEvent.metadata?.workRequest)
     ) {
       res.status(400).json({ error: 'invalid agent event' });
       return;
     }
     const event: AgentEvent = { ...submittedEvent, id: uuid() };
-    await tasks.insertEvent(event);
+    if (submittedEvent.type === 'request_work') {
+      const accepted = await tasks.insertWorkRequestIfBelowPendingLimit(event, task.projectId, MAX_PENDING_WORK_REQUESTS);
+      if (!accepted) {
+        console.warn(`[workers] rejected work request for task ${task.id} from worker ${worker.id}: ${MAX_PENDING_WORK_REQUESTS} requests already pending`);
+        res.status(409).json({ error: `too many pending work requests (max ${MAX_PENDING_WORK_REQUESTS}); approve or dismiss existing requests first` });
+        return;
+      }
+    } else {
+      await tasks.insertEvent(event);
+    }
     const renewed = await tasks.renewWorkerLease(task.id, worker.id, claim, Date.now(), WORKER_TASK_LEASE_MS);
     if (!renewed) {
       res.status(409).json({ error: 'task claim is expired' });

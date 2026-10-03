@@ -40,6 +40,7 @@ import { TerminalView } from './TerminalView';
 import { api, connectWS } from '@/lib/api';
 import type { ResumeClarificationRequest, ResumeClarificationResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useWorkRequestGroups } from '@/hooks/useWorkRequestGroups';
 import { SK_EVENT_VIEW_MODE } from '@/lib/storage-keys';
 
 const eventIconMap: Record<AgentEventType, React.ElementType> = {
@@ -52,6 +53,7 @@ const eventIconMap: Record<AgentEventType, React.ElementType> = {
   command_output: Terminal,
   output: Terminal,
   test_result: CheckCircle2,
+  request_work: GitBranch,
   error: AlertCircle,
   complete: CheckCircle2,
 };
@@ -66,6 +68,7 @@ const eventColorMap: Record<AgentEventType, string> = {
   command_output: 'text-zinc-500 dark:text-zinc-400',
   output: 'text-zinc-500 dark:text-zinc-400',
   test_result: 'text-emerald-500 dark:text-emerald-400',
+  request_work: 'text-violet-500 dark:text-violet-400',
   error: 'text-red-500 dark:text-red-400',
   complete: 'text-emerald-500 dark:text-emerald-400',
 };
@@ -80,6 +83,7 @@ const eventLabelMap: Record<AgentEventType, string> = {
   command_output: 'Output',
   output: 'Output',
   test_result: 'Test Result',
+  request_work: 'Work Request',
   error: 'Error',
   complete: 'Complete',
 };
@@ -266,6 +270,25 @@ interface RenderClarificationRequest {
   timestamp: number;
   sessionId: string | null;
   source: 'task' | 'event';
+}
+
+interface RenderWorkRequest {
+  eventId: string;
+  title: string;
+  description: string;
+  agentType: string;
+}
+
+function parseWorkRequest(event: AgentEvent): RenderWorkRequest | null {
+  if (event.type !== 'request_work') return null;
+  const proposal = event.metadata?.workRequest;
+  if (!proposal || !event.id || !proposal.title.trim() || !proposal.description.trim()) return null;
+  return {
+    eventId: event.id,
+    title: proposal.title,
+    description: proposal.description,
+    agentType: proposal.agentType,
+  };
 }
 
 function parseClarificationRequestPayload(
@@ -593,6 +616,8 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
   const [clarificationError, setClarificationError] = useState<string | null>(null);
   const [localClarificationAnswer, setLocalClarificationAnswer] = useState<TaskClarificationAnswer | null>(null);
+  const [workRequestStates, setWorkRequestStates] = useState<Record<string, 'approving' | 'approved' | 'dismissing' | 'dismissed' | 'error'>>({});
+  const [workRequestGroupIds, setWorkRequestGroupIds] = useState<Record<string, string>>({});
   const clarificationSubmitInFlightRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [descExpanded, setDescExpanded] = useState(false);
@@ -613,6 +638,18 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
   const agentStatus = task?.agentStatus;
   const errorEvents = useMemo(() => events.filter((event) => event.type === 'error'), [events]);
   const latestError = errorEvents[errorEvents.length - 1];
+  const workRequests = useMemo(
+    () => {
+      const dismissedIds = new Set(
+        events.flatMap((event) => event.metadata?.dismissedWorkRequestEventId ? [event.metadata.dismissedWorkRequestEventId] : []),
+      );
+      return events
+        .map(parseWorkRequest)
+        .filter((request): request is RenderWorkRequest => request !== null && !dismissedIds.has(request.eventId));
+    },
+    [events],
+  );
+  const workRequestGroups = useWorkRequestGroups(task?.projectId, workRequests.length > 0);
 
   const taskClarificationRequest = useMemo(
     () => parseClarificationRequestPayload(task?.clarificationRequest),
@@ -715,6 +752,8 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     setClarificationSubmitting(false);
     setClarificationError(null);
     setLocalClarificationAnswer(null);
+    setWorkRequestStates({});
+    setWorkRequestGroupIds({});
     // Allow the auto-default tab to apply for the newly selected task
     userSelectedTabRef.current = false;
 
@@ -974,6 +1013,30 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
     || clarificationSubmitting
     || activeClarificationAnswer !== null
     || !activeClarificationRequest.sessionId;
+
+  const approveWorkRequest = async (request: RenderWorkRequest) => {
+    if (!task || workRequestStates[request.eventId] === 'approving' || workRequestStates[request.eventId] === 'approved') return;
+    setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approving' }));
+    try {
+      await api.approveWorkRequest(task.id, request.eventId, workRequestGroupIds[request.eventId] || undefined);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'approved' }));
+    } catch (error) {
+      console.error('[AgentPanel] failed to approve work request:', error);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
+    }
+  };
+
+  const dismissWorkRequest = async (request: RenderWorkRequest) => {
+    if (!task || workRequestStates[request.eventId] === 'approving' || workRequestStates[request.eventId] === 'dismissing' || workRequestStates[request.eventId] === 'dismissed') return;
+    setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissing' }));
+    try {
+      await api.dismissWorkRequest(task.id, request.eventId);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'dismissed' }));
+    } catch (error) {
+      console.error('[AgentPanel] failed to dismiss work request:', error);
+      setWorkRequestStates((states) => ({ ...states, [request.eventId]: 'error' }));
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -1283,6 +1346,62 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
               }
             />
           )}
+
+          {workRequests.map((request) => {
+            const state = workRequestStates[request.eventId];
+            if (state === 'dismissed') return null;
+            const selectedGroupId = workRequestGroupIds[request.eventId] ?? '';
+            const selectedGroup = workRequestGroups.find((group) => group.id === selectedGroupId);
+            return (
+              <div key={request.eventId} className="shrink-0 border-b border-border px-4 py-3" data-testid="work-request-card">
+                <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 p-3">
+                  <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">Suggested follow-up work</p>
+                  <p className="mt-1 text-xs font-medium text-foreground">{request.title}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">{request.description}</p>
+                  <p className="mt-2 text-[10px] text-violet-700/75 dark:text-violet-300/75">Suggested agent: {request.agentType}</p>
+                  {state === 'approved' ? (
+                    <p className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+                      {selectedGroup ? `Added to group: ${selectedGroup.title}` : 'Added to backlog'}
+                    </p>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {workRequestGroups.length > 0 && (
+                        <select
+                          aria-label="Place in group"
+                          value={selectedGroupId}
+                          onChange={(event) => setWorkRequestGroupIds((ids) => ({ ...ids, [request.eventId]: event.target.value }))}
+                          disabled={state === 'approving'}
+                          className="rounded-md border border-violet-500/30 bg-card px-2 py-1.5 text-xs text-foreground disabled:opacity-50"
+                        >
+                          <option value="">No group</option>
+                          {workRequestGroups.map((group) => (
+                            <option key={group.id} value={group.id}>{group.title}</option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void approveWorkRequest(request)}
+                        disabled={state === 'approving'}
+                        className="rounded-md border border-violet-500/30 bg-card px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-violet-500/15 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {state === 'approving' ? 'Adding...' : 'Add to backlog'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void dismissWorkRequest(request)}
+                        disabled={state === 'approving' || state === 'dismissing'}
+                        className="rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {state === 'dismissing' ? 'Dismissing...' : 'Dismiss'}
+                      </button>
+                    </div>
+                  )}
+                  {state === 'error' && <p className="mt-2 text-[11px] text-red-700 dark:text-red-300">Could not add this suggestion. Try again.</p>}
+                </div>
+              </div>
+            );
+          })}
 
           {showClarificationCard && (
             <div className="shrink-0 border-b border-border px-4 py-3" data-testid="clarification-card">

@@ -6,6 +6,8 @@ export interface TaskRepository {
   getByExternalIdentity(projectId: string, source: string, key: string): Promise<Task | undefined>;
   create(task: Task): Promise<Task>;
   createIdempotent(task: Task): Promise<{ task: Task; created: boolean }>;
+  /** Atomically add an idempotent task to a group without exceeding its child limit. */
+  createIdempotentInGroup(task: Task, maxChildren: number): Promise<{ task?: Task; created: boolean; groupFull: boolean }>;
   requestRun(id: string, requestedAt: number): Promise<Task | undefined>;
   claimRun(id: string, claimedAt: number): Promise<Task | undefined>;
   clearRun(id: string): Promise<Task | undefined>;
@@ -32,6 +34,8 @@ export interface TaskRepository {
   delete(id: string): Promise<boolean>;
   count(): Promise<number>;
   insertEvent(event: AgentEvent): Promise<void>;
+  /** Atomically store a work request only while its source task remains below the pending-request cap. */
+  insertWorkRequestIfBelowPendingLimit(event: AgentEvent, projectId: string, limit: number): Promise<boolean>;
   getEventsByTaskId(taskId: string): Promise<AgentEvent[]>;
   deleteEventsByTaskId(taskId: string): Promise<void>;
   getArchivedTasks(projectId?: string): Promise<Task[]>;

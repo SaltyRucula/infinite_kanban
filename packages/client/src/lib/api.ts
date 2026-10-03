@@ -134,6 +134,15 @@ export const api = {
   getEvents: (id: string) =>
     request<AgentEvent[]>(`/tasks/${id}/events`),
 
+  approveWorkRequest: (taskId: string, eventId: string, groupId?: string) =>
+    request<Task>(`/tasks/${taskId}/work-requests/${eventId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(groupId ? { groupId } : {}),
+    }),
+
+  dismissWorkRequest: (taskId: string, eventId: string) =>
+    request<void>(`/tasks/${taskId}/work-requests/${eventId}/dismiss`, { method: 'POST' }),
+
   getAgents: () => request<AgentInfo[]>('/agents'),
 
   getWorkers: () => request<Worker[]>('/workers'),

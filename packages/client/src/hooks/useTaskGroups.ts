@@ -46,9 +46,13 @@ export function useTaskGroups(projectId = 'default') {
           setGroups((prev) =>
             prev.map((g) => {
               if (g.id !== child.groupId) return g;
+              // A child can join an existing group later (approved work request).
+              const known = g.children.some((c) => c.id === child.id);
               return {
                 ...g,
-                children: g.children.map((c) => (c.id === child.id ? child : c)),
+                children: known
+                  ? g.children.map((c) => (c.id === child.id ? child : c))
+                  : [...g.children, child],
               };
             }),
           );
