@@ -3,7 +3,9 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import test from 'node:test';
 import express from 'express';
+import type { Pool } from 'pg';
 import { MAX_GROUP_CHILDREN, MAX_PENDING_WORK_REQUESTS } from '@ai-agent-board/shared/constants.js';
+import { PostgresTaskRepository } from '../src/repositories/postgres.js';
 import { createTaskRouter } from '../src/routes/tasks.js';
 import { createWorkersRouter } from '../src/routes/workers.js';
 import type { AgentEvent, Task, TaskGroup, Worker } from '../src/types.js';
@@ -57,6 +59,7 @@ class Store {
   readonly events: AgentEvent[] = [];
   readonly groups = new Map<string, TaskGroup>();
   groupedCreateCalls = 0;
+  atomicWorkRequestInsertCalls = 0;
   private eventReadsToBlock = 0;
   private eventReadGate?: Promise<void>;
   private releaseEventReadGate?: () => void;
@@ -87,7 +90,8 @@ class Store {
       getEventsByTaskId: async (taskId: string) => this.eventsForTask(taskId),
       insertEvent: async (event: AgentEvent) => { this.events.push(event); },
       insertWorkRequestIfBelowPendingLimit: async (event: AgentEvent, _projectId: string, limit: number) => {
-        if (storedRequests(this).length >= limit) return false;
+        this.atomicWorkRequestInsertCalls += 1;
+        if (pendingRequests(this).length >= limit) return false;
         this.events.push(event);
         return true;
       },
@@ -179,6 +183,11 @@ function storedRequests(store: Store): AgentEvent[] {
   return store.events.filter((event) => event.type === 'request_work');
 }
 
+function pendingRequests(store: Store): AgentEvent[] {
+  const dismissed = new Set(store.events.flatMap((event) => event.metadata?.dismissedWorkRequestEventId ? [event.metadata.dismissedWorkRequestEventId] : []));
+  return storedRequests(store).filter((event) => !dismissed.has(event.id) && ![...store.tasks.values()].some((task) => task.externalSource === 'work-request' && task.externalKey === `${event.taskId}:${event.id}`));
+}
+
 function approve(baseUrl: string, eventId: string, body: Record<string, unknown> = {}): Promise<Response> {
   return fetch(`${baseUrl}/api/tasks/${origin.id}/work-requests/${eventId}/approve`, {
     method: 'POST',
@@ -225,6 +234,16 @@ test('concurrent worker ingress never exceeds the pending work-request cap', asy
     const responses = await Promise.all([postWorkRequest(baseUrl, 100), postWorkRequest(baseUrl, 101)]);
     assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
     assert.equal(storedRequests(store).length, MAX_PENDING_WORK_REQUESTS);
+  });
+});
+
+test('concurrent six-request ingress uses the atomic pending-cap insert', async () => {
+  const store = new Store();
+  await withServer(store, async (baseUrl) => {
+    const responses = await Promise.all(Array.from({ length: MAX_PENDING_WORK_REQUESTS + 1 }, (_, index) => postWorkRequest(baseUrl, index)));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 200, 200, 200, 200, 409]);
+    assert.equal(storedRequests(store).length, MAX_PENDING_WORK_REQUESTS);
+    assert.equal(store.atomicWorkRequestInsertCalls, MAX_PENDING_WORK_REQUESTS + 1);
   });
 });
 
@@ -315,6 +334,37 @@ test('concurrent approvals cannot overfill a group or reuse its group order', as
     assert.equal(children.length, MAX_GROUP_CHILDREN);
     assert.deepEqual(children.map((task) => task.groupOrder).sort((a, b) => a! - b!), Array.from({ length: MAX_GROUP_CHILDREN }, (_, index) => index));
   });
+});
+
+test('concurrent approval at nineteen children locks the group before capacity and order allocation', async () => {
+  const queries: string[] = [];
+  const taskRow = {
+    id: 'approved-child', project_id: 'project-a', title: 'Follow-up', description: 'Details', priority: 'medium', column_id: 'backlog', agent_status: 'idle', agent_type: 'codex',
+    created_at: '1', started_at: null, completed_at: null, repo_path: null, branch_name: null, base_branch: null, use_worktree: null, worktree_path: null,
+    archived: false, group_id: 'group-a', group_order: 19, summary: null, external_source: 'work-request', external_key: 'origin-task:event-1', provenance: null,
+    run_requested_at: null, run_claimed_at: null, timeout_minutes: null, clarification_request: null, clarification_answer: null,
+    assigned_worker_id: null, worker_claim_token_hash: null, worker_claimed_at: null, worker_lease_expires_at: null, worker_attempt: 0, labels: '[]', agent_preference: null,
+  };
+  const client = {
+    async query(text: string): Promise<{ rows: Array<Record<string, unknown>> }> {
+      queries.push(text);
+      if (text.includes('SELECT COUNT(*) AS count')) return { rows: [{ count: '19', next_order: 19 }] };
+      if (text.includes('INSERT INTO tasks')) return { rows: [taskRow] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  const pool = { connect: async () => client } as unknown as Pool;
+  const repo = new PostgresTaskRepository(pool);
+  const result = await repo.createIdempotentInGroup({
+    ...origin, id: 'approved-child', title: 'Follow-up', description: 'Details', columnId: 'backlog', agentStatus: 'idle',
+    groupId: 'group-a', externalSource: 'work-request', externalKey: 'origin-task:event-1', assignedWorkerId: undefined,
+  }, MAX_GROUP_CHILDREN);
+
+  assert.equal(result.created, true);
+  assert.match(queries[1]!, /SELECT id FROM task_groups WHERE id = \$1 FOR UPDATE/);
+  assert.match(queries[3]!, /SELECT COUNT\(\*\) AS count/);
+  assert.match(queries[4]!, /INSERT INTO tasks/);
 });
 
 test('approving into a missing group is rejected and creates no task', async () => {

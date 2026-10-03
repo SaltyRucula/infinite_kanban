@@ -441,6 +441,48 @@ export class PostgresTaskRepository implements TaskRepository {
     );
   }
 
+  async insertWorkRequestIfBelowPendingLimit(event: AgentEvent, projectId: string, limit: number): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT id FROM tasks WHERE id = $1 FOR UPDATE', [event.taskId]);
+      const { rows } = await client.query<{ count: string }>(`
+        SELECT COUNT(*) AS count
+        FROM events AS request
+        WHERE request.task_id = $1
+          AND request.type = 'request_work'
+          AND request.metadata::jsonb ? 'workRequest'
+          AND NOT EXISTS (
+            SELECT 1 FROM events AS dismissal
+            WHERE dismissal.task_id = request.task_id
+              AND dismissal.metadata::jsonb ->> 'dismissedWorkRequestEventId' = request.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM tasks AS approved
+            WHERE approved.project_id = $2
+              AND approved.external_source = 'work-request'
+              AND approved.external_key = request.task_id || ':' || request.id
+          )
+      `, [event.taskId, projectId]);
+      if (Number(rows[0]?.count ?? 0) >= limit) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      await client.query(
+        `INSERT INTO events (id, task_id, type, content, timestamp, metadata, importance)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [event.id, event.taskId, event.type, event.content, event.timestamp, event.metadata ? JSON.stringify(event.metadata) : null, event.importance ?? null],
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (err: unknown) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async getEventsByTaskId(taskId: string): Promise<AgentEvent[]> {
     const { rows } = await this.pool.query<{
       id: string;

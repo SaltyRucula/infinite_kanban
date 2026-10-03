@@ -90,7 +90,6 @@ export function createTaskRouter(
     };
     let creation: { task: Task; created: boolean } | undefined;
     if (groupPlacement) {
-      if (!repo.createIdempotentInGroup) throw new Error('task repository does not support atomic group creation');
       const result = await repo.createIdempotentInGroup(task, MAX_GROUP_CHILDREN);
       if (result.groupFull || !result.task) {
         res.status(409).json({ error: `group already has the maximum of ${MAX_GROUP_CHILDREN} children` });

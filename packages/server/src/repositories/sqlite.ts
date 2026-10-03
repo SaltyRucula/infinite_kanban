@@ -475,6 +475,41 @@ export class SqliteTaskRepository implements TaskRepository {
     });
   }
 
+  async insertWorkRequestIfBelowPendingLimit(event: AgentEvent, projectId: string, limit: number): Promise<boolean> {
+    const insertIfBelowLimit = this.db.transaction((candidate: AgentEvent, candidateProjectId: string, pendingLimit: number) => {
+      const { count } = this.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM events AS request
+        WHERE request.task_id = ?
+          AND request.type = 'request_work'
+          AND json_extract(request.metadata, '$.workRequest') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM events AS dismissal
+            WHERE dismissal.task_id = request.task_id
+              AND json_extract(dismissal.metadata, '$.dismissedWorkRequestEventId') = request.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM tasks AS approved
+            WHERE approved.project_id = ?
+              AND approved.external_source = 'work-request'
+              AND approved.external_key = request.task_id || ':' || request.id
+          )
+      `).get(candidate.taskId, candidateProjectId) as { count: number };
+      if (count >= pendingLimit) return false;
+      this.stmts.insertEvent.run({
+        id: candidate.id,
+        task_id: candidate.taskId,
+        type: candidate.type,
+        content: candidate.content,
+        timestamp: candidate.timestamp,
+        metadata: candidate.metadata ? JSON.stringify(candidate.metadata) : null,
+        importance: candidate.importance ?? null,
+      });
+      return true;
+    });
+    return insertIfBelowLimit.immediate(event, projectId, limit);
+  }
+
   async getEventsByTaskId(taskId: string): Promise<AgentEvent[]> {
     const rows = this.stmts.getEventsByTaskId.all(taskId) as Array<{
       id: string;

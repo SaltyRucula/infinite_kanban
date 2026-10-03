@@ -19,7 +19,6 @@ import type { WorkerRegistration, WorkerRepository } from '../repositories/worke
 import type { EnrollmentCodeRepository } from '../repositories/enrollment-code-types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import { authenticatedWorker, claimTokenHash, workerAuth } from '../middleware/worker-auth.js';
-import { countPendingWorkRequests, withWorkRequestLock } from '../services/work-requests.js';
 import { asyncHandler, broadcastTaskUpdate, broadcastWorkerRemove, broadcastWorkerUpdate, toWorkerTaskAssignment } from './helpers.js';
 
 const COMMAND_POLL_LIMIT_DEFAULT = 20;
@@ -527,11 +526,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
     }
     const event: AgentEvent = { ...submittedEvent, id: uuid() };
     if (submittedEvent.type === 'request_work') {
-      const accepted = await withWorkRequestLock(`pending-work-requests:${task.id}`, async () => {
-        if (await countPendingWorkRequests(tasks, task) >= MAX_PENDING_WORK_REQUESTS) return false;
-        await tasks.insertEvent(event);
-        return true;
-      });
+      const accepted = await tasks.insertWorkRequestIfBelowPendingLimit(event, task.projectId, MAX_PENDING_WORK_REQUESTS);
       if (!accepted) {
         console.warn(`[workers] rejected work request for task ${task.id} from worker ${worker.id}: ${MAX_PENDING_WORK_REQUESTS} requests already pending`);
         res.status(409).json({ error: `too many pending work requests (max ${MAX_PENDING_WORK_REQUESTS}); approve or dismiss existing requests first` });
