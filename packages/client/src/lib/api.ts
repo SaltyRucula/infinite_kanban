@@ -16,6 +16,8 @@ import type {
   ProjectPathValidation,
   ProjectConfig,
   JiraImportResult,
+  A2AAgent,
+  A2AWorkflowRole,
 } from '@/types';
 
 export interface TaskGroupWithChildren extends TaskGroup {
@@ -151,6 +153,19 @@ export const api = {
     request<void>(`/workers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   getWorkerUsage: () => request<WorkerUsageReport>('/workers/usage'),
+
+  // --- A2A agent directory ---
+  getA2AAgents: () => request<A2AAgent[]>('/a2a-agents'),
+  registerA2AAgent: (agentCardUrl: string) =>
+    request<A2AAgent>('/a2a-agents', { method: 'POST', body: JSON.stringify({ agentCardUrl }) }),
+  setA2AAgentEnabled: (id: string, enabled: boolean) =>
+    request<A2AAgent>(`/a2a-agents/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  setA2AAgentProjectRoles: (id: string, projectId: string, roles: A2AWorkflowRole[]) =>
+    request<A2AAgent>(`/a2a-agents/${encodeURIComponent(id)}/projects/${encodeURIComponent(projectId)}/roles`, { method: 'PUT', body: JSON.stringify({ roles }) }),
+  refreshA2AAgent: (id: string) =>
+    request<A2AAgent>(`/a2a-agents/${encodeURIComponent(id)}/refresh`, { method: 'POST' }),
+  deleteA2AAgent: (id: string) =>
+    request<void>(`/a2a-agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   createEnrollmentCode: (projectId?: string, credential?: string) =>
     request<{ code: string; expiresAt: number }>('/workers/enrollment-codes', {

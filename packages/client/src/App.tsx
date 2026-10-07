@@ -25,6 +25,9 @@ import { JiraImportDialog } from '@/components/JiraImportDialog';
 import { ProjectsPage } from '@/components/ProjectsPage';
 import type { ProjectDialogInitialValues } from '@/components/ProjectDialog';
 import { WorkerConsole } from '@/components/Console/WorkerConsole';
+import { A2AConsole } from '@/components/A2AConsole';
+
+const A2A_FIRST_UI_ENABLED = import.meta.env.VITE_A2A_FIRST_UI === 'true';
 
 const STATUS_WEIGHT: Record<string, number> = { executing: 0, awaiting_clarification: 1, planning: 2, failed: 3, idle: 4, complete: 5 };
 
@@ -676,6 +679,18 @@ export function App() {
         onBackToProjects={() => navigate('/projects')}
         onOpenConsole={() => openProject(selectedProject)}
         initialTaskId={route.taskId}
+      />
+    );
+  }
+
+  if (A2A_FIRST_UI_ENABLED) {
+    return (
+      <A2AConsole
+        project={selectedProject}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        onBackToProjects={() => navigate('/projects')}
+        onOpenBoard={() => openBoard(selectedProject)}
       />
     );
   }
