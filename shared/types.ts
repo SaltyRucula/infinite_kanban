@@ -383,6 +383,40 @@ export interface JiraImportResult {
   tasks: Task[];
 }
 
+export type A2AWorkflowRole = 'implementation' | 'review';
+export type WorkflowPhase = 'backlog' | 'implementing' | 'awaiting_review' | 'reviewing' | 'rework_requested' | 'done' | 'needs_human_decision';
+
+export interface A2AAgentProjectAccess {
+  agentId: string;
+  projectId: string;
+  roles: A2AWorkflowRole[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface A2ASkill {
+  id: string;
+  name: string;
+  tags: string[];
+}
+
+export interface A2AAgent {
+  id: string;
+  agentCardUrl: string;
+  name: string;
+  description: string;
+  version: string;
+  endpoint: string;
+  protocolVersion: string;
+  skills: A2ASkill[];
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastValidatedAt: number;
+  lastValidationError?: string;
+  projectAccess: A2AAgentProjectAccess[];
+}
+
 export type WSMessage =
   | { type: 'agent_event'; payload: AgentEvent }
   | { type: 'task_updated'; payload: Task }

@@ -24,6 +24,11 @@ export type {
   AgentEventType,
   AgentEventImportance,
   JiraImportResult,
+  A2AWorkflowRole,
+  WorkflowPhase,
+  A2AAgentProjectAccess,
+  A2ASkill,
+  A2AAgent,
   WSMessage,
 } from '@ai-agent-board/shared/types.js';
 

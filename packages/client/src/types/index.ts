@@ -26,6 +26,11 @@ export type {
   Column,
   WSMessage,
   JiraImportResult,
+  A2AWorkflowRole,
+  WorkflowPhase,
+  A2AAgentProjectAccess,
+  A2ASkill,
+  A2AAgent,
 } from '../../../../shared/types.js';
 
 export { classifyAgentEventImportance } from '../../../../shared/types.js';
