@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 
-export type ServiceScope = 'projects:read' | 'agents:read' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register' | 'workers:manage';
-const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'];
+export type ServiceScope = 'projects:read' | 'agents:read' | 'a2a-agents:read' | 'a2a-agents:manage' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register' | 'workers:manage';
+const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'a2a-agents:read', 'a2a-agents:manage', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'];
 
 interface Credential { token?: string; sha256?: string; id?: string; scopes: ServiceScope[] }
 
@@ -38,6 +38,9 @@ function requiredScope(req: Request): ServiceScope | undefined {
   if (p === '/workers') return undefined;
   if (p === '/agents') return undefined;
   if (p === '/agents/refresh') return 'agents:read';
+  if (p === '/a2a-agents' && method === 'GET') return 'a2a-agents:read';
+  if (/^\/a2a-agents\/[^/]+$/.test(p) && method === 'GET') return 'a2a-agents:read';
+  if (p.startsWith('/a2a-agents')) return 'a2a-agents:manage';
   if (p.startsWith('/projects')) return undefined;
   if (p === '/orchestrations' && method === 'POST') return 'orchestrations:create';
   if (/^\/orchestrations\/[^/]+\/retry$/.test(p) && method === 'POST') return 'orchestrations:create';

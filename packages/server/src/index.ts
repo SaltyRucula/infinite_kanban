@@ -17,6 +17,7 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createOrchestrationsRouter } from './routes/orchestrations.js';
 import { createJiraRouter } from './routes/jira.js';
 import { createGitHubRouter } from './routes/github.js';
+import { createA2AAgentsRouter } from './routes/a2a-agents.js';
 import { JiraImportExecutionService } from './jira/import-execution.js';
 import { JiraImportScheduler } from './jira/import-scheduler.js';
 import { OpenCodeJiraRepositoryRouter } from './jira/repository-router.js';
@@ -34,6 +35,7 @@ import { SqliteWorkerRepository } from './repositories/sqlite-workers.js';
 import { PostgresWorkerRepository } from './repositories/postgres-workers.js';
 import type { WorkerRepository } from './repositories/worker-types.js';
 import type { EnrollmentCodeRepository } from './repositories/enrollment-code-types.js';
+import type { A2AAgentRepository } from './repositories/a2a-agent-types.js';
 import { createWorkersRouter } from './routes/workers.js';
 import { workerAcceptsTask } from './worker-consent.js';
 import { broadcastTaskUpdate, broadcastWorkerUpdate } from './routes/helpers.js';
@@ -72,6 +74,7 @@ let projectRepo: ProjectRepository;
 let attachmentStore: AttachmentStore;
 let workerRepo: WorkerRepository;
 let enrollmentCodeRepo: EnrollmentCodeRepository;
+let a2aAgentRepo: A2AAgentRepository;
 let cleanupDb: () => void;
 let jiraImportScheduler: JiraImportScheduler | undefined;
 
@@ -100,6 +103,8 @@ const agentManager = new AgentManager();
     groupRepo = new PostgresTaskGroupRepository(pool);
     const { PostgresAttachmentStore } = await import('./repositories/postgres-attachments.js');
     attachmentStore = new PostgresAttachmentStore(pool);
+    const { PostgresA2AAgentRepository } = await import('./repositories/postgres-a2a-agents.js');
+    a2aAgentRepo = new PostgresA2AAgentRepository(pool);
     cleanupDb = () => { pool.end(); };
     console.log('[server] using PostgreSQL backend');
   } else {
@@ -117,6 +122,8 @@ const agentManager = new AgentManager();
     groupRepo = new SqliteTaskGroupRepository(db);
     const { SqliteAttachmentStore } = await import('./repositories/sqlite-attachments.js');
     attachmentStore = new SqliteAttachmentStore(db);
+    const { SqliteA2AAgentRepository } = await import('./repositories/sqlite-a2a-agents.js');
+    a2aAgentRepo = new SqliteA2AAgentRepository(db);
     cleanupDb = () => { db.close(); };
     console.log('[server] using SQLite backend');
   }
@@ -160,6 +167,7 @@ const agentManager = new AgentManager();
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));
   app.use('/api/tasks', createGitRouter(taskRepo, agentManager));
   app.use('/api/workers', createWorkersRouter(taskRepo, workerRepo, enrollmentCodeRepo, projectRepo));
+  app.use('/api/a2a-agents', createA2AAgentsRouter(a2aAgentRepo, { projectExists: async (projectId) => Boolean(await projectRepo.getById(projectId)) }));
   app.post('/api/tasks/:id/assign', async (req, res, next) => {
     try {
       const task = await taskRepo.getById(String(req.params.id));

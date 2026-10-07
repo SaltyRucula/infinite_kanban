@@ -82,6 +82,37 @@ function migrate(db: Database.Database): void {
   db.exec(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
+  // Trusted A2A directory is additive: it does not alter worker registration
+  // or task execution state. Agent Cards remain cached after refresh failures.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS a2a_agents (
+      id                    TEXT PRIMARY KEY,
+      agent_card_url        TEXT NOT NULL UNIQUE,
+      name                  TEXT NOT NULL,
+      description           TEXT NOT NULL,
+      version               TEXT NOT NULL,
+      endpoint              TEXT NOT NULL,
+      protocol_version      TEXT NOT NULL,
+      skills_json           TEXT NOT NULL,
+      enabled               INTEGER NOT NULL DEFAULT 1,
+      created_at            INTEGER NOT NULL,
+      updated_at            INTEGER NOT NULL,
+      last_validated_at     INTEGER NOT NULL,
+      last_validation_error TEXT
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS a2a_agent_project_roles (
+      agent_id   TEXT NOT NULL REFERENCES a2a_agents(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      roles_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (agent_id, project_id)
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_a2a_agent_project_roles_project ON a2a_agent_project_roles(project_id)`);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS tasks (
       id            TEXT PRIMARY KEY,
@@ -579,6 +610,37 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addProjectCol('jira_import_last_skipped', 'INTEGER');
   await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
+
+  // Trusted A2A directory is additive: it does not alter worker registration
+  // or task execution state. Agent Cards remain cached after refresh failures.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS a2a_agents (
+      id                    TEXT PRIMARY KEY,
+      agent_card_url        TEXT NOT NULL UNIQUE,
+      name                  TEXT NOT NULL,
+      description           TEXT NOT NULL,
+      version               TEXT NOT NULL,
+      endpoint              TEXT NOT NULL,
+      protocol_version      TEXT NOT NULL,
+      skills_json           TEXT NOT NULL,
+      enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at            BIGINT NOT NULL,
+      updated_at            BIGINT NOT NULL,
+      last_validated_at     BIGINT NOT NULL,
+      last_validation_error TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS a2a_agent_project_roles (
+      agent_id   TEXT NOT NULL REFERENCES a2a_agents(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      roles_json TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (agent_id, project_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_a2a_agent_project_roles_project ON a2a_agent_project_roles(project_id)`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS tasks (
