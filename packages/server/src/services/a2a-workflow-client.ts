@@ -1,8 +1,38 @@
 import type { WorkflowAction, WorkflowTicket } from './workflow-policy.js';
-import { isAllowedA2AUrl } from './a2a-agent-card.js';
+import { isAllowedA2AUrl, normalizeProtocolVersion, type A2AProtocolVersion } from './a2a-agent-card.js';
 
+/**
+ * The wire format differs between A2A versions in ways that are easy to get
+ * wrong: v1.0 uses PascalCase JSON-RPC methods and flattened `Part` objects
+ * (`{ "text": "..." }`, the proto `oneof` serialized to JSON), while v0.3
+ * uses slash-separated methods and tagged parts (`{ "kind": "text", ... }`).
+ * A v1.0 client must also send the `A2A-Version` header: when it is absent
+ * the agent assumes 0.3 (A2A spec §3.6.1).
+ */
+export type { A2AProtocolVersion };
+
+export const A2A_VERSION_HEADER = 'A2A-Version';
+export const DEFAULT_A2A_PROTOCOL_VERSION: A2AProtocolVersion = '1.0';
+
+type A2AMethod = 'send' | 'get' | 'cancel';
+
+const METHOD_NAMES: Readonly<Record<A2AProtocolVersion, Readonly<Record<A2AMethod, string>>>> = {
+  '1.0': { send: 'SendMessage', get: 'GetTask', cancel: 'CancelTask' },
+  '0.3': { send: 'message/send', get: 'tasks/get', cancel: 'tasks/cancel' },
+};
+
+/** Resolves the dialect to use for an agent, from the version its card advertised. */
+export function negotiateProtocolVersion(advertised: string | undefined): A2AProtocolVersion {
+  if (advertised === undefined) return DEFAULT_A2A_PROTOCOL_VERSION;
+  const resolved = normalizeProtocolVersion(advertised);
+  if (resolved === undefined) {
+    throw new A2AExecutorError('protocol', `A2A protocol version is not supported: ${advertised}.`);
+  }
+  return resolved;
+}
+
+/** Board-neutral text part; the wire shape is chosen per protocol version. */
 export interface A2ATextPart {
-  readonly kind: 'text';
   readonly text: string;
 }
 
@@ -34,6 +64,8 @@ export interface JsonRpcA2AExecutorOptions {
   readonly fetcher?: A2AFetch;
   readonly maxRetries?: number;
   readonly timeoutMs?: number;
+  /** Dialect to speak; defaults to v1.0. Drive this from the registration's Agent Card. */
+  readonly protocolVersion?: A2AProtocolVersion;
 }
 
 /** Typed failures let the workflow layer escalate a remote-agent problem safely. */
@@ -89,6 +121,12 @@ function parseTaskResult(value: unknown, expectedTaskId?: string): { id: string;
   if (!isRecord(value)) {
     throw new A2AExecutorError('protocol', 'A2A JSON-RPC result must be a task object.');
   }
+  // SendMessage may legitimately answer with a Message instead of a Task
+  // (spec §3.1.1). The board needs a trackable task, so say so plainly
+  // instead of failing on a missing `id`.
+  if (value.status === undefined && (value.messageId !== undefined || value.role !== undefined)) {
+    throw new A2AExecutorError('protocol', 'A2A agent answered with a direct message; the board requires a task it can track.');
+  }
   const id = readString(value.id);
   if (!id) {
     throw new A2AExecutorError('protocol', 'A2A task result must include a non-empty id.');
@@ -124,6 +162,7 @@ export class JsonRpcA2AExecutor {
   private readonly fetcher: A2AFetch;
   private readonly maxRetries: number;
   private readonly timeoutMs: number;
+  private readonly protocolVersion: A2AProtocolVersion;
 
   constructor(endpoint: string, options: JsonRpcA2AExecutorOptions = {}) {
     let parsedEndpoint: URL;
@@ -146,22 +185,46 @@ export class JsonRpcA2AExecutor {
     this.fetcher = options.fetcher ?? ((url, init) => fetch(url, init));
     this.maxRetries = options.maxRetries ?? 1;
     this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.protocolVersion = options.protocolVersion ?? DEFAULT_A2A_PROTOCOL_VERSION;
+  }
+
+  /**
+   * Serializes a board-neutral message into the dialect of the negotiated
+   * protocol version: flattened parts for v1.0, tagged parts for v0.3.
+   */
+  private wireParams(params: A2AMessageSendParams): unknown {
+    const parts = params.message.parts.map((part) => (this.protocolVersion === '1.0'
+      ? { text: part.text }
+      : { kind: 'text', text: part.text }));
+    return {
+      message: {
+        role: this.protocolVersion === '1.0' ? 'ROLE_USER' : 'user',
+        messageId: params.message.messageId,
+        parts,
+      },
+      metadata: params.metadata,
+    };
   }
 
   async dispatch(params: A2AMessageSendParams): Promise<A2ADispatchReceipt> {
-    const task = parseTaskResult(await this.request('message/send', params.message.messageId, params.message.messageId, params));
+    const method = METHOD_NAMES[this.protocolVersion].send;
+    const task = parseTaskResult(
+      await this.request(method, params.message.messageId, params.message.messageId, this.wireParams(params)),
+    );
     return { remoteTaskId: task.id };
   }
 
   async getUpdate(remoteTaskId: string): Promise<A2ARemoteTaskUpdate> {
     const requestId = `get:${remoteTaskId}`;
-    const task = parseTaskResult(await this.request('tasks/get', requestId, requestId, { id: remoteTaskId }), remoteTaskId);
+    const method = METHOD_NAMES[this.protocolVersion].get;
+    const task = parseTaskResult(await this.request(method, requestId, requestId, { id: remoteTaskId }), remoteTaskId);
     return task.update;
   }
 
   async cancel(remoteTaskId: string): Promise<void> {
     const requestId = `cancel:${remoteTaskId}`;
-    parseTaskResult(await this.request('tasks/cancel', requestId, requestId, { id: remoteTaskId }), remoteTaskId);
+    const method = METHOD_NAMES[this.protocolVersion].cancel;
+    parseTaskResult(await this.request(method, requestId, requestId, { id: remoteTaskId }), remoteTaskId);
   }
 
   private async request(method: string, requestId: string, expectedResponseId: string, params: unknown): Promise<unknown> {
@@ -175,6 +238,9 @@ export class JsonRpcA2AExecutor {
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
+            // v1.0 clients MUST declare their version; an absent header makes
+            // the agent assume 0.3 (spec §3.6.1).
+            ...(this.protocolVersion === '1.0' ? { [A2A_VERSION_HEADER]: '1.0' } : {}),
           },
           body,
           signal: AbortSignal.timeout(this.timeoutMs),
@@ -255,7 +321,7 @@ export function createA2AMessageSendParams(
     message: {
       role: 'ROLE_USER',
       messageId,
-      parts: [{ kind: 'text', text: promptFor(ticket, action) }],
+      parts: [{ text: promptFor(ticket, action) }],
     },
     metadata: {
       'infinite_kanban.ticket_id': ticket.id,
