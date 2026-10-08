@@ -20,6 +20,7 @@ const child = spawn(isWindows ? `npx vite --port ${clientPort}` : 'npx', isWindo
     // The E2E server scopes enrollment-code creation to workers:manage, so
     // the browser needs the deterministic full-scope fixture credential.
     VITE_API_KEY: 'e2e-full-scope-token',
+    VITE_A2A_FIRST_UI: process.env.E2E_A2A_FIRST_UI ?? process.env.VITE_A2A_FIRST_UI,
   },
   shell: isWindows,
   stdio: 'inherit',

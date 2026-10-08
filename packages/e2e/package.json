@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "test:required": "playwright test --reporter=list",
+    "test:required": "playwright test --reporter=list && node ../../scripts/run-a2a-e2e.cjs",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed"
   },
