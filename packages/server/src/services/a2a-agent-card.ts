@@ -9,7 +9,8 @@ export interface NormalizedA2AAgentCard {
   readonly description: string;
   readonly version: string;
   readonly endpoint: string;
-  readonly protocolVersion: string;
+  /** Negotiated `Major.Minor` protocol version; patch versions are dropped. */
+  readonly protocolVersion: A2AProtocolVersion;
   readonly skills: readonly NormalizedA2ASkill[];
 }
 
@@ -29,6 +30,27 @@ export function isAllowedA2AUrl(url: URL): boolean {
   if (url.protocol !== 'http:') return false;
   const hostname = url.hostname.toLowerCase();
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+/** A2A protocol versions this board can speak over the JSON-RPC binding. */
+export type A2AProtocolVersion = '1.0' | '0.3';
+
+export const SUPPORTED_A2A_PROTOCOL_VERSIONS: readonly A2AProtocolVersion[] = ['1.0', '0.3'];
+
+export function isA2AProtocolVersion(value: unknown): value is A2AProtocolVersion {
+  return typeof value === 'string' && (SUPPORTED_A2A_PROTOCOL_VERSIONS as readonly string[]).includes(value);
+}
+
+/**
+ * Only `Major.Minor` participates in version negotiation; patch versions do
+ * not affect compatibility and must be ignored (A2A spec §3.6). Returns
+ * `undefined` for a version this board cannot speak, so the caller can skip
+ * or reject the interface instead of guessing a dialect.
+ */
+export function normalizeProtocolVersion(advertised: string): A2AProtocolVersion | undefined {
+  const [major, minor = '0'] = advertised.trim().split('.');
+  const candidate = `${major}.${minor}`;
+  return isA2AProtocolVersion(candidate) ? candidate : undefined;
 }
 
 function normalizeSkills(value: unknown): readonly NormalizedA2ASkill[] {
@@ -58,6 +80,8 @@ export function normalizeA2AAgentCard(value: unknown): NormalizedA2AAgentCard {
   for (const candidate of interfaces) {
     if (!isRecord(candidate) || candidate.protocolBinding !== 'JSONRPC') continue;
     if (typeof candidate.url !== 'string' || typeof candidate.protocolVersion !== 'string') continue;
+    const protocolVersion = normalizeProtocolVersion(candidate.protocolVersion);
+    if (protocolVersion === undefined) continue;
     let endpoint: URL;
     try {
       endpoint = new URL(candidate.url);
@@ -71,7 +95,7 @@ export function normalizeA2AAgentCard(value: unknown): NormalizedA2AAgentCard {
       description,
       version,
       endpoint: endpoint.toString(),
-      protocolVersion: candidate.protocolVersion,
+      protocolVersion,
       skills: normalizeSkills(value.skills),
     };
   }
