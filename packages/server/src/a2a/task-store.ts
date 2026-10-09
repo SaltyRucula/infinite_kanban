@@ -2,6 +2,7 @@ import { TaskState, type ListTasksRequest, type ListTasksResponse, type Task as 
 import type { TaskStore } from '@a2a-js/sdk/server';
 import { fromTaskState } from '@ai-agent-board/a2a/state.js';
 import type { TaskRepository } from '../repositories/types.js';
+import type { Task as BoardTask } from '../types.js';
 import type { CancellationLog } from './cancellations.js';
 import { toA2ATask } from './projection.js';
 
@@ -29,6 +30,14 @@ export interface BoardTaskStoreOptions {
    * this is where such a cancellation reaches the board.
    */
   readonly onCancel?: (taskId: string) => Promise<void>;
+  /**
+   * Lists every task the board holds, across all projects.
+   *
+   * `TaskRepository.getAll` is project-scoped and defaults to the `default`
+   * project, so `ListTasks` must be given a cross-project reader or it silently
+   * reports only one project's work.
+   */
+  readonly listAllTasks: () => Promise<readonly BoardTask[]>;
 }
 
 /**
@@ -49,6 +58,7 @@ export class BoardTaskStore implements TaskStore {
   private readonly deepLink?: (taskId: string, projectId: string) => string;
   private readonly cancellations: CancellationLog;
   private readonly onCancel?: (taskId: string) => Promise<void>;
+  private readonly listAllTasks: () => Promise<readonly BoardTask[]>;
   private readonly ephemeral = new Map<string, A2ATask>();
 
   constructor(options: BoardTaskStoreOptions) {
@@ -56,9 +66,10 @@ export class BoardTaskStore implements TaskStore {
     this.deepLink = options.deepLink;
     this.cancellations = options.cancellations;
     this.onCancel = options.onCancel;
+    this.listAllTasks = options.listAllTasks;
   }
 
-  private projectTask(task: Parameters<typeof toA2ATask>[0]): A2ATask {
+  private projectTask(task: BoardTask): A2ATask {
     return toA2ATask(task, {
       ...(this.deepLink ? { deepLink: this.deepLink(task.id, task.projectId) } : {}),
       ...(this.cancellations.has(task.id) ? { canceled: true } : {}),
@@ -108,7 +119,7 @@ export class BoardTaskStore implements TaskStore {
       ? fromTaskState(params.status).agentStatus
       : undefined;
 
-    const all = await this.taskRepo.getAll();
+    const all = await this.listAllTasks();
     const projected = all
       .filter((task) => !task.archived)
       .filter((task) => (wanted === undefined ? true : task.agentStatus === wanted))
