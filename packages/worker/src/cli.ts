@@ -31,8 +31,10 @@ import {
   startOpenCodeServerTask,
   type OpenCodeRunResult,
   type RunnerProfile,
+  type WorkspaceSettings,
 } from './local-runner.js';
 import { OpenCodeSessionBridge } from './opencode-session-bridge.js';
+import { resolveRepositoryWorkspace } from './repository-resolution.js';
 import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
 
 export type CommandArgs = Readonly<Record<string, string>>;
@@ -214,7 +216,7 @@ export function truncateQuestion(question: string): string {
   return result;
 }
 
-async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string; readonly runner: RunnerProfile }> {
+async function loadWorkspaceSettings(): Promise<WorkspaceSettings> {
   let raw: unknown;
   try {
     raw = JSON.parse(await fs.readFile(workspaceConfigPath, 'utf8')) as unknown;
@@ -487,11 +489,12 @@ async function run(): Promise<void> {
           current = { task: claimed.task, claimToken: claimed.claimToken };
           currentAbortController = new AbortController();
           try {
+            const taskWorkspacePath = await resolveRepositoryWorkspace(claimed.task, workspaceSettings);
             await executeTask(
               config,
               claimed.task,
               claimed.claimToken,
-              workspaceSettings.workspacePath,
+              taskWorkspacePath,
               workspaceSettings.runner,
               sessionBridge,
               currentAbortController.signal,
@@ -545,11 +548,12 @@ export async function serveA2A(args: CommandArgs): Promise<void> {
     version: '0.1.0',
     agentTypes: a2aAgentTypes(args.agentTypes),
     dispatch: async (task, a2aTaskId) => {
+      const taskWorkspacePath = await resolveRepositoryWorkspace(task, workspaceSettings);
       switch (workspaceSettings.runner.kind) {
         case 'agent-sdk': {
           const live = await startAgentSdkTask({
             task,
-            workingDirectory: workspaceSettings.workspacePath,
+            workingDirectory: taskWorkspacePath,
             sendEvent: async () => undefined,
           });
           active.set(a2aTaskId, { abort: () => live.abort() });
@@ -566,7 +570,7 @@ export async function serveA2A(args: CommandArgs): Promise<void> {
         case 'opencode-server': {
           const live = await startOpenCodeServerTask({
             task,
-            workspacePath: workspaceSettings.workspacePath,
+            workspacePath: taskWorkspacePath,
             runner: workspaceSettings.runner,
             sendEvent: async () => undefined,
           });

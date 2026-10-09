@@ -18,7 +18,12 @@ import { buildReviewPrompt, isReviewRun, REVIEW_DISABLED_TOOLS, REVIEW_SYSTEM_PR
 export type AgentSdkRunnerProfile = { readonly kind: 'agent-sdk' };
 export type OpenCodeServerRunnerProfile = { readonly kind: 'opencode-server'; readonly agent: string };
 export type RunnerProfile = AgentSdkRunnerProfile | OpenCodeServerRunnerProfile;
-export type WorkspaceSettings = { readonly workspacePath: string; readonly runner: RunnerProfile };
+export type WorkspaceSettings = {
+  readonly workspacePath: string;
+  readonly runner: RunnerProfile;
+  readonly repositoryMappings?: Readonly<Record<string, string>>;
+  readonly cloneRoot?: string;
+};
 export type OpenCodeRunResult = {
   readonly status: 'complete' | 'failed' | 'awaiting_input';
   readonly summary?: string;
@@ -177,6 +182,18 @@ const HEADLESS_CLARIFICATION_SYSTEM_PROMPT = [
   'that it is not present, so a human can route the task to a worker that has it.',
 ].join(' ');
 
+function headlessSystemPrompt(task: WorkerTaskAssignment, workspacePath: string): string {
+  if (task.repoUrl) {
+    return [
+      'You are running headlessly with no interactive user available during this turn.',
+      'The `question` tool is disabled and cannot be used — do not attempt to call it.',
+      `This task targets ${task.repoUrl}; its exact local checkout is ${workspacePath}.`,
+      'Work only inside that checkout. Do not infer a repository from sibling directory names.',
+    ].join(' ');
+  }
+  return HEADLESS_CLARIFICATION_SYSTEM_PROMPT;
+}
+
 // OpenCode gates file access outside the session root behind an interactive
 // `external_directory` permission prompt (and can also gate edit/bash). A
 // headless worker has nobody to answer these, so the session silently blocks
@@ -224,6 +241,7 @@ export function buildTaskPrompt(task: WorkerTaskAssignment): string {
     '',
     `Task description: ${task.description}`,
     '',
+    ...(task.repoUrl ? [`Repository: ${task.repoUrl}`, ''] : []),
     `Labels: ${labels}`,
   ].join('\n');
 }
@@ -274,22 +292,37 @@ export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
     throw new Error('worker workspace configuration must include workspacePath');
   }
 
+  const rawMappings = asRecord(record?.repositoryMappings);
+  const repositoryMappings = rawMappings && Object.entries(rawMappings).every(([key, value]) => key.trim() && typeof value === 'string' && value.trim())
+    ? Object.fromEntries(Object.entries(rawMappings).map(([key, value]) => [key.trim(), (value as string).trim()]))
+    : undefined;
+  if (record?.repositoryMappings !== undefined && !repositoryMappings) {
+    throw new Error('repositoryMappings must map repository identities to non-empty local directories');
+  }
+  const cloneRoot = typeof record?.cloneRoot === 'string' && record.cloneRoot.trim() ? record.cloneRoot.trim() : undefined;
+  if (record?.cloneRoot !== undefined && !cloneRoot) {
+    throw new Error('cloneRoot must be a non-empty directory path when configured');
+  }
+  const repositorySettings = {
+    ...(repositoryMappings ? { repositoryMappings } : {}),
+    ...(cloneRoot ? { cloneRoot } : {}),
+  };
   const rawRunner = record?.runner;
   if (rawRunner === undefined) {
-    return { workspacePath, runner: { kind: 'agent-sdk' } };
+    return { workspacePath, runner: { kind: 'agent-sdk' }, ...repositorySettings };
   }
 
   const runnerRecord = asRecord(rawRunner);
   const kind = typeof runnerRecord?.kind === 'string' ? runnerRecord.kind : '';
   if (kind === 'agent-sdk') {
-    return { workspacePath, runner: { kind: 'agent-sdk' } };
+    return { workspacePath, runner: { kind: 'agent-sdk' }, ...repositorySettings };
   }
   if (kind === 'opencode-server') {
     const agent = typeof runnerRecord?.agent === 'string' ? runnerRecord.agent.trim() : '';
     if (!agent) {
       throw new Error('runner.agent must be a non-empty string when runner.kind is opencode-server');
     }
-    return { workspacePath, runner: { kind: 'opencode-server', agent } };
+    return { workspacePath, runner: { kind: 'opencode-server', agent }, ...repositorySettings };
   }
   throw new Error('runner.kind must be either "agent-sdk" or "opencode-server"');
 }
@@ -461,8 +494,8 @@ async function startOpenCodeServerTaskWithAdapter(input: StartOpenCodeServerTask
         // A reviewer that needs more information should express that as
         // changes_requested with the question in its findings instead.
         systemPrompt: review
-          ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}`
-          : `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${INPUT_REQUEST_INSTRUCTIONS}`,
+          ? `${headlessSystemPrompt(input.task, input.workspacePath)} ${REVIEW_SYSTEM_PROMPT}`
+          : `${headlessSystemPrompt(input.task, input.workspacePath)} ${INPUT_REQUEST_INSTRUCTIONS}`,
         model: headlessModel(),
         disabledTools: review ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS } : HEADLESS_DISABLED_TOOLS,
       });

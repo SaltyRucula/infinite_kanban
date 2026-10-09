@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { canonicalRepoUrl, resolveRepositoryWorkspace } from '../src/repository-resolution.js';
+
+const assignment: WorkerTaskAssignment = {
+  id: 'task-1',
+  title: 'Implement repository-aware worker routing',
+  description: 'Use the repository coordinates carried by the assignment.',
+  priority: 'high',
+  labels: [],
+  repoUrl: 'https://github.com/Acme/board.git',
+  baseBranch: 'main',
+};
+
+test('canonicalRepoUrl removes transport-only differences without exposing a local path', () => {
+  assert.equal(canonicalRepoUrl('git@github.com:Acme/board.git'), 'github.com/acme/board');
+  assert.equal(canonicalRepoUrl('https://github.com/acme/board/'), 'github.com/acme/board');
+});
+
+test('resolveRepositoryWorkspace uses the configured repository mapping instead of guessing a sibling directory', async () => {
+  const calls: string[] = [];
+  const resolved = await resolveRepositoryWorkspace(assignment, {
+    workspacePath: '/worker/workspace',
+    repositoryMappings: { 'github.com/acme/board': '/repos/board' },
+  }, {
+    isDirectory: async (directory) => directory === '/repos/board',
+    runGit: async (...args) => { calls.push(args.join(' ')); },
+  });
+
+  assert.equal(resolved, '/repos/board');
+  assert.deepEqual(calls, ['-C /repos/board fetch --prune origin']);
+});
+
+test('resolveRepositoryWorkspace clones an unmapped repository under cloneRoot', async () => {
+  const calls: string[] = [];
+  const directories: string[] = [];
+  const resolved = await resolveRepositoryWorkspace(assignment, {
+    workspacePath: '/worker/workspace',
+    cloneRoot: '/worker/clones',
+  }, {
+    isDirectory: async () => false,
+    mkdir: async (directory) => { directories.push(directory); },
+    runGit: async (...args) => { calls.push(args.join(' ')); },
+  });
+
+  assert.equal(resolved, '/worker/clones/github.com/acme/board');
+  assert.deepEqual(directories, ['/worker/clones/github.com/acme']);
+  assert.deepEqual(calls, ['clone -- https://github.com/Acme/board.git /worker/clones/github.com/acme/board']);
+});
+
+test('resolveRepositoryWorkspace retains the configured workspace when a legacy assignment has no repository identity', async () => {
+  const resolved = await resolveRepositoryWorkspace({ ...assignment, repoUrl: undefined }, {
+    workspacePath: '/worker/workspace',
+  });
+
+  assert.equal(resolved, '/worker/workspace');
+});

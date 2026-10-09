@@ -86,6 +86,8 @@ export interface WorkerTaskAssignment {
   title: string;
   description: string;
   priority: Priority;
+  /** Portable repository identity; never a board-host checkout path. */
+  repoUrl?: string;
   agentType?: AgentType;
   branchName?: string;
   baseBranch?: string;
@@ -111,7 +113,7 @@ export interface WorkerTaskAssignment {
 
 /** The complete public field allowlist for worker task handoffs. */
 export const WORKER_TASK_ASSIGNMENT_KEYS = [
-  'id', 'title', 'description', 'priority', 'agentType', 'branchName',
+  'id', 'title', 'description', 'priority', 'repoUrl', 'agentType', 'branchName',
   'baseBranch', 'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference',
   'resume', 'mode',
 ] as const satisfies readonly (keyof WorkerTaskAssignment)[];

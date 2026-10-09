@@ -5,15 +5,11 @@ import { RequestMalformedError } from '@a2a-js/sdk/errors';
 import { AgentEvent, DefaultRequestHandler, InMemoryTaskStore, type AgentExecutor, type ExecutionEventBus, type RequestContext } from '@a2a-js/sdk/server';
 import { agentCardHandler, jsonRpcHandler, restHandler, UserBuilder } from '@a2a-js/sdk/server/express';
 import { BOARD_A2A_BASE_PATH, workerAgentCard } from '@ai-agent-board/a2a/cards.js';
-import { EXT_ASSIGNMENT } from '@ai-agent-board/a2a/extension.js';
+import { assignmentFromMessage as decodeAssignment } from '@ai-agent-board/a2a/assignment.js';
 import type { AgentType, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { parseA2AListenOptions, type A2AListenOptions } from './a2a-listen.js';
 
 const AGENT_CARD_PATH = '/.well-known/agent-card.json';
-const ASSIGNMENT_KEYS = new Set([
-  'id', 'title', 'description', 'priority', 'agentType', 'branchName', 'baseBranch',
-  'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference', 'resume', 'mode',
-]);
 
 export { parseA2AListenOptions, type A2AListenOptions };
 
@@ -28,23 +24,10 @@ export interface WorkerA2ARouterOptions {
   readonly cancel?: (taskId: string) => Promise<void>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function assignmentFromMessage(message: Message): WorkerTaskAssignment {
-  const candidate = message.metadata?.[EXT_ASSIGNMENT]
-    ?? message.parts.find((part) => part.content?.$case === 'data')?.content?.value;
-  if (!isRecord(candidate)) throw new RequestMalformedError('no board assignment payload found in message');
-  const unknown = Object.keys(candidate).filter((key) => !ASSIGNMENT_KEYS.has(key));
-  if (unknown.length > 0) throw new RequestMalformedError(`unexpected assignment fields: ${unknown.join(', ')}`);
-  if (typeof candidate.id !== 'string' || !candidate.id) throw new RequestMalformedError('assignment id is required');
-  if (typeof candidate.title !== 'string' || !candidate.title) throw new RequestMalformedError('assignment title is required');
-  if (typeof candidate.description !== 'string') throw new RequestMalformedError('assignment description must be a string');
-  if (!Array.isArray(candidate.labels) || candidate.labels.some((label) => typeof label !== 'string')) {
-    throw new RequestMalformedError('assignment labels must be an array of strings');
-  }
-  return candidate as unknown as WorkerTaskAssignment;
+  const decoded = decodeAssignment(message);
+  if (!decoded.ok) throw new RequestMalformedError(decoded.error);
+  return decoded.assignment;
 }
 
 function completedTask(taskId: string, contextId: string, messageId: string): Task {

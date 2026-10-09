@@ -419,12 +419,29 @@ export function broadcastTaskUpdate(task: Task): void {
   broadcast({ type: 'task_updated', payload: toPortableTask(task) });
 }
 
-export function toWorkerTaskAssignment(task: Task, project?: Pick<Project, 'goal' | 'context'>): WorkerTaskAssignment {
+function portableRepoUrl(repoUrl: string | undefined): string | undefined {
+  if (!repoUrl) return undefined;
+  const value = repoUrl.trim();
+  if (!value || value.startsWith('/') || value.startsWith('file:')) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:', 'ssh:', 'git:'].includes(parsed.protocol) || !parsed.hostname || !parsed.pathname || parsed.password) return undefined;
+    const username = parsed.username ? `${parsed.username}@` : '';
+    return `${parsed.protocol}//${username}${parsed.host}${parsed.pathname.replace(/\/$/, '').replace(/\.git$/i, '')}`;
+  } catch {
+    const scp = value.match(/^(?:[^@/:]+@)?[^/:]+:.+$/);
+    return scp ? value.replace(/\.git$/i, '') : undefined;
+  }
+}
+
+export function toWorkerTaskAssignment(task: Task, project?: Pick<Project, 'goal' | 'context' | 'repoUrl'>): WorkerTaskAssignment {
+  const repoUrl = portableRepoUrl(project?.repoUrl);
   return {
     id: task.id,
     title: task.title,
     description: task.description,
     priority: task.priority,
+    ...(repoUrl ? { repoUrl } : {}),
     ...(task.agentType === undefined ? {} : { agentType: task.agentType }),
     ...(task.branchName === undefined ? {} : { branchName: task.branchName }),
     ...(task.baseBranch === undefined ? {} : { baseBranch: task.baseBranch }),
