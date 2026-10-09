@@ -107,13 +107,34 @@ export interface WorkerTaskAssignment {
    * re-implementing the task. Absent for normal implementation runs.
    */
   mode?: 'review';
+  /**
+   * Which repository the work belongs to, as portable identity rather than a
+   * location. An executor may be on another machine with its own checkout
+   * layout, so the board names the repository and the executor resolves it
+   * locally; host paths never travel (see `BOARD_PRIVATE_FIELDS`).
+   */
+  repository?: RepositoryCoordinates;
+}
+
+/**
+ * A repository named in a way that means the same thing on every machine.
+ *
+ * `url` is the canonical remote (normalized by `normalizeRepoUrl`), which is
+ * what an executor maps onto its own clone. `baseBranch` stays a top-level
+ * field on the assignment, because it is a property of the run rather than of
+ * the repository.
+ */
+export interface RepositoryCoordinates {
+  url: string;
+  /** Sub-path to work in, for repositories holding several projects. */
+  subdirectory?: string;
 }
 
 /** The complete public field allowlist for worker task handoffs. */
 export const WORKER_TASK_ASSIGNMENT_KEYS = [
   'id', 'title', 'description', 'priority', 'agentType', 'branchName',
   'baseBranch', 'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference',
-  'resume', 'mode',
+  'resume', 'mode', 'repository',
 ] as const satisfies readonly (keyof WorkerTaskAssignment)[];
 
 type WorkerTaskAssignmentKeyCoverage = Exclude<

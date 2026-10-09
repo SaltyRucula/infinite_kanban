@@ -48,9 +48,32 @@ Enrollment registers one worker and saves its credentials locally. The worker wr
 | File | Contents |
 |------|----------|
 | `~/.agentboard-worker/config.json` | Worker id, worker token, and board server URL |
-| `~/.agentboard-worker/workspace.json` | Workspace path and runner profile |
+| `~/.agentboard-worker/workspace.json` | Workspace path, runner profile, and optional repository mapping |
 
 Registration also writes the runner block automatically. No hand-editing JSON is required.
+
+## Telling the worker where each repository lives
+
+The board names the repository a task belongs to (the project's remote URL) and never sends a path — a path on the board host means nothing on your machine. This worker decides where that repository actually is, via an optional `repos` block in `~/.agentboard-worker/workspace.json`:
+
+```json
+{
+  "workspacePath": "/Users/you/work",
+  "runner": { "kind": "agent-sdk" },
+  "repos": {
+    "git@github.com:owner/infra.git": "/Users/you/repos/infra",
+    "https://github.com/owner/app": "/Users/you/repos/app"
+  }
+}
+```
+
+Keys may be written in any spelling — `git@host:owner/repo.git`, `https://host/owner/repo`, with or without `.git` — they are canonicalized on load, so they match whatever form the board sends. Behaviour:
+
+- **Mapped repository** — the agent's session root is that checkout, and it is told to work there. No guessing.
+- **Unmapped repository** — the task is refused with `this worker has no checkout for <repo>`, so a human can add the mapping or route the task to a worker that has it. The worker never falls back to the workspace root here: that is how edits land in the wrong repository.
+- **No repository named** (project without a remote) — unchanged behaviour: the agent starts at `workspacePath` and infers which sibling repository the task means.
+
+A bad entry (unparseable URL or empty path) is dropped on load and costs only that repository, not the worker's ability to run.
 
 ## Runner profiles
 

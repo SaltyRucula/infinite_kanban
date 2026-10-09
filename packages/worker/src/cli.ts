@@ -28,9 +28,11 @@ import {
 } from './api.js';
 import {
   parseWorkspaceSettings,
+  resolveRepository,
   startOpenCodeServerTask,
   type OpenCodeRunResult,
   type RunnerProfile,
+  type WorkspaceSettings,
 } from './local-runner.js';
 import { OpenCodeSessionBridge } from './opencode-session-bridge.js';
 import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
@@ -214,7 +216,7 @@ export function truncateQuestion(question: string): string {
   return result;
 }
 
-async function loadWorkspaceSettings(): Promise<{ readonly workspacePath: string; readonly runner: RunnerProfile }> {
+async function loadWorkspaceSettings(): Promise<WorkspaceSettings> {
   let raw: unknown;
   try {
     raw = JSON.parse(await fs.readFile(workspaceConfigPath, 'utf8')) as unknown;
@@ -349,6 +351,11 @@ async function executeTask(
   runner: RunnerProfile,
   sessionBridge: OpenCodeSessionBridge,
   abortSignal: AbortSignal,
+  /**
+   * True when `workspacePath` is the exact checkout for the task's repository,
+   * so the agent is told where to work instead of being asked to infer it.
+   */
+  repositoryResolved = false,
 ): Promise<void> {
   const sendTaskEvent = async (event: Parameters<typeof sendEvent>[3]): Promise<void> => {
     await sendEvent(config, task, claimToken, event);
@@ -383,6 +390,7 @@ async function executeTask(
             task,
             workingDirectory: workspacePath,
             sendEvent: sendTaskEvent,
+            repositoryResolved,
           });
           sessionId = live.sessionId ?? undefined;
           if (live.sessionId && live.baseUrl) {
@@ -406,6 +414,7 @@ async function executeTask(
             workspacePath,
             runner,
             sendEvent: sendTaskEvent,
+            repositoryResolved,
           });
           sessionId = live.sessionId;
           const bridgeUrl = sessionBridge.register({
@@ -487,14 +496,36 @@ async function run(): Promise<void> {
           current = { task: claimed.task, claimToken: claimed.claimToken };
           currentAbortController = new AbortController();
           try {
+            // Where the work happens is decided here, before the agent starts:
+            // a named repository this machine knows resolves to its checkout,
+            // and one it does not know is refused outright. Running an
+            // unmapped task from the workspace root is how edits end up in the
+            // wrong repository.
+            const resolution = resolveRepository(workspaceSettings, claimed.task.repository);
+            if (resolution.kind === 'unmapped') {
+              await completeTaskFailure(
+                config,
+                claimed.task.id,
+                claimed.claimToken,
+                `this worker has no checkout for ${resolution.repoUrl}; add it to the worker's repos mapping or route the task to a worker that has it`,
+              );
+              console.error(`[worker] refused task for unmapped repository ${resolution.repoUrl}`);
+              current = undefined;
+              currentAbortController = undefined;
+              continue;
+            }
+            const taskDirectory = resolution.kind === 'resolved'
+              ? resolution.directory
+              : workspaceSettings.workspacePath;
             await executeTask(
               config,
               claimed.task,
               claimed.claimToken,
-              workspaceSettings.workspacePath,
+              taskDirectory,
               workspaceSettings.runner,
               sessionBridge,
               currentAbortController.signal,
+              resolution.kind === 'resolved',
             );
           } catch (error: unknown) {
             const message = safeWorkerError(error, workspaceSettings.workspacePath);

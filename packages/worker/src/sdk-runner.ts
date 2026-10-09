@@ -40,6 +40,8 @@ export type RunningAgentSdkTask = {
 type RunAgentSdkTaskInput = {
   readonly task: WorkerTaskAssignment;
   readonly workingDirectory: string;
+  /** `workingDirectory` is the task's repository checkout, not a parent of many. */
+  readonly repositoryResolved?: boolean;
   readonly sendEvent: (event: AgentEvent) => Promise<void>;
   readonly providerFactory?: (agentType: AgentType) => AgentProvider;
 };
@@ -247,7 +249,9 @@ export async function startAgentSdkTask(input: RunAgentSdkTaskInput): Promise<Ru
   const session = await provider.createSession({
     contextId: input.task.id,
     workingDirectory: input.workingDirectory,
-    systemPrompt: 'Work in the locally configured workspace. Follow the workspace instructions and skills. '
+    systemPrompt: (input.repositoryResolved
+      ? 'Your working directory is the repository this task targets. Work inside it and do not look for sibling repositories elsewhere. '
+      : 'Work in the locally configured workspace. Follow the workspace instructions and skills. ')
       // A review run only ever scans for REVIEW_VERDICT (see reviewResult
       // below), never for a clarification marker — including
       // INPUT_REQUEST_INSTRUCTIONS here as well would hand the reviewer two

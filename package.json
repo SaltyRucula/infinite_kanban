@@ -18,6 +18,7 @@
     "dev:server": "npm run dev -w @ai-agent-board/server",
     "build:shared": "npm run build -w @ai-agent-board/shared",
     "build:a2a": "npm run build -w @ai-agent-board/a2a",
+    "test:shared": "npm run test -w @ai-agent-board/shared",
     "test:a2a": "npm run test -w @ai-agent-board/a2a",
     "build:opencode-compat": "npm run build -w @ai-agent-board/opencode-compat",
     "build:client": "npm run build -w @ai-agent-board/client",

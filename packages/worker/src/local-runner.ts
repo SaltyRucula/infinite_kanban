@@ -12,13 +12,23 @@ import {
   type TurnResult,
 } from '@ai-agent-board/opencode-compat';
 import type { AgentEvent, ReviewVerdict, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { normalizeRepoUrl } from '@ai-agent-board/shared/repo-url.js';
 import { buildResumeAnswerPrompt, buildResumeContext, extractInputRequest, INPUT_REQUEST_INSTRUCTIONS } from './input-request.js';
 import { buildReviewPrompt, isReviewRun, REVIEW_DISABLED_TOOLS, REVIEW_SYSTEM_PROMPT, reviewResult } from './review-mode.js';
 
 export type AgentSdkRunnerProfile = { readonly kind: 'agent-sdk' };
 export type OpenCodeServerRunnerProfile = { readonly kind: 'opencode-server'; readonly agent: string };
 export type RunnerProfile = AgentSdkRunnerProfile | OpenCodeServerRunnerProfile;
-export type WorkspaceSettings = { readonly workspacePath: string; readonly runner: RunnerProfile };
+export type WorkspaceSettings = {
+  readonly workspacePath: string;
+  readonly runner: RunnerProfile;
+  /**
+   * Canonical repository URL (`normalizeRepoUrl` form) to the local checkout
+   * that holds it. Lets the board name a repository and this machine decide
+   * where that repository actually lives.
+   */
+  readonly repos?: Readonly<Record<string, string>>;
+};
 export type OpenCodeRunResult = {
   readonly status: 'complete' | 'failed' | 'awaiting_input';
   readonly summary?: string;
@@ -65,6 +75,8 @@ export type CreateOpenCodeAdapter = (input: {
 type StartOpenCodeServerTaskInput = {
   readonly task: WorkerTaskAssignment;
   readonly workspacePath: string;
+  /** `workspacePath` is the task's repository checkout, not a parent of many. */
+  readonly repositoryResolved?: boolean;
   readonly runner: OpenCodeServerRunnerProfile;
   readonly sendEvent: (event: AgentEvent) => Promise<void>;
   readonly spawnFn?: OpenCodeSpawn;
@@ -167,6 +179,18 @@ function defaultCreateAdapter(input: {
 // case completes quickly and visibly rather than hanging/failing.
 const HEADLESS_DISABLED_TOOLS: Readonly<Record<string, boolean>> = { question: false };
 
+/**
+ * Used when the board named a repository this worker has a checkout for: the
+ * session root *is* that repository, so inferring which one to work in would
+ * be wrong rather than merely unnecessary.
+ */
+const HEADLESS_RESOLVED_REPO_SYSTEM_PROMPT = [
+  'You are running headlessly with no interactive user available during this turn.',
+  'The `question` tool is disabled and cannot be used — do not attempt to call it.',
+  'Your session root is the repository this task targets. Work inside it and do not',
+  'look for sibling repositories elsewhere on this machine.',
+].join(' ');
+
 const HEADLESS_CLARIFICATION_SYSTEM_PROMPT = [
   'You are running headlessly with no interactive user available during this turn.',
   'The `question` tool is disabled and cannot be used — do not attempt to call it.',
@@ -267,31 +291,85 @@ async function resolveSession(
   return { sessionId, firstPrompt };
 }
 
+/**
+ * Reads the optional `repos` map, keyed by canonical repository URL.
+ *
+ * Keys are normalized on load so a config written as
+ * `git@github.com:owner/repo.git` still matches an assignment carrying
+ * `github.com/owner/repo`. Unparseable keys and non-string values are dropped
+ * rather than failing the whole worker: a bad mapping entry should cost one
+ * repository, not the agent's ability to run at all.
+ */
+function parseRepoMap(raw: unknown): Readonly<Record<string, string>> | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value !== 'string') continue;
+    const directory = value.trim();
+    const normalized = normalizeRepoUrl(key);
+    if (!normalized || !directory) continue;
+    result[normalized] = directory;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
   const record = asRecord(raw);
   const workspacePath = typeof record?.workspacePath === 'string' ? record.workspacePath.trim() : '';
   if (!workspacePath) {
     throw new Error('worker workspace configuration must include workspacePath');
   }
+  const repos = parseRepoMap(record?.repos);
+  const withRepos = <T extends { workspacePath: string; runner: RunnerProfile }>(settings: T): T & WorkspaceSettings =>
+    ({ ...settings, ...(repos ? { repos } : {}) });
 
   const rawRunner = record?.runner;
   if (rawRunner === undefined) {
-    return { workspacePath, runner: { kind: 'agent-sdk' } };
+    return withRepos({ workspacePath, runner: { kind: 'agent-sdk' } });
   }
 
   const runnerRecord = asRecord(rawRunner);
   const kind = typeof runnerRecord?.kind === 'string' ? runnerRecord.kind : '';
   if (kind === 'agent-sdk') {
-    return { workspacePath, runner: { kind: 'agent-sdk' } };
+    return withRepos({ workspacePath, runner: { kind: 'agent-sdk' } });
   }
   if (kind === 'opencode-server') {
     const agent = typeof runnerRecord?.agent === 'string' ? runnerRecord.agent.trim() : '';
     if (!agent) {
       throw new Error('runner.agent must be a non-empty string when runner.kind is opencode-server');
     }
-    return { workspacePath, runner: { kind: 'opencode-server', agent } };
+    return withRepos({ workspacePath, runner: { kind: 'opencode-server', agent } });
   }
   throw new Error('runner.kind must be either "agent-sdk" or "opencode-server"');
+}
+
+/** Outcome of turning an assignment's repository identity into a directory. */
+export type RepositoryResolution =
+  | { readonly kind: 'resolved'; readonly directory: string; readonly repoUrl: string }
+  | { readonly kind: 'unmapped'; readonly repoUrl: string }
+  | { readonly kind: 'none' };
+
+/**
+ * Decides where a task runs on this machine.
+ *
+ * `resolved` means the board named a repository this worker has a mapping for,
+ * so the agent is pointed straight at it. `unmapped` means the board named one
+ * this worker does not know — the caller refuses the task instead of running
+ * it somewhere plausible, because the alternative is edits landing in the
+ * wrong repository. `none` means the board sent no identity at all (older
+ * server, or a project with no remote), which keeps the previous behaviour of
+ * working from the workspace root.
+ */
+export function resolveRepository(
+  settings: Pick<WorkspaceSettings, 'repos'>,
+  repository?: { readonly url?: string },
+): RepositoryResolution {
+  const normalized = repository?.url ? normalizeRepoUrl(repository.url) : undefined;
+  if (!normalized) return { kind: 'none' };
+  const directory = settings.repos?.[normalized];
+  if (!directory) return { kind: 'unmapped', repoUrl: normalized };
+  return { kind: 'resolved', directory, repoUrl: normalized };
 }
 
 export async function startOpenCodeServerTask(input: StartOpenCodeServerTaskInput): Promise<LiveOpenCodeServerTask> {
@@ -344,6 +422,9 @@ async function startOpenCodeServerTaskWithAdapter(input: StartOpenCodeServerTask
     password: input.password,
   });
   const review = isReviewRun(input.task);
+  const baseSystemPrompt = input.repositoryResolved
+    ? HEADLESS_RESOLVED_REPO_SYSTEM_PROMPT
+    : HEADLESS_CLARIFICATION_SYSTEM_PROMPT;
 
   // Hoisted per SessionSpec's contract (see opencode-compat/types.ts): this
   // build's v1 adapter treats these purely as defaults available to
@@ -359,8 +440,8 @@ async function startOpenCodeServerTaskWithAdapter(input: StartOpenCodeServerTask
     agent: input.runner.agent,
     model: headlessModel(),
     systemPrompt: review
-      ? `${HEADLESS_CLARIFICATION_SYSTEM_PROMPT} ${REVIEW_SYSTEM_PROMPT}`
-      : HEADLESS_CLARIFICATION_SYSTEM_PROMPT,
+      ? `${baseSystemPrompt} ${REVIEW_SYSTEM_PROMPT}`
+      : baseSystemPrompt,
     headlessPermissions: true,
     disabledTools: review
       ? { ...HEADLESS_DISABLED_TOOLS, ...REVIEW_DISABLED_TOOLS }

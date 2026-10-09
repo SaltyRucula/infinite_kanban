@@ -4,11 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -b tsconfig.json"
+    "build": "tsc -b tsconfig.json",
+    "test": "node --import tsx/esm --test tests/*.test.ts"
   },
   "exports": {
     "./types.js": "./dist/types.js",
-    "./constants.js": "./dist/constants.js"
+    "./constants.js": "./dist/constants.js",
+    "./repo-url.js": "./dist/repo-url.js"
   },
   "devDependencies": {
     "typescript": "~5.7.0"

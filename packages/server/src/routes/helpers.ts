@@ -6,6 +6,7 @@ import os from 'os';
 import path from 'path';
 import type { Project, Task, TaskGroup, WorkerTaskAssignment } from '../types.js';
 import { isValidPriority, isValidColumnId, isValidAgentType, isValidAgentTimeoutMinutes, VALID_AGENT_TYPES, MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_LABELS, MAX_LABEL_LENGTH, MAX_AGENT_PREFERENCE_LENGTH, MIN_AGENT_TIMEOUT_MINUTES, MAX_AGENT_TIMEOUT_MINUTES } from '@ai-agent-board/shared/constants.js';
+import { normalizeRepoUrl as canonicalRepoUrl } from '@ai-agent-board/shared/repo-url.js';
 import { errorMessage } from '../utils.js';
 import { getCloneRoot } from '../config.js';
 import type { TaskRepository } from '../repositories/types.js';
@@ -345,9 +346,19 @@ export function parseGitRepoUrl(input: string): ParsedRepoUrl | string {
   return { url, name };
 }
 
-/** Normalize a git URL for equality comparison (case/slash/.git/trailing-slash insensitive). */
+/**
+ * Normalize a git URL for equality comparison.
+ *
+ * Delegates to the shared canonical identity so the board compares remotes the
+ * same way an executor resolves them — `git@github.com:owner/repo.git` and
+ * `https://github.com/owner/repo` are the same repository, which the previous
+ * purely textual comparison missed. Values that are not recognisable as a
+ * remote fall back to the old lowercase/trailing-`.git` cleanup so unrelated
+ * comparisons keep working instead of collapsing to one empty key.
+ */
 export function normalizeRepoUrl(url: string): string {
-  return url.trim().replace(/\\/g, '/').replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
+  return canonicalRepoUrl(url)
+    ?? url.trim().replace(/\\/g, '/').replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
 }
 
 /** Return the `origin` remote URL of a repo, or null if none/not a repo. */
@@ -419,7 +430,14 @@ export function broadcastTaskUpdate(task: Task): void {
   broadcast({ type: 'task_updated', payload: toPortableTask(task) });
 }
 
-export function toWorkerTaskAssignment(task: Task, project?: Pick<Project, 'goal' | 'context'>): WorkerTaskAssignment {
+export function toWorkerTaskAssignment(
+  task: Task,
+  project?: Pick<Project, 'goal' | 'context' | 'repoUrl'>,
+): WorkerTaskAssignment {
+  // Identity, not location: the executor resolves this onto its own checkout.
+  // An unparseable remote is simply omitted, leaving the executor's existing
+  // fallback behaviour rather than sending it something it cannot use.
+  const repoUrl = project?.repoUrl ? canonicalRepoUrl(project.repoUrl) : undefined;
   return {
     id: task.id,
     title: task.title,
@@ -436,6 +454,7 @@ export function toWorkerTaskAssignment(task: Task, project?: Pick<Project, 'goal
     ...workerResume(task),
     // A run started from Review validates the existing work instead of re-implementing it.
     ...(task.columnId === 'review' ? { mode: 'review' as const } : {}),
+    ...(repoUrl === undefined ? {} : { repository: { url: repoUrl } }),
   };
 }
 
