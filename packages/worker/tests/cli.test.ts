@@ -103,6 +103,7 @@ test('start dispatches preflight before enrollment registration and beginning th
         calls.push({ args, enrollmentCode });
       },
       run: async () => { steps.push('run'); },
+      serve: async () => { steps.push('serve'); },
     },
   );
 
@@ -115,6 +116,21 @@ test('start dispatches preflight before enrollment registration and beginning th
     },
     enrollmentCode: 'one-time-secret',
   }]);
+});
+
+test('a2a-serve dispatches the supplied listener arguments without starting the legacy poll loop', async () => {
+  const calls: string[] = [];
+  const args = { host: 'worker.example.test', port: '4567' };
+
+  await dispatchCommand('a2a-serve', args, {
+    register: async () => { calls.push('register'); },
+    run: async () => { calls.push('run'); },
+    serve: async (received) => {
+      calls.push(`serve:${received.host}:${received.port}`);
+    },
+  });
+
+  assert.deepEqual(calls, ['serve:worker.example.test:4567']);
 });
 
 test('runStartPreflight rejects Node versions below 22 without invoking OpenCode', async () => {

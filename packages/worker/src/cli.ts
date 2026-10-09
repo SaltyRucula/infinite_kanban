@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import readline from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { stdin as input, stdout as output } from 'node:process';
-import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import type { AgentType, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import {
   isValidAgentType,
   MAX_DESCRIPTION_LENGTH,
@@ -516,16 +516,99 @@ async function run(): Promise<void> {
   }
 }
 
+type A2AExecution = { readonly abort: () => Promise<void> };
+
+function a2aAgentTypes(value: string | undefined): AgentType[] {
+  const supplied = value?.trim();
+  if (!supplied) {
+    throw new Error('a2a-serve requires --agent-types so its Agent Card does not advertise unsupported providers');
+  }
+  const agentTypes = supplied
+    .split(',')
+    .map((agentType) => agentType.trim())
+    .filter(isValidAgentType);
+  if (agentTypes.length === 0) {
+    throw new Error('agent-types must include at least one supported provider');
+  }
+  return [...new Set(agentTypes)];
+}
+
+/** Run the worker as a direct A2A server instead of the legacy poll loop. */
+export async function serveA2A(args: CommandArgs): Promise<void> {
+  const { parseA2AListenOptions, startWorkerA2AServer } = await import('./a2a-server.js');
+  const workspaceSettings = await loadWorkspaceSettings();
+  const listen = parseA2AListenOptions(args);
+  const active = new Map<string, A2AExecution>();
+  const listener = await startWorkerA2AServer({
+    ...listen,
+    name: args.name?.trim() || os.hostname(),
+    version: '0.1.0',
+    agentTypes: a2aAgentTypes(args.agentTypes),
+    dispatch: async (task, a2aTaskId) => {
+      switch (workspaceSettings.runner.kind) {
+        case 'agent-sdk': {
+          const live = await startAgentSdkTask({
+            task,
+            workingDirectory: workspaceSettings.workspacePath,
+            sendEvent: async () => undefined,
+          });
+          active.set(a2aTaskId, { abort: () => live.abort() });
+          try {
+            const result = await live.done;
+            if (result.status !== 'complete') {
+              throw new Error(result.error ?? result.summary ?? 'A2A worker task did not complete');
+            }
+          } finally {
+            active.delete(a2aTaskId);
+          }
+          return;
+        }
+        case 'opencode-server': {
+          const live = await startOpenCodeServerTask({
+            task,
+            workspacePath: workspaceSettings.workspacePath,
+            runner: workspaceSettings.runner,
+            sendEvent: async () => undefined,
+          });
+          active.set(a2aTaskId, { abort: () => live.abort() });
+          try {
+            const result = await live.done;
+            if (result.status !== 'complete') {
+              throw new Error(result.error ?? result.summary ?? 'A2A worker task did not complete');
+            }
+          } finally {
+            active.delete(a2aTaskId);
+          }
+          return;
+        }
+        default:
+          return assertNever(workspaceSettings.runner);
+      }
+    },
+    cancel: async (a2aTaskId) => { await active.get(a2aTaskId)?.abort(); },
+  });
+
+  console.log(`worker A2A server listening at ${listener.baseUrl}`);
+  await new Promise<void>((resolve) => {
+    const stop = (): void => resolve();
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+  });
+  await Promise.all([...active.values()].map(({ abort }) => abort().catch(() => undefined)));
+  await listener.close();
+}
+
 export type CommandHandlers = {
   preflight?(): Promise<void>;
   register(args: CommandArgs, enrollmentCode?: string): Promise<void>;
   run(): Promise<void>;
+  serve(args: CommandArgs): Promise<void>;
 };
 
 export async function dispatchCommand(
   command: string | undefined,
   args: CommandArgs,
-  handlers: CommandHandlers = { preflight: runStartPreflight, register, run },
+  handlers: CommandHandlers = { preflight: runStartPreflight, register, run, serve: serveA2A },
 ): Promise<void> {
   if (command === 'start') {
     await handlers.preflight?.();
@@ -536,8 +619,10 @@ export async function dispatchCommand(
     await handlers.register(args);
   } else if (command === 'run') {
     await handlers.run();
+  } else if (command === 'a2a-serve') {
+    await handlers.serve(args);
   } else {
-    throw new Error('usage: agentboard-worker start --code <enrollment-url> | register|run [options]');
+    throw new Error('usage: agentboard-worker start --code <enrollment-url> | register|run|a2a-serve [options]');
   }
 }
 
