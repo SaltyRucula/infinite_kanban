@@ -57,6 +57,7 @@ const task: Task = {
 const projectContext = {
   goal: 'Ship a dependable board for distributed engineering teams.',
   context: 'This project replaces a spreadsheet workflow; favor safe incremental delivery.',
+  repoUrl: 'https://github.com/acme/board.git',
 };
 
 class FakeTaskRepository implements TaskRepository {
@@ -278,7 +279,7 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal(assignmentsResponse.status, 200);
     const assignments = await assignmentsResponse.json() as { tasks: readonly Record<string, unknown>[] };
     assert.deepEqual(Object.keys(assignments.tasks[0] ?? {}).sort(), [
-      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
+      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'repoUrl', 'timeoutMinutes', 'title', 'useWorktree',
     ]);
     assert.deepEqual(assignments.tasks[0]?.labels, ['backend', 'urgent']);
     assert.equal(assignments.tasks[0]?.agentPreference, 'fast-coder');
@@ -293,7 +294,7 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal(claimResponse.status, 200);
     const claim = await claimResponse.json() as { task: Record<string, unknown> };
     assert.deepEqual(Object.keys(claim.task).sort(), [
-      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
+      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'repoUrl', 'timeoutMinutes', 'title', 'useWorktree',
     ]);
     assert.equal('repoPath' in claim.task, false);
     assert.equal('worktreePath' in claim.task, false);
@@ -307,7 +308,7 @@ test('worker assignments and claim responses contain only story handoff fields',
     assert.equal(completionResponse.status, 200);
     const completion = await completionResponse.json() as { task: Record<string, unknown> };
     assert.deepEqual(Object.keys(completion.task).sort(), [
-      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'timeoutMinutes', 'title', 'useWorktree',
+      'agentPreference', 'agentType', 'baseBranch', 'branchName', 'description', 'id', 'labels', 'priority', 'repoUrl', 'timeoutMinutes', 'title', 'useWorktree',
     ]);
     assert.equal('repoPath' in completion.task, false);
     assert.equal('worktreePath' in completion.task, false);
@@ -326,6 +327,12 @@ test('WorkerTaskAssignment has an allowlisted, secret-free handoff contract', ()
   assert.deepEqual(Object.keys(assignment).sort(), [...WORKER_TASK_ASSIGNMENT_KEYS].sort());
   assert.equal(WORKER_TASK_ASSIGNMENT_KEYS.some((key) => /path|secret|token|key/i.test(key)), false);
   assert.deepEqual(assignment.project, projectContext);
+  assert.equal(assignment.repoUrl, 'https://github.com/acme/board');
+});
+
+test('worker handoffs never turn a board-host repository path into repository identity', () => {
+  const assignment = toWorkerTaskAssignment(task, { ...projectContext, repoUrl: '/private/board-host-checkout' });
+  assert.equal(assignment.repoUrl, undefined);
 });
 
 test('worker can register a task OpenCode session link and poll queued commands', async () => {

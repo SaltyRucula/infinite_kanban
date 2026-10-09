@@ -9,6 +9,7 @@ const assignment: WorkerTaskAssignment = {
   title: 'Add rate limiting',
   description: 'Rate limit the worker event endpoint.',
   priority: 'high',
+  repoUrl: 'https://github.com/acme/board',
   agentType: 'opencode',
   branchName: 'agent/rate-limit',
   baseBranch: 'main',
@@ -33,6 +34,7 @@ test('the message carries a text prompt for agents that only read text', () => {
   assert.match(prompt, /Add rate limiting/);
   assert.match(prompt, /Rate limit the worker event endpoint/);
   assert.match(prompt, /Project goal: Keep the board responsive/);
+  assert.match(prompt, /Repository: https:\/\/github.com\/acme\/board/);
   assert.equal(parts[1]?.content?.$case, 'data');
 });
 

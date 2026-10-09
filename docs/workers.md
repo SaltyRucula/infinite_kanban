@@ -70,11 +70,28 @@ The `--agent` option is optional for `opencode-server` and defaults to `build`.
 ## How a worker runs a task
 
 1. The worker polls for assigned tasks that were requested to run, then claims one with a short, renewable lease.
-2. It runs the agent in its configured workspace and uploads events for the board to stream live.
+2. For a project with a portable repository URL, it resolves that identity to its own checkout before starting the agent; board-host paths never leave the board. Legacy tasks without a repository URL still use the configured workspace.
 3. While the task runs, it polls for follow-up messages, clarification answers, and cancellation commands.
 4. It reports `complete` or `failed` and releases the task. A follow-up to a finished worker task queues a fresh run.
 
 If a worker stops heartbeating, its lease expires and the server marks the task failed so it can be retried.
+
+### Repository-aware workspaces
+
+`workspace.json` may map portable Git repository identities to local checkouts. The keys accept HTTPS, SSH, or `git@host:path` forms; the worker normalizes them before matching. On a mapping hit it fetches the configured checkout. With `cloneRoot`, an unmapped repository is cloned under a stable `host/owner/repository` directory instead.
+
+```json
+{
+  "workspacePath": "/home/me/projects",
+  "repositoryMappings": {
+    "github.com/saltyrucula/infinite_kanban": "/home/me/projects/infinite_kanban"
+  },
+  "cloneRoot": "/home/me/agent-clones",
+  "runner": { "kind": "agent-sdk" }
+}
+```
+
+Set either `repositoryMappings`, `cloneRoot`, or both. Do not put a board-host path in a task description or worker configuration shared with another machine.
 
 ## Docker
 

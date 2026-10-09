@@ -619,7 +619,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       const { broadcast } = await import('../websocket.js');
       broadcast({ type: 'agent_event', payload: event });
       broadcastTaskUpdate(parked);
-      res.json({ task: toWorkerTaskAssignment(parked) });
+      res.json({ task: toWorkerTaskAssignment(parked, await projects?.getById(parked.projectId)) });
       return;
     }
 
@@ -650,7 +650,7 @@ export function createWorkersRouter(tasks: TaskRepository, workers: WorkerReposi
       ? await settleReviewRun(tasks, completed, req.body.status, reviewVerdict)
       : completed;
     broadcastTaskUpdate(settled);
-    res.json({ task: toWorkerTaskAssignment(settled) });
+    res.json({ task: toWorkerTaskAssignment(settled, await projects?.getById(settled.projectId)) });
   }));
 
   router.get('/usage', asyncHandler(async (_req: Request, res: Response) => {
