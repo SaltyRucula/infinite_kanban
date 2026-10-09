@@ -3,7 +3,7 @@ import http from 'node:http';
 import express from 'express';
 import test from 'node:test';
 import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
-import { createWorkerA2ARouter } from '../src/a2a-server.js';
+import { createWorkerA2ARouter, startWorkerA2AServer } from '../src/a2a-server.js';
 
 function assignmentMessage(assignment: Record<string, unknown>, messageId: string): Record<string, unknown> {
   return {
@@ -93,4 +93,24 @@ test('worker A2A server refuses a board assignment carrying a local path', async
     assert.match(body.error?.message ?? '', /unexpected assignment fields: repoPath/);
     assert.deepEqual(received, []);
   });
+});
+
+test('worker A2A listener binds the requested loopback address and serves its card', async () => {
+  const listener = await startWorkerA2AServer({
+    host: '127.0.0.1',
+    port: 0,
+    name: 'Loopback worker',
+    version: '0.1.0',
+    agentTypes: ['codex'],
+    dispatch: async () => undefined,
+  });
+  try {
+    assert.match(listener.baseUrl, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const response = await fetch(`${listener.baseUrl}/.well-known/agent-card.json`);
+    assert.equal(response.status, 200);
+    const card = await response.json() as { supportedInterfaces: Array<{ url: string }> };
+    assert.equal(card.supportedInterfaces[0]?.url, `${listener.baseUrl}/a2a/v1`);
+  } finally {
+    await listener.close();
+  }
 });
