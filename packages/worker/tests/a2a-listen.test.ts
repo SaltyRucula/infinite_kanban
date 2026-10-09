@@ -11,6 +11,13 @@ test('A2A listener options default to loopback and reject invalid ports', () => 
 test('A2A listener options reject URL-shaped hosts before binding', () => {
   assert.throws(
     () => parseA2AListenOptions({ host: 'http://0.0.0.0' }),
-    /host must be a hostname or IP address without a URL scheme/,
+    /host must be a hostname or IP address without a URL scheme or port/,
+  );
+});
+
+test('A2A listener options reject hosts with an embedded port', () => {
+  assert.throws(
+    () => parseA2AListenOptions({ host: 'worker.example.test:8080' }),
+    /host must be a hostname or IP address without a URL scheme or port/,
   );
 });
