@@ -67,6 +67,20 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     && typeof req.body?.enrollmentCode === 'string'
     && req.body.enrollmentCode.trim().length > 0;
 
+  // A deployment with no API_KEY and no SERVICE_TOKENS is open by choice: its
+  // access boundary is the network, not this middleware. Such a request is
+  // still given a principal, because routes that record *who* owns something
+  // (worker enrollment codes, and the worker rows they create) need an owner
+  // id. Without it those routes answer 401 on a deployment where every other
+  // endpoint is open — leaving no way to enrol a worker at all.
+  //
+  // The kind is deliberately not 'service': service principals are scoped to
+  // the workers they own, while an open deployment has a single operator who
+  // should see everything.
+  if (!hasLegacyKey && serviceCredentials.length === 0 && !auth.authenticated) {
+    res.locals.principal = { id: 'open-deployment', kind: 'open-deployment' };
+  }
+
   if (req.path.startsWith('/workers/me')) { next(); return; }
 
   // An enrollment code is the credential for a newly bootstrapped worker.
