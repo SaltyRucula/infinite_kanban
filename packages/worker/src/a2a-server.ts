@@ -1,15 +1,15 @@
 import http from 'node:http';
 import express, { type Router } from 'express';
-import { Role, TaskState, type AgentCard, type Message, type Task } from '@a2a-js/sdk';
+import { Role, TaskState, type Message, type Task } from '@a2a-js/sdk';
 import { RequestMalformedError } from '@a2a-js/sdk/errors';
 import { AgentEvent, DefaultRequestHandler, InMemoryTaskStore, type AgentExecutor, type ExecutionEventBus, type RequestContext } from '@a2a-js/sdk/server';
 import { agentCardHandler, jsonRpcHandler, restHandler, UserBuilder } from '@a2a-js/sdk/server/express';
+import { BOARD_A2A_BASE_PATH, workerAgentCard } from '@ai-agent-board/a2a/cards.js';
+import { EXT_ASSIGNMENT } from '@ai-agent-board/a2a/extension.js';
 import type { AgentType, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { parseA2AListenOptions, type A2AListenOptions } from './a2a-listen.js';
 
-const A2A_BASE_PATH = '/a2a/v1';
 const AGENT_CARD_PATH = '/.well-known/agent-card.json';
-const ASSIGNMENT_EXTENSION = 'https://github.com/SaltyRucula/infinite_kanban/a2a/board/v1#assignment';
 const ASSIGNMENT_KEYS = new Set([
   'id', 'title', 'description', 'priority', 'agentType', 'branchName', 'baseBranch',
   'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference', 'resume', 'mode',
@@ -22,6 +22,8 @@ export interface WorkerA2ARouterOptions {
   readonly name: string;
   readonly version: string;
   readonly agentTypes: readonly AgentType[];
+  readonly acceptedProjectIds?: readonly string[];
+  readonly acceptedLabels?: readonly string[];
   readonly dispatch: (assignment: WorkerTaskAssignment) => Promise<void>;
   readonly cancel?: (taskId: string) => Promise<void>;
 }
@@ -31,7 +33,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function assignmentFromMessage(message: Message): WorkerTaskAssignment {
-  const candidate = message.metadata?.[ASSIGNMENT_EXTENSION]
+  const candidate = message.metadata?.[EXT_ASSIGNMENT]
     ?? message.parts.find((part) => part.content?.$case === 'data')?.content?.value;
   if (!isRecord(candidate)) throw new RequestMalformedError('no board assignment payload found in message');
   const unknown = Object.keys(candidate).filter((key) => !ASSIGNMENT_KEYS.has(key));
@@ -69,35 +71,6 @@ function completedTask(taskId: string, contextId: string, messageId: string): Ta
   };
 }
 
-function workerCard(options: WorkerA2ARouterOptions): AgentCard {
-  const origin = options.baseUrl.replace(/\/$/, '');
-  return {
-    name: options.name,
-    description: `Infinite Kanban worker running ${options.agentTypes.join(', ') || 'no'} agent(s).`,
-    supportedInterfaces: [{ url: `${origin}${A2A_BASE_PATH}`, protocolBinding: 'JSONRPC', tenant: '', protocolVersion: '1.0' }],
-    provider: { organization: 'Infinite Kanban', url: origin },
-    version: options.version,
-    documentationUrl: undefined,
-    capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false, extensions: [] },
-    securitySchemes: {},
-    securityRequirements: [],
-    defaultInputModes: ['text/plain', 'application/json'],
-    defaultOutputModes: ['text/plain', 'application/json'],
-    skills: options.agentTypes.map((agentType) => ({
-      id: `run-${agentType}`,
-      name: `Run a task with ${agentType}`,
-      description: `Execute a board task with ${agentType}.`,
-      tags: ['code', agentType],
-      examples: [],
-      inputModes: [],
-      outputModes: [],
-      securityRequirements: [],
-    })),
-    signatures: [],
-    iconUrl: undefined,
-  };
-}
-
 class WorkerAgentExecutor implements AgentExecutor {
   constructor(private readonly options: WorkerA2ARouterOptions) {}
 
@@ -122,14 +95,24 @@ class WorkerAgentExecutor implements AgentExecutor {
 /** Mount a worker's JSON-RPC A2A endpoint and public Agent Card. */
 export function createWorkerA2ARouter(options: WorkerA2ARouterOptions): Router {
   const requestHandler = new DefaultRequestHandler(
-    workerCard(options),
+    workerAgentCard({
+      baseUrl: options.baseUrl,
+      name: options.name,
+      version: options.version,
+      agentTypes: options.agentTypes,
+      authRequired: false,
+      consent: {
+        acceptedProjectIds: options.acceptedProjectIds ? [...options.acceptedProjectIds] : undefined,
+        acceptedLabels: options.acceptedLabels ? [...options.acceptedLabels] : undefined,
+      },
+    }),
     new InMemoryTaskStore(),
     new WorkerAgentExecutor(options),
   );
   const router = express.Router();
   router.use(AGENT_CARD_PATH, agentCardHandler({ agentCardProvider: requestHandler }));
-  router.use(A2A_BASE_PATH, jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
-  router.use(A2A_BASE_PATH, restHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
+  router.use(BOARD_A2A_BASE_PATH, jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
+  router.use(BOARD_A2A_BASE_PATH, restHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
   return router;
 }
 
