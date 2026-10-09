@@ -13,6 +13,8 @@ const ASSIGNMENT_KEYS = new Set([
   'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference', 'resume', 'mode',
 ]);
 
+export { parseA2AListenOptions, type A2AListenOptions } from './a2a-listen.js';
+
 export interface WorkerA2ARouterOptions {
   readonly baseUrl: string;
   readonly name: string;
