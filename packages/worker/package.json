@@ -20,11 +20,13 @@
     "postpack": "node scripts/cleanup-staged-dependencies.cjs"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^1.3.0",
     "@ai-agent-board/shared": "*",
     "@ai-agent-board/opencode-compat": "*",
     "@codewithdan/agent-sdk-core": "^0.7.0",
-    "@opencode-ai/sdk": "^1.17.7"
-    ,"uuid": "^11.0.0"
+    "@opencode-ai/sdk": "^1.17.7",
+    "express": "^4.22.2",
+    "uuid": "^11.0.0"
   },
   "bundleDependencies": [
     "@ai-agent-board/opencode-compat",
