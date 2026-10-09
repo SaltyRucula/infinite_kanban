@@ -7,3 +7,10 @@ test('A2A listener options default to loopback and reject invalid ports', () => 
   assert.deepEqual(parseA2AListenOptions({ host: '127.0.0.1', port: '4567' }), { host: '127.0.0.1', port: 4567 });
   assert.throws(() => parseA2AListenOptions({ port: '70000' }), /port must be an integer between 0 and 65535/);
 });
+
+test('A2A listener options reject URL-shaped hosts before binding', () => {
+  assert.throws(
+    () => parseA2AListenOptions({ host: 'http://0.0.0.0' }),
+    /host must be a hostname or IP address without a URL scheme/,
+  );
+});
