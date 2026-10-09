@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, deleteTaskViaAPI, prepareTestRepo, waitForBoard } from './helpers';
+import { API, createTaskViaA2A, deleteTaskViaAPI, prepareTestRepo, waitForBoard } from './helpers';
 
 async function waitForTaskState(
   request: { get(url: string): Promise<{ status(): number; json(): Promise<any> }> },
@@ -52,21 +52,15 @@ test.describe('Clarification reconnect flow', () => {
       expect(projectResponse.status()).toBe(201);
       projectId = String((await projectResponse.json()).id);
 
-      // Orchestrated tasks run on the board host's in-process agent manager,
-      // which the E2E harness backs with the deterministic clarification
-      // provider (worker-assigned tasks are executed by remote workers).
-      const orchestration = await request.post(`${API}/api/orchestrations`, {
-        headers: { 'Idempotency-Key': `clarification-reconnect-${stamp}` },
-        data: {
-          project: projectId,
-          agent: 'opencode',
-          title,
-          description: 'e2e clarification reconnect flow',
-          autoStart: true,
-        },
+      const task = await createTaskViaA2A(request, {
+        idempotencyKey: `clarification-reconnect-${stamp}`,
+        project: projectId,
+        agentType: 'opencode',
+        title,
+        description: 'e2e clarification reconnect flow',
+        autoStart: true,
       });
-      expect(orchestration.status()).toBe(201);
-      taskId = String((await orchestration.json()).task.id);
+      taskId = String(task.id);
 
       await waitForTaskState(
         request,

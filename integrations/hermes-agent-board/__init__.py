@@ -61,6 +61,45 @@ def _request(method: str, path: str, body: dict[str, Any] | None = None, idempot
         raise RuntimeError(f"Agent Board unavailable: {exc.reason}") from exc
 
 
+def _a2a_call(method: str, params: dict[str, Any], request_id: str) -> Any:
+    token = _token()
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "A2A-Version": "1.0",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+    req = urllib.request.Request(
+        f"{_base_url()}/a2a/v1",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            result = json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Agent Board HTTP {exc.code}: {raw or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Agent Board unavailable: {exc.reason}") from exc
+    if not isinstance(result, dict):
+        raise RuntimeError("Agent Board returned an invalid A2A response")
+    if "error" in result:
+        error = result["error"]
+        raise RuntimeError(f"Agent Board A2A error: {error}")
+    if "result" not in result:
+        raise RuntimeError("Agent Board A2A response is missing result")
+    return result["result"]
+
+
+def _a2a_message_id(*values: object) -> str:
+    seed = json.dumps(values, sort_keys=True, default=str)
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
 def _result(callable_):
     try:
         return json.dumps({"success": True, "data": callable_()}, ensure_ascii=False)
@@ -111,26 +150,61 @@ def _route_task(params: dict[str, Any], task_id: str = "", session_id: str = "",
     if not stable:
         seed = json.dumps({"session": session_id, "origin": origin, "body": body}, sort_keys=True, default=str)
         stable = hashlib.sha256(seed.encode("utf-8")).hexdigest()
-    return _result(lambda: _request("POST", "/api/orchestrations", body, str(stable)))
+    return _result(lambda: _a2a_call(
+        "SendMessage",
+        {
+            "message": {
+                "messageId": str(stable),
+                "role": "ROLE_USER",
+                "parts": [{"text": body["title"] + (f"\n\n{body['description']}" if body["description"] else "")}],
+                "metadata": body,
+            },
+        },
+        str(stable),
+    ))
 
 
 def _get_task(params: dict[str, Any], **_: Any) -> str:
-    task_id = urllib.parse.quote(str(params.get("task_id", "")), safe="")
-    return _result(lambda: _request("GET", f"/api/orchestrations/{task_id}"))
+    task_id = str(params.get("task_id", ""))
+    return _result(lambda: _a2a_call("GetTask", {"id": task_id}, _a2a_message_id("get", task_id)))
 
 
 def _send_message(params: dict[str, Any], **_: Any) -> str:
-    task_id = urllib.parse.quote(str(params.get("task_id", "")), safe="")
-    body = {"message": params.get("message", "")}
-    return _result(lambda: _request("POST", f"/api/orchestrations/{task_id}/message", body))
+    task_id = str(params.get("task_id", ""))
+    message = str(params.get("message", ""))
+    request_id = _a2a_message_id("message", task_id, message)
+    return _result(lambda: _a2a_call(
+        "SendMessage",
+        {"message": {
+            "messageId": request_id,
+            "taskId": task_id,
+            "contextId": f"task-{task_id}",
+            "role": "ROLE_USER",
+            "parts": [{"text": message}],
+        }},
+        request_id,
+    ))
 
 
 def _retry_task(params: dict[str, Any], **_: Any) -> str:
-    task_id = urllib.parse.quote(str(params.get("task_id", "")), safe="")
-    body: dict[str, Any] = {}
-    if params.get("timeout_minutes") is not None:
-        body["timeoutMinutes"] = params["timeout_minutes"]
-    return _result(lambda: _request("POST", f"/api/orchestrations/{task_id}/retry", body))
+    task_id = str(params.get("task_id", ""))
+    timeout_minutes = params.get("timeout_minutes")
+    request_id = _a2a_message_id("retry", task_id, timeout_minutes)
+    metadata: dict[str, Any] = {"referenceTaskIds": [task_id]}
+    if timeout_minutes is not None:
+        metadata["timeoutMinutes"] = timeout_minutes
+    return _result(lambda: _a2a_call(
+        "SendMessage",
+        {"message": {
+            "messageId": request_id,
+            "taskId": task_id,
+            "contextId": f"task-{task_id}",
+            "role": "ROLE_USER",
+            "parts": [{"text": "Retry this task."}],
+            "metadata": metadata,
+        }},
+        request_id,
+    ))
 
 
 _LIST_PROJECTS_SCHEMA = {

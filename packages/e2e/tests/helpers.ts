@@ -9,7 +9,12 @@ const TEST_SERVER_PORT = process.env.E2E_SERVER_PORT ?? '3002';
 export const API = `http://localhost:${TEST_SERVER_PORT}`;
 const DEFAULT_TEST_REPO_NAME = 'test-repo';
 export const E2E_WORKER_REGISTRATION_TOKEN = 'e2e-worker-registration-token';
+export const E2E_A2A_TOKEN = 'e2e-full-scope-token';
 export const workerRegistrationHeaders = { Authorization: `Bearer ${E2E_WORKER_REGISTRATION_TOKEN}` };
+const a2aHeaders = {
+  Authorization: `Bearer ${E2E_A2A_TOKEN}`,
+  'A2A-Version': '1.0',
+};
 
 type PrepareRepoOptions = {
   branch?: string;
@@ -117,11 +122,39 @@ export async function createTaskViaAPI(request: any, overrides: Record<string, a
   return res.json();
 }
 
+/** Create a task through the board's A2A JSON-RPC boundary. */
+export async function createTaskViaA2A(
+  request: any,
+  metadata: Record<string, any>,
+  text?: string,
+): Promise<any> {
+  const messageId = metadata.idempotencyKey || `e2e-a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const response = await request.post(`${API}/a2a/v1`, {
+    headers: { ...a2aHeaders, 'content-type': 'application/json' },
+    data: {
+      jsonrpc: '2.0',
+      id: messageId,
+      method: 'SendMessage',
+      params: {
+        message: {
+          messageId,
+          role: 'ROLE_USER',
+          parts: [{ text: text || `${metadata.title || 'Test Task'}\n\n${metadata.description || ''}` }],
+          metadata,
+        },
+      },
+    },
+  });
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(body.error).toBeFalsy();
+  return body.result.task;
+}
+
 /**
- * Start a task on the board host's in-process agent manager via the
- * orchestration API. Board tasks otherwise run on remote workers; the E2E
- * harness backs the in-process `opencode` agent with a deterministic
- * clarification provider (it asks "Which branch should I target?").
+ * Start a task on the board host's in-process agent manager through A2A.
+ * The E2E harness backs `opencode` with a deterministic clarification
+ * provider (it asks "Which branch should I target?").
  */
 export async function startInProcessRun(
   request: any,
@@ -135,12 +168,15 @@ export async function startInProcessRun(
   expect(projectRes.status()).toBe(201);
   const projectId = String((await projectRes.json()).id);
 
-  const runRes = await request.post(`${API}/api/orchestrations`, {
-    headers: { 'Idempotency-Key': `in-process-${stamp}` },
-    data: { project: projectId, agent: 'opencode', title, description: title, autoStart: true },
+  const task = await createTaskViaA2A(request, {
+    idempotencyKey: `in-process-${stamp}`,
+    project: projectId,
+    agentType: 'opencode',
+    title,
+    description: title,
+    autoStart: true,
   });
-  expect(runRes.status()).toBe(201);
-  const taskId = String((await runRes.json()).task.id);
+  const taskId = String(task.id);
 
   return {
     taskId,
