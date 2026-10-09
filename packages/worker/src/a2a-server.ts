@@ -1,9 +1,11 @@
+import http from 'node:http';
 import express, { type Router } from 'express';
 import { Role, TaskState, type AgentCard, type Message, type Task } from '@a2a-js/sdk';
 import { RequestMalformedError } from '@a2a-js/sdk/errors';
 import { AgentEvent, DefaultRequestHandler, InMemoryTaskStore, type AgentExecutor, type ExecutionEventBus, type RequestContext } from '@a2a-js/sdk/server';
 import { agentCardHandler, jsonRpcHandler, restHandler, UserBuilder } from '@a2a-js/sdk/server/express';
 import type { AgentType, WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
+import { parseA2AListenOptions, type A2AListenOptions } from './a2a-listen.js';
 
 const A2A_BASE_PATH = '/a2a/v1';
 const AGENT_CARD_PATH = '/.well-known/agent-card.json';
@@ -13,7 +15,7 @@ const ASSIGNMENT_KEYS = new Set([
   'useWorktree', 'timeoutMinutes', 'labels', 'project', 'agentPreference', 'resume', 'mode',
 ]);
 
-export { parseA2AListenOptions, type A2AListenOptions } from './a2a-listen.js';
+export { parseA2AListenOptions, type A2AListenOptions };
 
 export interface WorkerA2ARouterOptions {
   readonly baseUrl: string;
@@ -129,4 +131,37 @@ export function createWorkerA2ARouter(options: WorkerA2ARouterOptions): Router {
   router.use(A2A_BASE_PATH, jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
   router.use(A2A_BASE_PATH, restHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
   return router;
+}
+
+export type StartWorkerA2AServerOptions = Omit<WorkerA2ARouterOptions, 'baseUrl'> & A2AListenOptions;
+
+export interface RunningWorkerA2AServer {
+  readonly baseUrl: string;
+  close(): Promise<void>;
+}
+
+/** Start a worker's A2A listener and advertise its actual bound loopback URL. */
+export async function startWorkerA2AServer(options: StartWorkerA2AServerOptions): Promise<RunningWorkerA2AServer> {
+  const app = express();
+  app.use(express.json());
+  const server = http.createServer(app);
+  await new Promise<void>((resolve, reject) => {
+    const rejectListen = (error: Error): void => reject(error);
+    server.once('error', rejectListen);
+    server.listen(options.port, options.host, () => {
+      server.off('error', rejectListen);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    throw new Error('worker A2A listener did not bind a TCP address');
+  }
+  const baseUrl = `http://${options.host}:${address.port}`;
+  app.use(createWorkerA2ARouter({ ...options, baseUrl }));
+  return {
+    baseUrl,
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
 }
