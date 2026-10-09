@@ -29,7 +29,12 @@ function createFakes() {
   const stopped: string[] = [];
   const taskRepo = {
     getById: async (id: string) => tasks.get(id),
-    getAll: async () => [...tasks.values()],
+    // Mirrors the real repository: project-scoped, defaulting to `default`.
+    // A store that calls this without a project id sees nothing, which is the
+    // bug this fake exists to catch.
+    getAll: async (includeArchived = false, projectId = 'default') => [...tasks.values()]
+      .filter((task) => task.projectId === projectId)
+      .filter((task) => includeArchived || !task.archived),
     createIdempotent: async (task: Task) => {
       const existing = [...tasks.values()].find((candidate) => candidate.externalKey === task.externalKey
         && candidate.externalSource === task.externalSource);
@@ -53,6 +58,7 @@ function createFakes() {
       ? [project()]
       : reference === 'ambiguous' ? [project(), { ...project(), id: 'project-2' }] : []),
     getById: async (id: string) => (id === 'project-1' ? project() : undefined),
+    getAllWithCounts: async () => [project()],
   } as unknown as Parameters<typeof createA2ARouter>[0]['projectRepo'];
 
   const agents = {
@@ -184,8 +190,11 @@ test('GetTask, ListTasks and CancelTask operate on the board task', async () => 
 
     const listed = await rpc('ListTasks', {});
     const list = listed.result as { tasks: Json[]; totalSize: number; nextPageToken: string };
+    // The board's repository is project-scoped and defaults to the `default`
+    // project, so a store that lists without walking projects reports nothing.
     assert.equal(list.totalSize, 1);
     assert.equal(list.tasks.length, 1);
+    assert.equal((list.tasks[0] as Json).id, taskId);
     assert.equal(list.nextPageToken, '');
 
     const canceled = await rpc('CancelTask', { id: taskId });

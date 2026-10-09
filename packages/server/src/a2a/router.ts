@@ -6,6 +6,7 @@ import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { AgentManager } from '../services/agent-manager.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { getAllTasksAcrossProjects } from '../startup-recovery.js';
 import { cancelBoardTask } from './cancel.js';
 import { CancellationLog } from './cancellations.js';
 import { BoardAgentExecutor } from './executor.js';
@@ -91,6 +92,7 @@ export function createA2ARouter(options: A2ARouterOptions): Router {
       deepLink,
       cancellations,
       onCancel: async (taskId) => { await cancelBoardTask(cancelDeps, taskId); },
+      listAllTasks: () => getAllTasksAcrossProjects(options.projectRepo, options.taskRepo),
     }),
     new BoardAgentExecutor({
       taskRepo: options.taskRepo,
