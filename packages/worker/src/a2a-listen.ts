@@ -9,6 +9,9 @@ export function parseA2AListenOptions(args: Readonly<Record<string, string>>): A
   if (host.includes('://') || host.includes(':') || /[/?#\s]/.test(host)) {
     throw new Error('host must be a hostname or IP address without a URL scheme or port');
   }
+  if (host === '0.0.0.0') {
+    throw new Error('host must be a specific hostname or IP address, not an unspecified bind address');
+  }
   const suppliedPort = args.port?.trim();
   const port = suppliedPort === undefined || suppliedPort === '' ? 0 : Number.parseInt(suppliedPort, 10);
   if (!Number.isInteger(port) || port < 0 || port > 65535 || (suppliedPort !== undefined && suppliedPort !== '' && String(port) !== suppliedPort)) {
