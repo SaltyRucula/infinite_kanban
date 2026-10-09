@@ -2,7 +2,7 @@ import {
   isAllowedA2AUrl,
   normalizeA2AAgentCard,
   type NormalizedA2AAgentCard,
-} from './a2a-agent-card.js';
+} from '@ai-agent-board/a2a/cards.js';
 
 export type A2AAgentCardFetch = (
   input: string,
