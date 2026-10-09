@@ -1,5 +1,5 @@
 import type { WorkflowAction, WorkflowTicket } from './workflow-policy.js';
-import { isAllowedA2AUrl, normalizeProtocolVersion, type A2AProtocolVersion } from './a2a-agent-card.js';
+import { isAllowedA2AUrl, normalizeProtocolVersion, type A2AProtocolVersion } from '@ai-agent-board/a2a/cards.js';
 
 /**
  * The wire format differs between A2A versions in ways that are easy to get

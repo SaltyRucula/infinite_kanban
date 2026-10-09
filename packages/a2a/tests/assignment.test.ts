@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { WORKER_TASK_ASSIGNMENT_KEYS, type WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { assignmentFromMessage, assignmentToMessage, assignmentToParts } from '../src/assignment.ts';
-import { boardAgentCard, workerAgentCard } from '../src/cards.ts';
+import { boardAgentCard, normalizeA2AAgentCard, workerAgentCard } from '../src/cards.ts';
 
 const assignment: WorkerTaskAssignment = {
   id: 'task-1',
@@ -117,6 +117,31 @@ test('an open board declares no security schemes', () => {
   const card = boardAgentCard({ baseUrl: 'http://localhost:8080', version: '0.1.0', authRequired: false });
   assert.deepEqual(card.securitySchemes, {});
   assert.deepEqual(card.securityRequirements, []);
+});
+
+test('normalizes a supported JSON-RPC Agent Card for the trusted directory', () => {
+  assert.deepEqual(normalizeA2AAgentCard({
+    name: 'Implementation Agent',
+    description: 'Works on board tickets.',
+    version: '1.0.0',
+    supportedInterfaces: [{
+      url: 'https://agents.example.test/a2a',
+      protocolBinding: 'JSONRPC',
+      protocolVersion: '1.0.3',
+    }],
+    skills: [{
+      id: 'implementation',
+      name: 'Implementation',
+      tags: ['coding', 'typescript'],
+    }],
+  }), {
+    name: 'Implementation Agent',
+    description: 'Works on board tickets.',
+    version: '1.0.0',
+    endpoint: 'https://agents.example.test/a2a',
+    protocolVersion: '1.0',
+    skills: [{ id: 'implementation', name: 'Implementation', tags: ['coding', 'typescript'] }],
+  });
 });
 
 test('a worker card exposes one skill per agent type and carries its consent', () => {
