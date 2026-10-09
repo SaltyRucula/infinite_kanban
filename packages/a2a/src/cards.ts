@@ -37,11 +37,50 @@ function requiredString(value: unknown, field: string): string {
   return value.trim();
 }
 
+/**
+ * Which Agent Card and endpoint URLs the board will talk to.
+ *
+ * A2A agents in this product run on people's own machines on a private
+ * network, so plain `http` has to be allowed there: requiring TLS would mean
+ * every laptop needs a certificate or a tunnel before it can join. The rule is
+ * `https` anywhere, `http` only on addresses that are not routable from the
+ * public internet — loopback, RFC 1918, link-local, IPv6 unique-local, and
+ * `.local` mDNS names.
+ *
+ * Plaintext on a LAN is still plaintext: anything sent to such an agent is
+ * readable on that network, so credentials must never travel in A2A payloads.
+ * The board's task handoffs already exclude secrets and host paths.
+ */
 export function isAllowedA2AUrl(url: URL): boolean {
   if (url.protocol === 'https:') return true;
   if (url.protocol !== 'http:') return false;
-  const hostname = url.hostname.toLowerCase();
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  return isPrivateHost(url.hostname);
+}
+
+function isPrivateHost(rawHostname: string): boolean {
+  const hostname = rawHostname.toLowerCase().replace(/^\[|\]$/g, '');
+
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
+  // mDNS names on the local link, e.g. joses-macbook.local
+  if (hostname === 'local' || hostname.endsWith('.local')) return true;
+
+  const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const octets = ipv4.slice(1).map(Number);
+    if (octets.some((octet) => octet > 255)) return false;
+    const [first, second] = octets;
+    if (first === 127) return true;                             // 127.0.0.0/8 loopback
+    if (first === 10) return true;                              // 10.0.0.0/8
+    if (first === 172 && second >= 16 && second <= 31) return true; // 172.16.0.0/12
+    if (first === 192 && second === 168) return true;           // 192.168.0.0/16
+    if (first === 169 && second === 254) return true;           // 169.254.0.0/16 link-local
+    return false;
+  }
+
+  if (hostname === '::1') return true;                     // IPv6 loopback
+  if (/^f[cd][0-9a-f]{2}:/.test(hostname)) return true;    // fc00::/7 unique local
+  if (/^fe[89ab][0-9a-f]:/.test(hostname)) return true;    // fe80::/10 link-local
+  return false;
 }
 
 export function isA2AProtocolVersion(value: unknown): value is A2AProtocolVersion {
