@@ -27,6 +27,7 @@ function createFakes() {
   const tasks = new Map<string, Task>();
   const started: string[] = [];
   const stopped: string[] = [];
+  const resumed: Array<{ taskId: string; requestId: string; sessionId: string; answer: string }> = [];
   const taskRepo = {
     getById: async (id: string) => tasks.get(id),
     // Mirrors the real repository: project-scoped, defaulting to `default`.
@@ -64,11 +65,15 @@ function createFakes() {
   const agents = {
     getAvailableAgents: () => [{ name: 'opencode', displayName: 'OpenCode', available: true }],
     sendMessage: async (taskId: string) => tasks.get(taskId)?.agentStatus === 'executing',
+    resumeClarification: async (taskId: string, input: { requestId: string; sessionId: string; answer: string }) => {
+      resumed.push({ taskId, ...input });
+      return { ok: true, code: 'resumed', message: 'clarification accepted' };
+    },
     stopAgent: async (taskId: string) => { stopped.push(taskId); return true; },
     isRunning: () => false,
   } as unknown as Parameters<typeof createA2ARouter>[0]['agents'];
 
-  return { tasks, started, stopped, taskRepo, projectRepo, agents };
+  return { tasks, started, stopped, resumed, taskRepo, projectRepo, agents };
 }
 
 async function withBoard(
@@ -170,6 +175,52 @@ test('a replayed messageId returns the same task instead of duplicating work', a
     const second = await rpc('SendMessage', params, 'rpc-2');
     assert.equal(((first.result as Json).task as Json).id, ((second.result as Json).task as Json).id);
     assert.equal(context.tasks.size, 1);
+  });
+});
+
+test('SendMessage resumes a board clarification on the same A2A task', async () => {
+  await withBoard(async ({ rpc, fakes: context }) => {
+    const created = await rpc('SendMessage', {
+      message: {
+        messageId: 'msg-clarification-create',
+        role: 'ROLE_USER',
+        parts: [{ text: 'Add rate limiting' }],
+        metadata: { project: 'board', autoStart: false },
+      },
+    });
+    const taskId = String(((created.result as Json).task as Json).id);
+    const pending = context.tasks.get(taskId);
+    assert.ok(pending);
+    context.tasks.set(taskId, {
+      ...pending,
+      agentStatus: 'awaiting_clarification',
+      columnId: 'pending',
+      clarificationRequest: {
+        requestId: 'question-1',
+        sessionId: 'session-1',
+        prompt: 'Which branch should I target?',
+        choices: ['main'],
+        timestamp: 2,
+      },
+    });
+
+    const resumed = await rpc('SendMessage', {
+      message: {
+        messageId: 'msg-clarification-answer',
+        taskId,
+        contextId: `task-${taskId}`,
+        role: 'ROLE_USER',
+        parts: [{ text: 'main' }],
+      },
+    });
+
+    assert.ok((resumed.result as Json).task, `resume failed: ${JSON.stringify(resumed)}`);
+    assert.deepEqual(context.resumed, [{
+      taskId,
+      requestId: 'question-1',
+      sessionId: 'session-1',
+      answer: 'main',
+    }]);
   });
 });
 

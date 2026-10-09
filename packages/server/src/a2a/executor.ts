@@ -113,6 +113,24 @@ export class BoardAgentExecutor implements AgentExecutor {
       .trim();
     if (!text) throw new RequestMalformedError('a follow-up message must contain text');
 
+    if (task.agentStatus === 'awaiting_clarification') {
+      const clarification = task.clarificationRequest;
+      if (!clarification) {
+        throw new UnsupportedOperationError(
+          `task ${task.id} is awaiting clarification but has no pending clarification request`,
+        );
+      }
+      const resumed = await this.agents.resumeClarification(task.id, {
+        requestId: clarification.requestId,
+        sessionId: clarification.sessionId,
+        answer: text,
+      });
+      if (!resumed.ok) throw new UnsupportedOperationError(resumed.message);
+      eventBus.publish(AgentEvent.task(this.project(await this.taskRepo.getById(task.id) ?? task)));
+      eventBus.finished();
+      return;
+    }
+
     const delivered = await this.agents.sendMessage(task.id, text);
     if (!delivered) {
       throw new UnsupportedOperationError(
