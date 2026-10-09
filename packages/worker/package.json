@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.3.0",
+    "@ai-agent-board/a2a": "*",
     "@ai-agent-board/shared": "*",
     "@ai-agent-board/opencode-compat": "*",
     "@codewithdan/agent-sdk-core": "^0.7.0",

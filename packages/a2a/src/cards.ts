@@ -290,7 +290,7 @@ export function workerAgentCard(options: WorkerCardOptions): AgentCard {
     version: options.version,
     documentationUrl: undefined,
     capabilities: {
-      streaming: true,
+      streaming: false,
       pushNotifications: false,
       extendedAgentCard: false,
       extensions: [

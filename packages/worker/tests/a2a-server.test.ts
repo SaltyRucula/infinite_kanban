@@ -27,6 +27,8 @@ async function withWorker(
     name: 'Build worker',
     version: '0.1.0',
     agentTypes: ['codex'],
+    acceptedProjectIds: ['project-a'],
+    acceptedLabels: ['backend'],
     dispatch: async (assignment) => { received.push(assignment); },
   }));
   const server = http.createServer(app);
@@ -44,9 +46,18 @@ test('worker A2A server publishes its card and dispatches an allowed SendMessage
   await withWorker(async ({ baseUrl, received }) => {
     const cardResponse = await fetch(`${baseUrl}/.well-known/agent-card.json`);
     assert.equal(cardResponse.status, 200);
-    const card = await cardResponse.json() as { name: string; supportedInterfaces: Array<{ url: string }> };
+    const card = await cardResponse.json() as {
+      name: string;
+      supportedInterfaces: Array<{ url: string }>;
+      capabilities?: { streaming?: boolean; extensions?: Array<{ params?: Record<string, unknown> }> };
+    };
     assert.equal(card.name, 'Build worker');
     assert.equal(card.supportedInterfaces[0]?.url, 'https://worker.example.test/a2a/v1');
+    assert.equal(card.capabilities?.streaming, false);
+    assert.deepEqual(card.capabilities?.extensions?.[0]?.params?.['https://github.com/SaltyRucula/infinite_kanban/a2a/board/v1#workerConsent'], {
+      acceptedProjectIds: ['project-a'],
+      acceptedLabels: ['backend'],
+    });
 
     const assignment: WorkerTaskAssignment = {
       id: 'task-1',
@@ -89,8 +100,8 @@ test('worker A2A server refuses a board assignment carrying a local path', async
         params: { message: assignmentMessage(assignment, 'assignment-unsafe') },
       }),
     });
-    const body = await response.json() as { error?: { message?: string } };
-    assert.match(body.error?.message ?? '', /unexpected assignment fields: repoPath/);
+    const body = await response.json() as { result?: { task?: { status?: { state?: string } } }; error?: { message?: string } };
+    assert.equal(body.result?.task?.status?.state, 'TASK_STATE_FAILED');
     assert.deepEqual(received, []);
   });
 });
