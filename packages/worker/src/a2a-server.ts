@@ -24,7 +24,7 @@ export interface WorkerA2ARouterOptions {
   readonly agentTypes: readonly AgentType[];
   readonly acceptedProjectIds?: readonly string[];
   readonly acceptedLabels?: readonly string[];
-  readonly dispatch: (assignment: WorkerTaskAssignment) => Promise<void>;
+  readonly dispatch: (assignment: WorkerTaskAssignment, a2aTaskId: string) => Promise<void>;
   readonly cancel?: (taskId: string) => Promise<void>;
 }
 
@@ -77,7 +77,7 @@ class WorkerAgentExecutor implements AgentExecutor {
   execute = async (request: RequestContext, events: ExecutionEventBus): Promise<void> => {
     if (request.task) throw new RequestMalformedError('worker task follow-ups are not supported yet');
     const assignment = assignmentFromMessage(request.userMessage);
-    await this.options.dispatch(assignment);
+    await this.options.dispatch(assignment, request.taskId);
     events.publish(AgentEvent.task(completedTask(request.taskId, request.contextId, `${request.taskId}-complete`)));
     events.finished();
   };
