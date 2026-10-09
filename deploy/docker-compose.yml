@@ -43,6 +43,10 @@ services:
       # touching the browser UI or requiring a client rebuild. Set in
       # deploy/.env; passed through only if non-empty there.
       SERVICE_TOKENS: ${SERVICE_TOKENS:-}
+      # Public origin peers reach this board on. The A2A Agent Card advertises
+      # it, so an unset value leaves peers with the container-internal bind
+      # address and makes the card unusable from outside.
+      AGENT_BOARD_PUBLIC_URL: ${AGENT_BOARD_PUBLIC_URL:-}
     volumes:
       - serverdata:/data
     depends_on:
