@@ -37,7 +37,7 @@ const child = spawn(isWindows ? 'npx tsx src/index.ts' : 'npx', isWindows ? [] :
     API_KEY: '',
     SERVICE_TOKENS: JSON.stringify([
       { token: 'e2e-worker-registration-token', scopes: ['workers:register'] },
-      { token: 'e2e-full-scope-token', scopes: ['projects:read', 'agents:read', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'] },
+      { token: 'e2e-full-scope-token', scopes: ['projects:read', 'agents:read', 'a2a:send', 'jira:import', 'workers:register', 'workers:manage'] },
     ]),
     ALLOWED_ORIGINS: `http://localhost:${clientPort}`,
     ALLOWED_REPO_ROOTS: allowedRepoRoots,

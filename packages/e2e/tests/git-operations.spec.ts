@@ -8,7 +8,7 @@ import path from 'path';
  * worktree cleanup, and worktree auto-cleanup after merge/PR.
  */
 
-import { API, cleanupTestPath, getTestRepoPath, git, prepareTestRepo } from './helpers';
+import { API, cleanupTestPath, createTaskViaA2A, getTestRepoPath, git, prepareTestRepo } from './helpers';
 
 function cleanRepo(repo: string) {
   try { git(['worktree', 'prune'], repo); } catch { /* */ }
@@ -82,12 +82,15 @@ async function createRepoTask(
   title: string,
   branchName: string,
 ): Promise<any> {
-  const res = await request.post(`${API}/api/orchestrations`, {
-    headers: { 'Idempotency-Key': `git-ops-${branchName}` },
-    data: { project: projectId, agent: 'opencode', title, branchName, baseBranch: 'main', autoStart: false },
+  return createTaskViaA2A(request, {
+    idempotencyKey: `git-ops-${branchName}`,
+    project: projectId,
+    agentType: 'opencode',
+    title,
+    branchName,
+    baseBranch: 'main',
+    autoStart: false,
   });
-  expect(res.status()).toBe(201);
-  return (await res.json()).task;
 }
 
 test.describe('Git Operations — Merge, PR, Worktree Cleanup', () => {

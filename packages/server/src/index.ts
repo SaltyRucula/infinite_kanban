@@ -14,7 +14,6 @@ import { createTemplateRouter } from './routes/templates.js';
 import { createGroupsRouter } from './routes/groups.js';
 import { createAttachmentsRouter } from './routes/attachments.js';
 import { createProjectsRouter } from './routes/projects.js';
-import { createOrchestrationsRouter } from './routes/orchestrations.js';
 import { createJiraRouter } from './routes/jira.js';
 import { createGitHubRouter } from './routes/github.js';
 import { createA2AAgentsRouter } from './routes/a2a-agents.js';
@@ -173,9 +172,6 @@ const agentManager = new AgentManager();
     boardVersion: BOARD_VERSION,
     publicUrl: process.env.AGENT_BOARD_PUBLIC_URL?.trim() || `http://${HOST}:${PORT}`,
   }));
-  // Superseded by the A2A endpoint above; removed once integrations and e2e
-  // coverage move over (#75).
-  app.use('/api/orchestrations', createOrchestrationsRouter(taskRepo, projectRepo, agentManager));
   app.use('/api/jira', createJiraRouter(projectRepo, jiraImportExecutor));
   app.use('/api/github', createGitHubRouter(projectRepo, taskRepo));
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo, workerRepo, groupRepo));

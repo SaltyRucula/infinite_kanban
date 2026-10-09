@@ -34,18 +34,14 @@ class Handler(BaseHTTPRequestHandler):
         size = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(size)) if size else {}
         self.requests.append((self.command, self.path, dict(self.headers), body))
-        payload: object = {
-            "task": {"id": "task-1", "projectId": "demo", "agentType": "claude"},
-            "contract": {
-                "taskId": "task-1",
-                "projectId": "demo",
-                "deepLink": "https://board/projects/demo/tasks/task-1",
-            },
-        }
+        task = {"id": "task-1", "projectId": "demo", "agentType": "claude"}
+        payload: object = {"task": task}
         if self.path == "/api/projects":
             payload = [{"id": "demo", "name": "Demo"}]
         elif self.path.startswith("/api/agents"):
             payload = [{"name": "claude", "available": True}]
+        elif self.path == "/a2a/v1":
+            payload = {"jsonrpc": "2.0", "id": body.get("id"), "result": {"task": task}}
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -84,15 +80,20 @@ class PluginTests(unittest.TestCase):
                 )
         result = json.loads(raw)
         self.assertTrue(result["success"])
-        self.assertEqual(result["data"]["contract"]["taskId"], "task-1")
+        self.assertEqual(result["data"]["task"]["id"], "task-1")
         method, path, headers, body = Handler.requests[-1]
-        self.assertEqual((method, path), ("POST", "/api/orchestrations"))
+        self.assertEqual((method, path), ("POST", "/a2a/v1"))
         self.assertEqual(headers["Authorization"], "Bearer secret-token")
-        self.assertEqual(len(headers["Idempotency-Key"]), 64)
-        self.assertEqual(body["provenance"]["sourceSession"], "session-1")
-        self.assertEqual(body["isolation"], "worktree")
-        self.assertEqual(body["agentType"], "claude")
-        self.assertNotIn("timeoutMinutes", body)
+        self.assertEqual(headers["A2A-Version"], "1.0")
+        self.assertNotIn("Idempotency-Key", headers)
+        self.assertEqual(body["jsonrpc"], "2.0")
+        self.assertEqual(body["method"], "SendMessage")
+        message = body["params"]["message"]
+        self.assertEqual(len(message["messageId"]), 64)
+        self.assertEqual(message["metadata"]["provenance"]["sourceSession"], "session-1")
+        self.assertEqual(message["metadata"]["isolation"], "worktree")
+        self.assertEqual(message["metadata"]["agentType"], "claude")
+        self.assertNotIn("timeoutMinutes", message["metadata"])
 
         with patch.dict(os.environ, env, clear=False):
             plugin._route_task(
@@ -105,7 +106,7 @@ class PluginTests(unittest.TestCase):
                 },
                 session_id="session-2",
             )
-        self.assertEqual(Handler.requests[-1][3]["timeoutMinutes"], 120)
+        self.assertEqual(Handler.requests[-1][3]["params"]["message"]["metadata"]["timeoutMinutes"], 120)
 
     def test_registers_tools_and_skill(self):
         class Context:
