@@ -180,7 +180,14 @@ Phase 1 is the only phase that removes an existing API; phases 2–4 are additiv
 ### Progress
 
 - **Done:** `packages/a2a` (`@ai-agent-board/a2a`) — `extension.ts`, `state.ts`, `events.ts`, `assignment.ts`, `cards.ts` with 22 unit tests (`npm run test:a2a`): every `AgentEventType` round-trips, every `agentStatus` maps to a defined `TaskState`, and the assignment allowlist rejects board-private fields such as `repoPath`.
-- **Next (phase 1 remainder):** server `AgentExecutor` + repository-backed `TaskStore`, `/a2a/v1` JSON-RPC + REST router and `/.well-known/agent-card.json`, removal of `/api/orchestrations`, `integrations/hermes-agent-board` moved over, `a2a-cli` conformance run.
+- **Done:** outbound v1.0 conformance (#74) — dialect negotiated from the card, PascalCase methods, flattened parts, `A2A-Version` header, v0.3 kept for cards that declare it.
+- **Done:** the board as an A2A server (#75) — `GET /.well-known/agent-card.json` plus `/a2a/v1` on both the JSON-RPC and HTTP+JSON bindings, serving `SendMessage`, `GetTask`, `ListTasks` and `CancelTask`. `packages/server/src/a2a/`: `intake.ts` (peer request → board work request, refusing board-private and unknown fields), `projection.ts` (board task → A2A task), `task-store.ts` (repository-backed `TaskStore`), `executor.ts` (admission + ticket creation + follow-ups + cancel), `router.ts` (bindings + `a2a:send` auth).
+- **Next (phase 1 remainder):** remove `/api/orchestrations`, moving its three e2e specs, `integrations/hermes-agent-board`, the `scripts/e2e-server.cjs` token scopes and the docs onto `/a2a/v1`; then the `a2a-cli` conformance run.
+
+Two implementation notes worth keeping:
+
+- **Cancellation.** A2A separates `TASK_STATE_CANCELED` from `TASK_STATE_FAILED`; the board records a stopped run as `failed` so it stays retryable. The distinction lives in an in-memory, bounded `CancellationLog` and is applied when projecting a task, so a cancellation that outlives a restart degrades to `failed`. Promoting cancellation to a real board status is a board-model change (DB + UI + transitions), not a protocol one.
+- **Refusals.** A request the board will not place (unknown project, ambiguous reference, project without a repo, agent not ready) comes back as `TASK_STATE_REJECTED` with the reason; a request carrying a board-private or unknown field terminates as `TASK_STATE_FAILED` naming the field. Neither creates a card. Such tasks have no board row, so they are held in a small bounded map purely so the peer can read back the refusal.
 
 
 ## 8. Security notes

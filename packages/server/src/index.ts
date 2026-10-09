@@ -18,6 +18,7 @@ import { createOrchestrationsRouter } from './routes/orchestrations.js';
 import { createJiraRouter } from './routes/jira.js';
 import { createGitHubRouter } from './routes/github.js';
 import { createA2AAgentsRouter } from './routes/a2a-agents.js';
+import { createA2ARouter } from './a2a/router.js';
 import { JiraImportExecutionService } from './jira/import-execution.js';
 import { JiraImportScheduler } from './jira/import-scheduler.js';
 import { OpenCodeJiraRepositoryRouter } from './jira/repository-router.js';
@@ -56,6 +57,8 @@ import {
 const app = express();
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const HOST = process.env.HOST?.trim() || '127.0.0.1';
+/** Version this board reports to A2A peers in its Agent Card. */
+const BOARD_VERSION = process.env.BOARD_VERSION?.trim() || '0.1.0';
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:8081,http://localhost:4175,http://localhost:4176').split(',');
 app.use(cors({ origin: ALLOWED_ORIGINS }));
@@ -160,6 +163,18 @@ const agentManager = new AgentManager();
   });
 
   app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager, () => jiraImportScheduler?.requestTick()));
+  // The board as an A2A server: peers discover it at /.well-known/agent-card.json
+  // and send work to /a2a/v1 over JSON-RPC or HTTP+JSON. Mounted outside /api
+  // because the paths are fixed by the protocol; it carries its own auth.
+  app.use('/', createA2ARouter({
+    taskRepo,
+    projectRepo,
+    agents: agentManager,
+    boardVersion: BOARD_VERSION,
+    publicUrl: process.env.AGENT_BOARD_PUBLIC_URL?.trim() || `http://${HOST}:${PORT}`,
+  }));
+  // Superseded by the A2A endpoint above; removed once integrations and e2e
+  // coverage move over (#75).
   app.use('/api/orchestrations', createOrchestrationsRouter(taskRepo, projectRepo, agentManager));
   app.use('/api/jira', createJiraRouter(projectRepo, jiraImportExecutor));
   app.use('/api/github', createGitHubRouter(projectRepo, taskRepo));

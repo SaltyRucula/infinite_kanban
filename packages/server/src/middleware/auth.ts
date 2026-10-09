@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 
-export type ServiceScope = 'projects:read' | 'agents:read' | 'a2a-agents:read' | 'a2a-agents:manage' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register' | 'workers:manage';
-const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'a2a-agents:read', 'a2a-agents:manage', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'];
+export type ServiceScope = 'projects:read' | 'agents:read' | 'a2a:send' | 'a2a-agents:read' | 'a2a-agents:manage' | 'orchestrations:create' | 'orchestrations:read' | 'orchestrations:message' | 'jira:import' | 'workers:register' | 'workers:manage';
+const ALL_SERVICE_SCOPES: ServiceScope[] = ['projects:read', 'agents:read', 'a2a:send', 'a2a-agents:read', 'a2a-agents:manage', 'orchestrations:create', 'orchestrations:read', 'orchestrations:message', 'jira:import', 'workers:register', 'workers:manage'];
 
 interface Credential { token?: string; sha256?: string; id?: string; scopes: ServiceScope[] }
 
