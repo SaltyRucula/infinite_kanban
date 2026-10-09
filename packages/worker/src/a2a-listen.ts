@@ -6,8 +6,8 @@ export type A2AListenOptions = {
 /** Parse CLI listener flags without exposing an A2A endpoint beyond loopback by default. */
 export function parseA2AListenOptions(args: Readonly<Record<string, string>>): A2AListenOptions {
   const host = args.host?.trim() || '127.0.0.1';
-  if (host.includes('://') || /[/?#\s]/.test(host)) {
-    throw new Error('host must be a hostname or IP address without a URL scheme');
+  if (host.includes('://') || host.includes(':') || /[/?#\s]/.test(host)) {
+    throw new Error('host must be a hostname or IP address without a URL scheme or port');
   }
   const suppliedPort = args.port?.trim();
   const port = suppliedPort === undefined || suppliedPort === '' ? 0 : Number.parseInt(suppliedPort, 10);
