@@ -3,6 +3,37 @@ import test from 'node:test';
 import type { WorkerTaskAssignment } from '@ai-agent-board/shared/types.js';
 import { canonicalRepoUrl, resolveRepositoryWorkspace } from '../src/repository-resolution.js';
 
+test('a non-default port is part of the repository identity', () => {
+  // Two self-hosted Git servers can share a host and differ only by port;
+  // dropping the port silently merges them into one repository.
+  assert.notEqual(
+    canonicalRepoUrl('https://git.example.com:8443/owner/repo.git'),
+    canonicalRepoUrl('https://git.example.com/owner/repo.git'),
+  );
+  assert.equal(canonicalRepoUrl('https://git.example.com:8443/owner/repo.git'), 'git.example.com:8443/owner/repo');
+  // Default ports are not part of it, so the same server written two ways matches.
+  assert.equal(canonicalRepoUrl('https://git.example.com:443/owner/repo'), 'git.example.com/owner/repo');
+  assert.equal(canonicalRepoUrl('ssh://git@git.example.com:22/owner/repo.git'), 'git.example.com/owner/repo');
+});
+
+test('the canonical key is accepted back as a mapping key', () => {
+  // `github.com/owner/repo` is the form users see in "no local checkout is
+  // configured for ..." errors, so pasting it into repositoryMappings has to
+  // match rather than silently never matching.
+  assert.equal(canonicalRepoUrl('github.com/owner/repo'), 'github.com/owner/repo');
+  assert.equal(canonicalRepoUrl('git.example.com:8443/owner/repo'), 'git.example.com:8443/owner/repo');
+  assert.equal(
+    canonicalRepoUrl(canonicalRepoUrl('git@github.com:owner/repo.git')),
+    canonicalRepoUrl('git@github.com:owner/repo.git'),
+  );
+});
+
+test('genuine garbage is still rejected, not turned into an unmatchable key', () => {
+  for (const bad of ['', '   ', 'not a remote', 'owner/repo', 'file:///srv/repos/thing.git']) {
+    assert.throws(() => canonicalRepoUrl(bad), /repository identity/, JSON.stringify(bad));
+  }
+});
+
 const assignment: WorkerTaskAssignment = {
   id: 'task-1',
   title: 'Implement repository-aware worker routing',

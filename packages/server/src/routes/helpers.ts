@@ -345,9 +345,36 @@ export function parseGitRepoUrl(input: string): ParsedRepoUrl | string {
   return { url, name };
 }
 
-/** Normalize a git URL for equality comparison (case/slash/.git/trailing-slash insensitive). */
+/**
+ * Normalize a git URL for equality comparison.
+ *
+ * Reduces a remote to `host[:port]/path` first, so the SSH and HTTPS spellings
+ * of one repository compare equal — `git@github.com:owner/repo.git` and
+ * `https://github.com/owner/repo` are the same repository, which a purely
+ * textual comparison treats as two. This matters where the comparison is used:
+ * matching a project's declared `repoUrl` against the checkout's actual
+ * `origin`, which are routinely written in different forms.
+ *
+ * Values that are not recognisable as a remote keep the previous textual
+ * cleanup, so unrelated comparisons still work instead of collapsing onto one
+ * empty key.
+ */
 export function normalizeRepoUrl(url: string): string {
-  return url.trim().replace(/\\/g, '/').replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
+  const textual = url.trim().replace(/\\/g, '/').replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
+  const portable = portableRepoUrl(url);
+  if (!portable) return textual;
+  try {
+    const parsed = new URL(portable);
+    const port = parsed.port ? `:${parsed.port}` : '';
+    const pathname = parsed.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+    if (!parsed.hostname || !pathname) return textual;
+    return `${parsed.hostname.toLowerCase()}${port}/${pathname}`;
+  } catch {
+    // scp-style (`git@host:owner/repo`): portableRepoUrl passes it through.
+    const scp = portable.match(/^(?:[^@/:]+@)?([^/:]+):(.+)$/);
+    if (!scp?.[1] || !scp[2]) return textual;
+    return `${scp[1].toLowerCase()}/${scp[2].replace(/^\/+|\/+$/g, '').toLowerCase()}`;
+  }
 }
 
 /** Return the `origin` remote URL of a repo, or null if none/not a repo. */
