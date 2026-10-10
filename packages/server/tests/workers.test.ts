@@ -69,6 +69,9 @@ class FakeTaskRepository implements TaskRepository {
   async getByExternalIdentity(): Promise<Task | undefined> { return undefined; }
   async create(value: Task): Promise<Task> { return value; }
   async createIdempotent(value: Task): Promise<{ task: Task; created: boolean }> { return { task: value, created: true }; }
+  async createIdempotentInGroup(value: Task): Promise<{ task?: Task; created: boolean; groupFull: boolean }> {
+    return { task: value, created: true, groupFull: false };
+  }
   async requestRun(): Promise<Task | undefined> { return undefined; }
   async claimRun(): Promise<Task | undefined> { return undefined; }
   async clearRun(): Promise<Task | undefined> { return undefined; }
@@ -87,6 +90,10 @@ class FakeTaskRepository implements TaskRepository {
   async delete(): Promise<boolean> { return false; }
   async count(): Promise<number> { return 0; }
   async insertEvent(event: AgentEvent): Promise<void> { this.events.push(event); }
+  async insertWorkRequestIfBelowPendingLimit(event: AgentEvent): Promise<boolean> {
+    this.events.push(event);
+    return true;
+  }
   async getEventsByTaskId(taskId: string): Promise<AgentEvent[]> { return this.events.filter((event) => event.taskId === taskId); }
   async deleteEventsByTaskId(): Promise<void> {}
   async getArchivedTasks(): Promise<Task[]> { return []; }
