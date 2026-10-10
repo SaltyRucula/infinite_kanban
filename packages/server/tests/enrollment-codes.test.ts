@@ -32,7 +32,9 @@ function createDatabase(): Database.Database {
       updated_at INTEGER NOT NULL,
       disabled_at INTEGER,
       token_issued_at INTEGER NOT NULL,
-      owner_id TEXT
+      owner_id TEXT,
+      accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
+      accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE TABLE enrollment_codes (
       code_hash TEXT PRIMARY KEY,
@@ -73,7 +75,13 @@ async function withServer(
 }
 
 function registrationBody(enrollmentCode: string): Record<string, unknown> {
-  return { name: 'fresh-worker', agentTypes: ['opencode'], enrollmentCode };
+  return {
+    name: 'fresh-worker',
+    agentTypes: ['opencode'],
+    enrollmentCode,
+    acceptedProjectIds: ['project-1'],
+    acceptedLabels: [],
+  };
 }
 
 async function createEnrollmentCode(baseUrl: string, projectId = 'project-1'): Promise<{ code: string; expiresAt: number }> {
@@ -160,7 +168,12 @@ test('bearer-scoped worker registration remains available and records its derive
       const response = await fetch(`${baseUrl}/api/workers/register`, {
         method: 'POST',
         headers: { authorization: 'Bearer worker-registrar', 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'bearer-worker', agentTypes: ['opencode'] }),
+        body: JSON.stringify({
+          name: 'bearer-worker',
+          agentTypes: ['opencode'],
+          acceptedProjectIds: ['project-1'],
+          acceptedLabels: [],
+        }),
       });
       assert.equal(response.status, 200);
       const body = await response.json() as { worker: { ownerId?: string }; token: string };

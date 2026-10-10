@@ -30,7 +30,9 @@ function createDatabase(): Database.Database {
       updated_at INTEGER NOT NULL,
       disabled_at INTEGER,
       token_issued_at INTEGER NOT NULL,
-      owner_id TEXT
+      owner_id TEXT,
+      accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
+      accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE TABLE worker_task_sessions (
       task_id TEXT NOT NULL,
@@ -50,6 +52,14 @@ function createDatabase(): Database.Database {
       session_id TEXT,
       answer TEXT
     );
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      repo_url TEXT,
+      goal TEXT,
+      context TEXT,
+      worker_pool_enabled INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO projects (id) VALUES ('default');
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
       priority TEXT NOT NULL, column_id TEXT NOT NULL, agent_status TEXT NOT NULL,
