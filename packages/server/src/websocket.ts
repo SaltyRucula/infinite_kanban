@@ -3,6 +3,7 @@ import type { Server } from 'http';
 import type { WSMessage } from './types.js';
 import { isValidWebSocketToken } from './middleware/auth.js';
 import { isAllowedWebSocketRequest, parseList } from './network-policy.js';
+import { boardEvents } from './a2a/event-hub.js';
 
 interface AliveWebSocket extends WebSocket {
   isAlive: boolean;
@@ -69,6 +70,17 @@ export function createWSS(server: Server): WebSocketServer {
 }
 
 export function broadcast(message: WSMessage): void {
+  // Tee live board activity to in-process A2A subscribers before touching the
+  // sockets. Both execution routes (in-process agent manager and the worker
+  // event ingress) already broadcast, so this one choke point covers both —
+  // and it runs even when no browser is connected, because `wss` may be unset
+  // while an A2A stream is open.
+  if (message.type === 'agent_event') {
+    boardEvents.publish({ kind: 'event', event: message.payload });
+  } else if (message.type === 'task_updated') {
+    boardEvents.publish({ kind: 'task', task: message.payload });
+  }
+
   if (!wss) return;
   const data = JSON.stringify(message);
   wss.clients.forEach((client) => {
