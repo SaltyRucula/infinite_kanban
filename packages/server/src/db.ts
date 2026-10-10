@@ -490,6 +490,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
          worker_attempt INTEGER NOT NULL DEFAULT 0,
          labels TEXT NOT NULL DEFAULT '[]',
          agent_preference TEXT,
+        depends_on TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (group_id) REFERENCES task_groups(id) ON DELETE CASCADE
       );
@@ -500,7 +501,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes
         , clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
-         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference
+         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference, depends_on
       )
       SELECT
         id, title, description, priority, column_id, agent_status, created_at,
@@ -508,7 +509,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes,
         clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
-         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference
+         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference, depends_on
       FROM tasks;
 
       DROP TABLE tasks;
