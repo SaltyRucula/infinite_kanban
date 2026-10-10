@@ -52,6 +52,19 @@ Enrollment registers one worker and saves its credentials locally. The worker wr
 
 Registration also writes the runner block automatically. No hand-editing JSON is required.
 
+### Several workers on one machine
+
+Set `AGENTBOARD_WORKER_HOME` to give a worker its own identity directory:
+
+```bash
+AGENTBOARD_WORKER_HOME=~/.agentboard-worker-reviewer \
+  npx @ai-agent-board/worker start --code <enrollment-url>
+```
+
+Without it, every worker on the host shares `~/.agentboard-worker` and the second registration overwrites the first one's credentials. Setting `HOME` instead does not work: the agent CLIs resolve their own credentials and caches from it, and they will fail to start.
+
+Each worker also needs its own OpenCode session bridge port, via `OPENCODE_SESSION_BRIDGE_PORT`. A worker whose port is already taken exits immediately; the board then shows its task sitting in `planning` until the stranded-task sweep fails it, so check the worker's own log when a run produces no events.
+
 ## Runner profiles
 
 The default runner is `agent-sdk`. To use the local OpenCode server runner during enrollment, add runner options to the same start command:
@@ -75,6 +88,21 @@ The `--agent` option is optional for `opencode-server` and defaults to `build`.
 4. It reports `complete` or `failed` and releases the task. A follow-up to a finished worker task queues a fresh run.
 
 If a worker stops heartbeating, its lease expires and the server marks the task failed so it can be retried.
+
+### Two workers, one task: implement then review
+
+`scripts/demo-two-agents.mjs` runs the whole cycle against a local board as a worked example: it creates a throwaway git repository, enrols an implementer and a reviewer as separate worker processes, has the implementer complete a task, hands the card over, and has the reviewer report a verdict.
+
+```bash
+node scripts/demo-two-agents.mjs http://127.0.0.1:8080
+```
+
+The handoff is driven by two board mechanisms:
+
+- **`assignedWorkerId`** targets a specific worker. It is a `PATCH /api/tasks/:id` field — task creation does not accept it.
+- **Consent** decides what a worker is allowed to take: it must have opted into the task's project and into *every* label on the task. Giving the implementer `--accepted-labels implement` and the reviewer `--accepted-labels review` means relabelling the card is what moves work between them, rather than two eligible workers racing for it.
+
+A run started while the card sits in the Review column carries `mode: 'review'`, which is what puts the second agent in review mode with edits disabled. The verdict is reported in the event stream as `REVIEW_VERDICT: <verdict>` — there is no persisted verdict field. `changes_requested` moves the card back to In Progress; a `pass` leaves it in Review for a human to take to Done, so do not wait on a column change to detect that a review finished.
 
 ### Repository-aware workspaces
 
