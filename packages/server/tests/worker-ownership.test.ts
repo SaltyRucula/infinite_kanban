@@ -18,7 +18,9 @@ function createDatabase(): Database.Database {
       status TEXT NOT NULL, hostname TEXT, version TEXT, agent_types_json TEXT NOT NULL,
       max_concurrent_tasks INTEGER NOT NULL, registered_at INTEGER NOT NULL,
       last_heartbeat_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-      disabled_at INTEGER, token_issued_at INTEGER NOT NULL, owner_id TEXT
+      disabled_at INTEGER, token_issued_at INTEGER NOT NULL, owner_id TEXT,
+      accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
+      accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     );
   `);
   return db;
@@ -71,7 +73,12 @@ test('workers are owned by configured principals and listings hide hostnames', a
       const registered = await fetch(`${baseUrl}/api/workers/register`, {
         method: 'POST',
         headers: { authorization: 'Bearer owner-b-token', 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'registered by owner b', agentTypes: ['opencode'] }),
+        body: JSON.stringify({
+          name: 'registered by owner b',
+          agentTypes: ['opencode'],
+          acceptedProjectIds: ['default'],
+          acceptedLabels: [],
+        }),
       });
       assert.equal(registered.status, 200);
       const body = await registered.json() as { worker: { ownerId?: string; hostname?: string } };
