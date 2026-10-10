@@ -1405,7 +1405,17 @@ Optional list of any work you did not complete or that should be followed up. Om
       if (!q) return;
       if (q.runningTaskIds.size >= q.maxConcurrency || q.pendingTaskIds.length === 0) return;
 
-      const taskId = q.pendingTaskIds.shift()!;
+      // Preserve concurrency while allowing independent siblings to run: only
+      // select a pending child after all of its declared prerequisites finish.
+      // A prerequisite that is merely awaiting clarification is not complete.
+      const nextIndex = q.pendingTaskIds.findIndex((candidateId) => {
+        const candidate = q.tasks.get(candidateId);
+        return candidate !== undefined && (candidate.dependsOn ?? []).every((dependencyId) => q.completedTaskIds.has(dependencyId));
+      });
+      if (nextIndex < 0) return;
+
+      const [taskId] = q.pendingTaskIds.splice(nextIndex, 1);
+      if (!taskId) return;
       const task = q.tasks.get(taskId);
       if (!task) { startNext(); return; }
 
