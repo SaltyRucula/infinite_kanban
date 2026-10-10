@@ -18,16 +18,6 @@ interface ProjectRow {
   goal: string | null;
   context: string | null;
   aliases: string;
-  jira_import_enabled: boolean;
-  jira_import_interval_minutes: number;
-  jira_import_auto_start: boolean;
-  jira_import_last_run_at: string | null;
-  jira_import_last_completed_at: string | null;
-  jira_import_last_success_at: string | null;
-  jira_import_last_error: string | null;
-  jira_import_last_total: number | null;
-  jira_import_last_created: number | null;
-  jira_import_last_skipped: number | null;
 }
 
 interface CountRow {
@@ -55,16 +45,6 @@ function rowToProject(row: ProjectRow, taskCounts?: ProjectTaskCounts): Project 
     goal: row.goal ?? undefined,
     context: row.context ?? undefined,
     aliases: JSON.parse(row.aliases || '[]'),
-    jiraImportEnabled: row.jira_import_enabled,
-    jiraImportIntervalMinutes: row.jira_import_interval_minutes,
-    jiraImportLastRunAt: row.jira_import_last_run_at == null ? undefined : Number(row.jira_import_last_run_at),
-    jiraImportLastCompletedAt: row.jira_import_last_completed_at == null ? undefined : Number(row.jira_import_last_completed_at),
-    jiraImportLastSuccessAt: row.jira_import_last_success_at == null ? undefined : Number(row.jira_import_last_success_at),
-    jiraImportLastError: row.jira_import_last_error ?? undefined,
-    jiraImportLastTotal: row.jira_import_last_total ?? undefined,
-    jiraImportLastCreated: row.jira_import_last_created ?? undefined,
-    jiraImportLastSkipped: row.jira_import_last_skipped ?? undefined,
-    jiraImportAutoStart: row.jira_import_auto_start,
     ...(taskCounts ? { taskCounts } : {}),
   };
 }
@@ -113,16 +93,6 @@ export class PostgresProjectRepository implements ProjectRepository {
     goal?: string;
     context?: string;
     aliases?: string[];
-    jiraImportEnabled?: boolean;
-    jiraImportIntervalMinutes?: number;
-    jiraImportLastRunAt?: number;
-    jiraImportLastCompletedAt?: number;
-    jiraImportLastSuccessAt?: number;
-    jiraImportLastError?: string;
-    jiraImportLastTotal?: number;
-    jiraImportLastCreated?: number;
-    jiraImportLastSkipped?: number;
-    jiraImportAutoStart?: boolean;
     createdAt: number;
     updatedAt: number;
   }): Promise<Project> {
@@ -131,11 +101,8 @@ export class PostgresProjectRepository implements ProjectRepository {
       await client.query('BEGIN');
       const { rows } = await client.query<ProjectRow>(
         `INSERT INTO projects (id, name, repo_path, repo_url, is_default, created_at, updated_at,
-           default_agent_type, default_priority, default_base_branch, default_use_worktree, goal, context, aliases,
-           jira_import_enabled, jira_import_interval_minutes, jira_import_auto_start, jira_import_last_run_at,
-           jira_import_last_completed_at, jira_import_last_success_at, jira_import_last_error,
-           jira_import_last_total, jira_import_last_created, jira_import_last_skipped)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+           default_agent_type, default_priority, default_base_branch, default_use_worktree, goal, context, aliases)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING *`,
         [
           input.id,
@@ -149,16 +116,6 @@ export class PostgresProjectRepository implements ProjectRepository {
           input.defaultPriority ?? null,
           input.defaultBaseBranch ?? null,
           input.defaultUseWorktree ?? null, input.goal ?? null, input.context ?? null, JSON.stringify(input.aliases ?? []),
-          input.jiraImportEnabled ?? false,
-          input.jiraImportIntervalMinutes ?? 15,
-          input.jiraImportAutoStart ?? false,
-          input.jiraImportLastRunAt ?? null,
-          input.jiraImportLastCompletedAt ?? null,
-          input.jiraImportLastSuccessAt ?? null,
-          input.jiraImportLastError ?? null,
-          input.jiraImportLastTotal ?? null,
-          input.jiraImportLastCreated ?? null,
-          input.jiraImportLastSkipped ?? null,
         ],
       );
       await client.query('COMMIT');
@@ -182,16 +139,6 @@ export class PostgresProjectRepository implements ProjectRepository {
     goal?: string | null;
     context?: string | null;
     aliases?: string[];
-    jiraImportEnabled?: boolean;
-    jiraImportIntervalMinutes?: number;
-    jiraImportLastRunAt?: number | null;
-    jiraImportLastCompletedAt?: number | null;
-    jiraImportLastSuccessAt?: number | null;
-    jiraImportLastError?: string | null;
-    jiraImportLastTotal?: number | null;
-    jiraImportLastCreated?: number | null;
-    jiraImportLastSkipped?: number | null;
-    jiraImportAutoStart?: boolean;
     updatedAt: number;
   }): Promise<Project | undefined> {
     const client = await this.pool.connect();
@@ -206,11 +153,8 @@ export class PostgresProjectRepository implements ProjectRepository {
       const { rows: updatedRows } = await client.query<ProjectRow>(
         `UPDATE projects
          SET name = $1, repo_path = $2, repo_url = $3, is_default = $4, updated_at = $5,
-           default_agent_type = $6, default_priority = $7, default_base_branch = $8, default_use_worktree = $9, goal = $10, context = $11, aliases=$12,
-            jira_import_enabled = $13, jira_import_interval_minutes = $14, jira_import_auto_start = $15, jira_import_last_run_at = $16,
-            jira_import_last_completed_at = $17, jira_import_last_success_at = $18, jira_import_last_error = $19,
-            jira_import_last_total = $20, jira_import_last_created = $21, jira_import_last_skipped = $22
-          WHERE id = $23
+           default_agent_type = $6, default_priority = $7, default_base_branch = $8, default_use_worktree = $9, goal = $10, context = $11, aliases = $12
+          WHERE id = $13
           RETURNING *`,
         [
           updates.name ?? existing.name,
@@ -225,16 +169,6 @@ export class PostgresProjectRepository implements ProjectRepository {
           updates.goal === undefined ? existing.goal : updates.goal,
           updates.context === undefined ? existing.context : updates.context,
           updates.aliases === undefined ? existing.aliases : JSON.stringify(updates.aliases),
-          updates.jiraImportEnabled === undefined ? existing.jira_import_enabled : updates.jiraImportEnabled,
-          updates.jiraImportIntervalMinutes ?? existing.jira_import_interval_minutes,
-          updates.jiraImportAutoStart === undefined ? existing.jira_import_auto_start : updates.jiraImportAutoStart,
-          updates.jiraImportLastRunAt === undefined ? existing.jira_import_last_run_at : updates.jiraImportLastRunAt,
-          updates.jiraImportLastCompletedAt === undefined ? existing.jira_import_last_completed_at : updates.jiraImportLastCompletedAt,
-          updates.jiraImportLastSuccessAt === undefined ? existing.jira_import_last_success_at : updates.jiraImportLastSuccessAt,
-          updates.jiraImportLastError === undefined ? existing.jira_import_last_error : updates.jiraImportLastError,
-          updates.jiraImportLastTotal === undefined ? existing.jira_import_last_total : updates.jiraImportLastTotal,
-          updates.jiraImportLastCreated === undefined ? existing.jira_import_last_created : updates.jiraImportLastCreated,
-          updates.jiraImportLastSkipped === undefined ? existing.jira_import_last_skipped : updates.jiraImportLastSkipped,
           id,
         ],
       );

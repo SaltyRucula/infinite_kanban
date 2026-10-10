@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import type { Task, AgentType, ColumnId, JiraImportResult } from '@/types';
+import type { Task, AgentType, ColumnId } from '@/types';
 import { VALID_TRANSITIONS } from '@/types';
 import { api, connectWS } from '@/lib/api';
 import type { ResumeClarificationRequest, ResumeClarificationResponse } from '@/lib/api';
@@ -216,35 +216,6 @@ export function useTasks(projectId = 'default') {
     }
   }, []);
 
-  const importAssignedJira = useCallback(async (targetProjectId?: string): Promise<JiraImportResult | undefined> => {
-    const pid = targetProjectId ?? projectId;
-    try {
-      const result = await api.importAssignedJira(pid);
-      // Only reflect newly imported tasks on this board when the import
-      // target is the project currently being viewed — importing into a
-      // different project must not surface those tasks here.
-      if (pid === projectId && result.tasks && result.tasks.length > 0) {
-        setTasks((prev) => {
-          const newTasks = [...prev];
-          for (const task of result.tasks) {
-            const index = newTasks.findIndex((t) => t.id === task.id);
-            if (index >= 0) {
-              newTasks[index] = task;
-            } else {
-              newTasks.push(task);
-            }
-          }
-          return newTasks;
-        });
-      }
-      return result;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to import Jira tasks: ${msg}`);
-      throw err;
-    }
-  }, [projectId]);
-
   const clearError = useCallback(() => setError(null), []);
 
   return {
@@ -267,6 +238,5 @@ export function useTasks(projectId = 'default') {
     createPR,
     mergeLocal,
     cleanupWorktree,
-    importAssignedJira,
   };
 }

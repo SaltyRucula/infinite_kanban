@@ -69,18 +69,7 @@ function migrate(db: Database.Database): void {
     db.exec(`ALTER TABLE projects ADD COLUMN repo_url TEXT`);
   }
   if (!projectColNames.has('aliases')) db.exec(`ALTER TABLE projects ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'`);
-  if (!projectColNames.has('jira_import_enabled')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_enabled INTEGER NOT NULL DEFAULT 0`);
-  if (!projectColNames.has('jira_import_interval_minutes')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_interval_minutes INTEGER NOT NULL DEFAULT 15`);
-  if (!projectColNames.has('jira_import_auto_start')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_auto_start INTEGER NOT NULL DEFAULT 0`);
-  if (!projectColNames.has('jira_import_last_run_at')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_run_at INTEGER`);
-  if (!projectColNames.has('jira_import_last_completed_at')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_completed_at INTEGER`);
-  if (!projectColNames.has('jira_import_last_success_at')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_success_at INTEGER`);
-  if (!projectColNames.has('jira_import_last_error')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_error TEXT`);
-  if (!projectColNames.has('jira_import_last_total')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_total INTEGER`);
-  if (!projectColNames.has('jira_import_last_created')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_created INTEGER`);
-  if (!projectColNames.has('jira_import_last_skipped')) db.exec(`ALTER TABLE projects ADD COLUMN jira_import_last_skipped INTEGER`);
   db.exec(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
   // Trusted A2A directory is additive: it does not alter worker registration
   // or task execution state. Agent Cards remain cached after refresh failures.
@@ -600,18 +589,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addProjectCol('context', 'TEXT');
   await addProjectCol('repo_url', 'TEXT');
   await addProjectCol('aliases', "TEXT NOT NULL DEFAULT '[]'");
-  await addProjectCol('jira_import_enabled', 'BOOLEAN NOT NULL DEFAULT FALSE');
-  await addProjectCol('jira_import_interval_minutes', 'INTEGER NOT NULL DEFAULT 15');
-  await addProjectCol('jira_import_auto_start', 'BOOLEAN NOT NULL DEFAULT FALSE');
-  await addProjectCol('jira_import_last_run_at', 'BIGINT');
-  await addProjectCol('jira_import_last_completed_at', 'BIGINT');
-  await addProjectCol('jira_import_last_success_at', 'BIGINT');
-  await addProjectCol('jira_import_last_error', 'TEXT');
-  await addProjectCol('jira_import_last_total', 'INTEGER');
-  await addProjectCol('jira_import_last_created', 'INTEGER');
-  await addProjectCol('jira_import_last_skipped', 'INTEGER');
   await pool.query(`UPDATE projects SET default_agent_type = 'opencode' WHERE default_agent_type IS NOT NULL AND default_agent_type NOT IN ('opencode', 'codex')`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_jira_import_enabled ON projects(jira_import_enabled, jira_import_interval_minutes)`);
 
   // Trusted A2A directory is additive: it does not alter worker registration
   // or task execution state. Agent Cards remain cached after refresh failures.

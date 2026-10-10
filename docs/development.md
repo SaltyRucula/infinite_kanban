@@ -48,7 +48,7 @@ cd packages/e2e && npx playwright test tests/board.spec.ts --reporter=list   # o
 npm run test:ui -w @ai-agent-board/e2e                                        # Playwright UI mode
 ```
 
-Specs live in [`packages/e2e/tests`](../packages/e2e/tests) and cover the board, task groups, templates, projects, archiving, clarification flows, Jira import and automation, git operations, and agent selection. Specs that need a real agent (`agent-sdk.spec.ts`, `group-integration.spec.ts`) skip when one is not available.
+Specs live in [`packages/e2e/tests`](../packages/e2e/tests) and cover the board, task groups, templates, projects, archiving, clarification flows, git operations, and agent selection. Specs that need a real agent (`agent-sdk.spec.ts`, `group-integration.spec.ts`) skip when one is not available.
 
 Portability or setup problems are blockers to fix, not reasons to skip affected E2E coverage.
 

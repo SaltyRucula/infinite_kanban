@@ -62,9 +62,6 @@ async function mockClarificationBoard(
     isDefault: true,
     createdAt: Date.now() - 120_000,
     updatedAt: Date.now() - 120_000,
-    jiraImportEnabled: false,
-    jiraImportIntervalMinutes: 15,
-    jiraImportAutoStart: false,
   };
 
   await page.route('**/api/projects/config', (route) => fulfillJson(route, { cloneRoot: '/tmp' }));

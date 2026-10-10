@@ -45,8 +45,8 @@ const agentManager = {
 
 const projectRepo: ProjectRepository = {
   async getAllWithCounts() { return []; },
-  async getById(id: string) { return id === 'default' ? { id: 'default', name: 'Default', isDefault: true, createdAt: 1, updatedAt: 1, jiraImportEnabled: false, jiraImportIntervalMinutes: 15, jiraImportAutoStart: false } : undefined; },
-  async getDefault() { return { id: 'default', name: 'Default', isDefault: true, createdAt: 1, updatedAt: 1, jiraImportEnabled: false, jiraImportIntervalMinutes: 15, jiraImportAutoStart: false }; },
+  async getById(id: string) { return id === 'default' ? { id: 'default', name: 'Default', isDefault: true, createdAt: 1, updatedAt: 1 } : undefined; },
+  async getDefault() { return { id: 'default', name: 'Default', isDefault: true, createdAt: 1, updatedAt: 1 }; },
   async resolve() { return []; },
   async create() { throw new Error('not implemented'); },
   async update() { return undefined; },

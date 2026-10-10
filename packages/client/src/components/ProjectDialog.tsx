@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Clock, FolderOpen, Github, HardDrive, X } from 'lucide-react';
+import { FolderOpen, Github, HardDrive, X } from 'lucide-react';
 import { isAbsoluteRepoPath, getRepoPathHelpText, getRepoPathPlaceholder } from '@/lib/utils';
 import { AGENT_OPTIONS } from '@/lib/agent-config';
 import { PRIORITY_OPTIONS } from '@/lib/priority-config';
@@ -15,8 +15,6 @@ export interface ProjectDialogInitialValues {
   defaultPriority?: string;
   defaultBaseBranch?: string;
   defaultUseWorktree?: 'inherit' | 'true' | 'false';
-  jiraImportEnabled?: boolean;
-  jiraImportIntervalMinutes?: number;
   /** When true, submit the prefilled form automatically once the dialog opens. */
   autoSubmit?: boolean;
 }
@@ -74,12 +72,6 @@ export function ProjectDialog({
       ? initialValues?.defaultUseWorktree ?? 'inherit'
       : project.defaultUseWorktree ? 'true' : 'false',
   );
-  const [jiraImportEnabled, setJiraImportEnabled] = useState(
-    () => project?.jiraImportEnabled ?? initialValues?.jiraImportEnabled ?? false
-  );
-  const [jiraImportIntervalMinutes, setJiraImportIntervalMinutes] = useState<number | string>(
-    () => project?.jiraImportIntervalMinutes ?? initialValues?.jiraImportIntervalMinutes ?? 15
-  );
   const [nameTouched, setNameTouched] = useState(() => Boolean(project) || Boolean(initialValues?.name));
   const [error, setError] = useState('');
   const [pathStatus, setPathStatus] = useState<PathStatus>({ kind: 'idle' });
@@ -109,8 +101,6 @@ export function ProjectDialog({
           ? initialValues?.defaultUseWorktree ?? 'inherit'
           : project.defaultUseWorktree ? 'true' : 'false',
       );
-      setJiraImportEnabled(project?.jiraImportEnabled ?? initialValues?.jiraImportEnabled ?? false);
-      setJiraImportIntervalMinutes(project?.jiraImportIntervalMinutes ?? initialValues?.jiraImportIntervalMinutes ?? 15);
       setNameTouched(Boolean(project) || Boolean(initialValues?.name));
       setError('');
       setPathStatus({ kind: 'idle' });
@@ -183,35 +173,11 @@ export function ProjectDialog({
       }
     }
 
-    const intervalVal = Number(jiraImportIntervalMinutes);
-    if (jiraImportEnabled) {
-      if (
-        jiraImportIntervalMinutes === '' ||
-        jiraImportIntervalMinutes === null ||
-        jiraImportIntervalMinutes === undefined ||
-        isNaN(intervalVal) ||
-        !Number.isInteger(intervalVal) ||
-        intervalVal < 5 ||
-        intervalVal > 1440
-      ) {
-        setError('Import interval must be between 5 and 1440 minutes');
-        return;
-      }
-    }
-
     setSubmitting(true);
     setError('');
     try {
       const trimmedBaseBranch = defaultBaseBranch.trim();
       const worktreeValue = defaultUseWorktree === 'inherit' ? undefined : defaultUseWorktree === 'true';
-      const validInterval =
-        !isNaN(intervalVal) && Number.isInteger(intervalVal) && intervalVal >= 5 && intervalVal <= 1440
-          ? intervalVal
-          : 15;
-      const schedule = {
-        jiraImportEnabled,
-        jiraImportIntervalMinutes: validInterval,
-      };
       const defaults = mode === 'edit'
         ? {
             defaultAgentType: (defaultAgentType || null) as AgentType | null,
@@ -233,21 +199,18 @@ export function ProjectDialog({
           repoPath: trimmedPath || null,
           repoUrl: trimmedUrl || null,
           ...defaults,
-          ...schedule,
         };
       } else if (usingRepo) {
         payload = {
           name: trimmedName || undefined,
           repoUrl: trimmedUrl,
           ...defaults,
-          ...schedule,
         };
       } else {
         payload = {
           name: trimmedName || undefined,
           repoPath: trimmedPath || undefined,
           ...defaults,
-          ...schedule,
         };
       }
 
@@ -529,74 +492,6 @@ export function ProjectDialog({
                   </div>
                 </div>
               </div>
-
-              <div className="space-y-3 rounded-lg border border-border/60 bg-background/40 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">
-                  Scheduled Jira Import
-                  <span className="ml-2 font-normal normal-case text-muted-foreground/50">
-                    automatically import assigned Jira issues
-                  </span>
-                </p>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={jiraImportEnabled}
-                    aria-label="Enable scheduled Jira import"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      setJiraImportEnabled((enabled) => !enabled);
-                    }}
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-bold transition-colors ${
-                      jiraImportEnabled
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border bg-background text-transparent hover:border-primary/60'
-                    }`}
-                  >
-                    ✓
-                  </button>
-                  <span className="text-xs font-medium text-foreground">
-                    Enable scheduled Jira import
-                  </span>
-                </div>
-
-                <div>
-                  <label htmlFor="project-jira-import-interval" className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                    Import interval (minutes)
-                  </label>
-                  <input
-                    id="project-jira-import-interval"
-                    type="number"
-                    value={jiraImportIntervalMinutes}
-                    onChange={(e) => setJiraImportIntervalMinutes(e.target.value === '' ? '' : Number(e.target.value))}
-                    disabled={!jiraImportEnabled}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground/60">5–1440 minutes</p>
-                </div>
-
-                {mode === 'edit' && project && Boolean(project.jiraImportLastRunAt || project.jiraImportLastError || project.jiraImportLastSuccessAt || project.jiraImportLastCompletedAt) && (
-                  <div className="mt-2 rounded-md border border-border/40 bg-muted/20 p-2.5 text-xs space-y-1">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Clock className="h-3.5 w-3.5 shrink-0" />
-                      <span>
-                        Last run: {new Date(project.jiraImportLastSuccessAt || project.jiraImportLastCompletedAt || project.jiraImportLastRunAt || 0).toLocaleString()}
-                      </span>
-                    </div>
-                    {project.jiraImportLastError ? (
-                      <p className="text-red-400 text-[11px] break-all font-mono">
-                        Error: {project.jiraImportLastError}
-                      </p>
-                    ) : project.jiraImportLastTotal !== undefined ? (
-                      <p className="text-muted-foreground/80">
-                        Result: {project.jiraImportLastCreated ?? 0} created, {project.jiraImportLastSkipped ?? 0} skipped ({project.jiraImportLastTotal} total)
-                      </p>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-
               </div>
 
               <div className="flex shrink-0 justify-end gap-2 border-t border-border/40 pt-3">

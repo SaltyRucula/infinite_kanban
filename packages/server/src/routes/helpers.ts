@@ -559,11 +559,17 @@ export async function failTaskWithEvent(
 const RATE_LIMIT_MS = 5_000;
 const RATE_LIMIT_CLEANUP_THRESHOLD = 100;
 const agentActionTimestamps = new Map<string, number>();
-const JIRA_RETRY_DELAY_MS = 30_000;
-const retriedJiraTaskIds = new Set<string>();
+const IMPORT_RETRY_DELAY_MS = 30_000;
+const retriedImportedTaskIds = new Set<string>();
 
-export function shouldRetryJiraTask(task: Task, failure: string, alreadyRetried: boolean): boolean {
-  if (task.externalSource !== 'jira' || alreadyRetried) return false;
+/**
+ * Imported tasks (GitHub issues, and anything a future importer adds) are
+ * started without a human watching the board, so a transient network failure
+ * would otherwise leave a card sitting in `failed` unnoticed. Retry such a
+ * task exactly once; a hand-created task stays failed so its author sees it.
+ */
+export function shouldRetryImportedTask(task: Task, failure: string, alreadyRetried: boolean): boolean {
+  if (!task.externalSource || alreadyRetried) return false;
   return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|not reachable|is not running|network error|connection (?:closed|reset|refused|timed out)/i.test(failure);
 }
 
@@ -742,8 +748,8 @@ interface RetryAwareStatusHandlerDeps {
  * Build the `onStatusChange` callback passed to `agentManager.startAgent`.
  * Every entry point that starts an agent (direct run, group child, durable
  * retry/dispatch) must route through this single handler — a duplicated
- * inline callback silently drops the transient-Jira-failure auto-retry,
- * which is exactly the bug this function was extracted to close.
+ * inline callback silently drops the transient-failure auto-retry for
+ * imported tasks, which is exactly the bug this function was extracted to close.
  */
 export function makeRetryAwareStatusHandler(
   repo: TaskRepository,
@@ -756,16 +762,16 @@ export function makeRetryAwareStatusHandler(
   return async (status, failure) => {
     if (status === 'complete' || status === 'failed') await repo.clearRun(task.id);
     await onStatusChange(status);
-    if (status === 'failed' && failure && shouldRetryJiraTask(task, failure, retriedJiraTaskIds.has(task.id))) {
-      retriedJiraTaskIds.add(task.id);
+    if (status === 'failed' && failure && shouldRetryImportedTask(task, failure, retriedImportedTaskIds.has(task.id))) {
+      retriedImportedTaskIds.add(task.id);
       scheduleRetry(() => {
-        void retryTransientJiraTask(task.id, repo, agentManager);
-      }, JIRA_RETRY_DELAY_MS);
+        void retryTransientImportedTask(task.id, repo, agentManager);
+      }, IMPORT_RETRY_DELAY_MS);
     }
   };
 }
 
-async function retryTransientJiraTask(taskId: string, repo: TaskRepository, agentManager: AgentManager): Promise<void> {
+async function retryTransientImportedTask(taskId: string, repo: TaskRepository, agentManager: AgentManager): Promise<void> {
   try {
     const task = await repo.getById(taskId);
     if (!task || task.agentStatus !== 'failed') return;
@@ -779,6 +785,6 @@ async function retryTransientJiraTask(taskId: string, repo: TaskRepository, agen
     await repo.requestRun(reset.id, Date.now());
     await startAgentForTask(reset, repo, agentManager);
   } catch (error) {
-    console.warn(`[jira-retry] failed to retry task ${taskId}: ${errorMessage(error)}`);
+    console.warn(`[import-retry] failed to retry task ${taskId}: ${errorMessage(error)}`);
   }
 }

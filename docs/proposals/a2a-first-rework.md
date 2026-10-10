@@ -6,7 +6,7 @@
 
 ## Problem statement
 
-Infinite Kanban currently combines a task board with a bespoke remote-worker control plane. The worker path owns registration, enrollment codes, worker tokens, heartbeats, offline detection, task assignment, claims, renewable leases, command polling, event ingestion, and OpenCode session bridging. A separate in-process path executes orchestration and Jira tasks through `AgentManager`.
+Infinite Kanban currently combines a task board with a bespoke remote-worker control plane. The worker path owns registration, enrollment codes, worker tokens, heartbeats, offline detection, task assignment, claims, renewable leases, command polling, event ingestion, and OpenCode session bridging. A separate in-process path executes orchestration tasks through `AgentManager`.
 
 That makes the core product flow indirect and difficult to reason about:
 

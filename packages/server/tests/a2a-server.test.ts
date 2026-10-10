@@ -17,9 +17,6 @@ function project(): Project {
     createdAt: 1,
     updatedAt: 1,
     defaultBaseBranch: 'main',
-    jiraImportEnabled: false,
-    jiraImportIntervalMinutes: 15,
-    jiraImportAutoStart: false,
   };
 }
 

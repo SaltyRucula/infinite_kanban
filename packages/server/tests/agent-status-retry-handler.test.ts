@@ -9,13 +9,13 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: 'task-1',
     projectId: 'project-1',
-    title: 'Jira task',
+    title: 'Imported task',
     description: '',
     priority: 'medium',
     columnId: 'in-progress',
     agentStatus: 'executing',
     createdAt: 1,
-    externalSource: 'jira',
+    externalSource: 'github',
     ...overrides,
   };
 }
@@ -45,7 +45,7 @@ function makeFakeRepo(task: Task) {
   };
 }
 
-test('makeRetryAwareStatusHandler clears the run lease and schedules exactly one retry for a transient Jira failure', async () => {
+test('makeRetryAwareStatusHandler clears the run lease and schedules exactly one retry for a transient failure on an imported task', async () => {
   const task = makeTask();
   const { repo, updates, clearedRunIds } = makeFakeRepo(task);
   const scheduled: Array<{ fn: () => void; delayMs: number }> = [];
@@ -72,6 +72,22 @@ test('makeRetryAwareStatusHandler does not schedule a retry for a non-transient 
   });
 
   await handler('failed', 'Worktree setup failed: Worktree tasks require branchName');
+
+  assert.equal(scheduled.length, 0);
+});
+
+test('makeRetryAwareStatusHandler does not retry a task that was not imported', async () => {
+  // A hand-created card has an author watching it; retrying would hide the
+  // failure from the person who just pressed Run.
+  const task = makeTask({ externalSource: undefined });
+  const { repo } = makeFakeRepo(task);
+  const scheduled: Array<() => void> = [];
+
+  const handler = makeRetryAwareStatusHandler(repo, {} as AgentManager, task, {
+    scheduleRetry: (fn) => { scheduled.push(fn); },
+  });
+
+  await handler('failed', 'OpenCode SDK error: fetch failed — server not reachable');
 
   assert.equal(scheduled.length, 0);
 });

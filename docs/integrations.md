@@ -1,6 +1,6 @@
 # Integrations
 
-Infinite Kanban can create and run work from outside the board: through the **orchestration API** (used by the Hermes plugin and other automation) and the **Jira assigned-issue import**. Both authenticate with scoped service tokens; see [Configuration › Service tokens](configuration.md#service-tokens) for how to define them.
+Infinite Kanban can create and run work from outside the board: through the **orchestration API** (used by the Hermes plugin and other automation) and the **GitHub issue import**. Both authenticate with scoped service tokens; see [Configuration › Service tokens](configuration.md#service-tokens) for how to define them.
 
 ## Orchestration API
 
@@ -55,29 +55,3 @@ Deep links use `AGENT_BOARD_PUBLIC_URL` when set and open the task panel directl
 ### Hermes plugin
 
 [`integrations/hermes-agent-board`](../integrations/hermes-agent-board/README.md) packages this API as Hermes tools (`agent_board_route_task`, `agent_board_get_task`, and others) plus a routing skill. Give it a service token with only the orchestration, project, and agent scopes.
-
-## Jira assigned-issue import
-
-`POST /api/jira/import-assigned` imports the Jira issues assigned to the configured user as backlog tasks. It needs the `JIRA_*` variables from [Configuration › Jira import](configuration.md#jira-import) and, for service tokens, the `jira:import` scope.
-
-```bash
-curl -X POST http://localhost:8080/api/jira/import-assigned \
-  -H "Authorization: Bearer $BOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"projectId":"<project-id>"}'   # omit projectId to use the default project
-```
-
-Behaviour:
-
-- **Read-only.** The server never writes to Jira. It queries `POST /rest/api/2/search` (Data Center compatible) with `assignee = currentUser() AND statusCategory in ("To Do", "In Progress") ORDER BY updated DESC`. Closed and done issues are excluded.
-- **Idempotent.** Tasks are stored with `externalSource: "jira"` and a stable key built from the normalized Jira base URL and issue id, scoped per project. Re-imports skip existing tasks and never overwrite them; only newly created tasks are broadcast to the board.
-- **Errors.** Missing configuration returns `503`; Jira auth or upstream failures return a safe `502` with no token leakage; an import already running for the project returns `409`.
-
-### Scheduled import and auto-start
-
-Configure scheduling per project in **Edit Project**:
-
-- Scheduled import is disabled by default. When enabled it runs every 15 minutes; valid intervals are 5–1,440 minutes.
-- The **Import Jira** button always runs an import immediately, whatever the schedule.
-- Manual and scheduled imports share a per-project overlap lock and persist the last run's time, counts, and error. Schedules resume after a restart.
-- **Auto-start** (off by default) queues imported tasks for execution. It is skipped, with an explanatory event on each task, when the project has no usable repository path, no default agent, or the agent is not ready.

@@ -13,7 +13,7 @@ Browser ── REST /api + WebSocket /ws ──▶ Server (Express, :8080) ─�
 ```
 
 - **Client:** React 19, Vite, Tailwind 4, Framer Motion, `@dnd-kit` for drag and drop, and xterm.js for the terminal-style event viewer. In development Vite proxies `/api` and `/ws` to the server.
-- **Server:** Express routes split by concern (`tasks`, `agent`, `git`, `groups`, `templates`, `projects`, `workers`, `orchestrations`, `jira`, `attachments`), a WebSocket broadcaster, and repositories for SQLite (`better-sqlite3`) and PostgreSQL (`pg`) behind shared interfaces.
+- **Server:** Express routes split by concern (`tasks`, `agent`, `git`, `groups`, `templates`, `projects`, `workers`, `orchestrations`, `attachments`), a WebSocket broadcaster, and repositories for SQLite (`better-sqlite3`) and PostgreSQL (`pg`) behind shared interfaces.
 - **Workers:** pull-based executors. The server never connects to a worker; workers poll it over REST with their own token. See [Workers](workers.md).
 - **Shared:** types (`Task`, `TaskGroup`, `AgentEvent`, …) and validators used by every package.
 
@@ -26,7 +26,7 @@ Agent status runs `idle → planning → executing → complete | failed`, with 
 ## Execution paths
 
 - **Board runs go through workers.** Starting a task from the board requires assigning it to a worker. The server records the run request; the assigned worker claims it with a renewable lease, runs it, streams events, and reports the result. Follow-ups, clarification answers, and cancellation are queued as commands the worker polls. A lease that stops renewing marks the task failed (`worker_offline`).
-- **Integrations can run on the server.** Orchestration requests and Jira auto-start queue runs without a worker; the server's durable run dispatcher claims them and executes them in-process through `AgentManager`.
+- **Integrations can run on the server.** Orchestration requests queue runs without a worker; the server's durable run dispatcher claims them and executes them in-process through `AgentManager`.
 
 ## Agents and the provider pattern
 
