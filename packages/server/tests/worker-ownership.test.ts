@@ -75,6 +75,7 @@ test('workers are owned by configured principals and listings hide hostnames', a
       assert.deepEqual(await ownerA.json(), [{
         id: 'worker-a', name: 'worker a', status: 'online', agentTypes: ['opencode'],
         maxConcurrentTasks: 1, registeredAt: 1, lastHeartbeatAt: 1, updatedAt: 1, ownerId: 'owner-a',
+        acceptedProjectIds: [], acceptedLabels: [],
       }]);
 
       const registered = await fetch(`${baseUrl}/api/workers/register`, {

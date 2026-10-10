@@ -56,7 +56,8 @@ function createDatabase(): Database.Database {
       id TEXT PRIMARY KEY,
       repo_url TEXT,
       goal TEXT,
-      context TEXT
+      context TEXT,
+      worker_pool_enabled INTEGER NOT NULL DEFAULT 0
     );
     INSERT INTO projects (id) VALUES ('default');
     CREATE TABLE tasks (
