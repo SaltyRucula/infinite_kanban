@@ -22,6 +22,13 @@ function createDatabase(): Database.Database {
       accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
       accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      assigned_worker_id TEXT,
+      agent_status TEXT,
+      run_requested_at INTEGER
+    );
   `);
   return db;
 }

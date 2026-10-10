@@ -52,6 +52,13 @@ function createDatabase(): Database.Database {
       session_id TEXT,
       answer TEXT
     );
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      repo_url TEXT,
+      goal TEXT,
+      context TEXT
+    );
+    INSERT INTO projects (id) VALUES ('default');
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
       priority TEXT NOT NULL, column_id TEXT NOT NULL, agent_status TEXT NOT NULL,

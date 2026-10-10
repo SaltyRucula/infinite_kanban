@@ -44,7 +44,7 @@ test('legacy agent values coerce consistently to OpenCode', () => {
   assert.equal(coerceAgentType('claude'), 'opencode');
   assert.equal(coerceAgentType('unknown-provider'), 'opencode');
   assert.equal(coerceOptionalAgentType(null), undefined);
-  assert.equal(coerceOptionalAgentType('codex'), 'opencode');
+  assert.equal(coerceOptionalAgentType('codex'), 'codex');
 });
 
 test('SQLite repositories expose legacy task/template/project/worker values as OpenCode', async () => {
@@ -56,7 +56,7 @@ test('SQLite repositories expose legacy task/template/project/worker values as O
     db.prepare('INSERT INTO workers (id, name, token_hash, status, agent_types_json, max_concurrent_tasks, registered_at, last_heartbeat_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run('worker-1', 'Worker', 'hash', 'online', '["openclaw","grok"]', 1, 1, 1, 1);
 
     assert.equal((await new SqliteTaskRepository(db).getById('task-1'))?.agentType, 'opencode');
-    assert.equal((await new SqliteTemplateRepository(db).getById('template-1'))?.agentType, 'opencode');
+    assert.equal((await new SqliteTemplateRepository(db).getById('template-1'))?.agentType, 'codex');
     assert.equal((await new SqliteProjectRepository(db).getById('default'))?.defaultAgentType, 'opencode');
     assert.deepEqual((await new SqliteWorkerRepository(db).getById('worker-1'))?.agentTypes, ['opencode', 'opencode']);
   } finally {
