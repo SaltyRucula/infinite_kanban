@@ -56,6 +56,8 @@ export interface Task {
   archived?: boolean;
   groupId?: string;
   groupOrder?: number;
+  /** IDs of sibling group tasks that must complete before this task can run. */
+  dependsOn?: string[];
   attachments?: TaskAttachment[];
   projectId: string;
   summary?: string | null;

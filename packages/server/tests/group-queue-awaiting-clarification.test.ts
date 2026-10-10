@@ -156,6 +156,52 @@ class QueueClarificationProvider implements AgentProvider {
   }
 }
 
+test('group queue does not start a dependent child while its prerequisite awaits clarification', async () => {
+  const task1 = makeTask('task-1');
+  const task2 = { ...makeTask('task-2'), dependsOn: [task1.id] } as Task;
+  const repo = new MemoryTaskRepo([task1, task2]);
+  const provider = new QueueClarificationProvider();
+  const manager = new AgentManager();
+  manager.initEventPersistence(repo);
+  manager.registerProvider(provider);
+  manager.setAvailableAgents([{ name: 'opencode', displayName: 'OpenCode', available: true }]);
+
+  const statuses = new Map<string, Task['agentStatus'][]>([
+    [task1.id, []],
+    [task2.id, []],
+  ]);
+
+  manager.startGroup(
+    makeGroup(),
+    [task1, task2],
+    (task) => async (status) => {
+      statuses.get(task.id)?.push(status);
+      await repo.update(task.id, { agentStatus: status });
+    },
+    () => async () => {},
+    async () => {},
+  );
+
+  await waitFor(() => (statuses.get(task1.id) ?? []).includes('awaiting_clarification'));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal((statuses.get(task2.id) ?? []).includes('executing'), false);
+
+  const sessionId = manager.getSessionIdentity(task1.id);
+  assert.ok(sessionId);
+  const resumed = await manager.resumeClarification(task1.id, {
+    requestId: 'req-task-1',
+    sessionId,
+    answer: 'main',
+  });
+  assert.equal(resumed.ok, true);
+  await provider.secondTaskStarted.promise;
+  provider.completeSecondTask();
+  await waitFor(() => (statuses.get(task1.id) ?? []).includes('complete'));
+  await waitFor(() => (statuses.get(task2.id) ?? []).includes('complete'));
+
+  manager.shutdownAll();
+});
+
 test('group queue frees a slot while awaiting clarification and allows resumed child to execute without blocking', async () => {
   const task1 = makeTask('task-1');
   const task2 = makeTask('task-2');
