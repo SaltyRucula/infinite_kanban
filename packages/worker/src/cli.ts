@@ -39,8 +39,19 @@ import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
 
 export type CommandArgs = Readonly<Record<string, string>>;
 type Args = CommandArgs;
-const configPath = path.join(os.homedir(), '.agentboard-worker', 'config.json');
-const workspaceConfigPath = path.join(os.homedir(), '.agentboard-worker', 'workspace.json');
+/**
+ * Worker identity lives in one directory per worker. `AGENTBOARD_WORKER_HOME`
+ * overrides it so a single machine can run several workers — two agents that
+ * hand a task to each other, or one worker per repository. Without the
+ * override every worker on a host would share `~/.agentboard-worker` and the
+ * second registration would overwrite the first one's credentials.
+ *
+ * Faking `HOME` is not an alternative: the agent CLIs resolve their own
+ * credentials and caches from it.
+ */
+const workerHome = process.env.AGENTBOARD_WORKER_HOME?.trim() || path.join(os.homedir(), '.agentboard-worker');
+const configPath = path.join(workerHome, 'config.json');
+const workspaceConfigPath = path.join(workerHome, 'workspace.json');
 const execFile = promisify(execFileCallback);
 
 export type CommandResult = {
