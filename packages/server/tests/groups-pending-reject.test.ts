@@ -16,9 +16,6 @@ function makeProject(): Project {
     isDefault: true,
     createdAt: 1,
     updatedAt: 1,
-    jiraImportEnabled: false,
-    jiraImportIntervalMinutes: 15,
-    jiraImportAutoStart: false,
   };
 }
 

@@ -14,13 +14,9 @@ import { createTemplateRouter } from './routes/templates.js';
 import { createGroupsRouter } from './routes/groups.js';
 import { createAttachmentsRouter } from './routes/attachments.js';
 import { createProjectsRouter } from './routes/projects.js';
-import { createJiraRouter } from './routes/jira.js';
 import { createGitHubRouter } from './routes/github.js';
 import { createA2AAgentsRouter } from './routes/a2a-agents.js';
 import { createA2ARouter } from './a2a/router.js';
-import { JiraImportExecutionService } from './jira/import-execution.js';
-import { JiraImportScheduler } from './jira/import-scheduler.js';
-import { OpenCodeJiraRepositoryRouter } from './jira/repository-router.js';
 import type { AttachmentStore } from './repositories/attachment-types.js';
 import { AgentManager } from './services/agent-manager.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -30,7 +26,7 @@ import type { TaskGroupRepository } from './repositories/group-types.js';
 import type { ProjectRepository } from './repositories/project-types.js';
 import { startAgentForTask } from './routes/helpers.js';
 import { isLoopbackAddress } from './network-policy.js';
-import { createDurableRunRequestedCallback, dispatchPendingRuns } from './run-dispatcher.js';
+import { dispatchPendingRuns } from './run-dispatcher.js';
 import { SqliteWorkerRepository } from './repositories/sqlite-workers.js';
 import { PostgresWorkerRepository } from './repositories/postgres-workers.js';
 import type { WorkerRepository } from './repositories/worker-types.js';
@@ -78,7 +74,6 @@ let workerRepo: WorkerRepository;
 let enrollmentCodeRepo: EnrollmentCodeRepository;
 let a2aAgentRepo: A2AAgentRepository;
 let cleanupDb: () => void;
-let jiraImportScheduler: JiraImportScheduler | undefined;
 
 // Initialize AgentManager
 const agentManager = new AgentManager();
@@ -144,24 +139,7 @@ const agentManager = new AgentManager();
     );
   };
 
-    const jiraImportExecutor = new JiraImportExecutionService({
-      taskRepo,
-      projectRepo,
-      listRoutingProjects: () => projectRepo.getAllWithCounts(),
-      repositoryRouter: new OpenCodeJiraRepositoryRouter(),
-      listAvailableAgents: () => agentManager.getAvailableAgents(),
-    onDurableRunRequested: createDurableRunRequestedCallback({
-      dispatchPendingRuns: dispatchPendingDurableRuns,
-      requestSchedulerTick: () => jiraImportScheduler?.requestTick(),
-    }),
-  });
-  jiraImportScheduler = new JiraImportScheduler({
-    projectRepo,
-    taskRepo,
-    importExecutor: jiraImportExecutor,
-  });
-
-  app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager, () => jiraImportScheduler?.requestTick()));
+  app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager));
   // The board as an A2A server: peers discover it at /.well-known/agent-card.json
   // and send work to /a2a/v1 over JSON-RPC or HTTP+JSON. Mounted outside /api
   // because the paths are fixed by the protocol; it carries its own auth.
@@ -172,7 +150,6 @@ const agentManager = new AgentManager();
     boardVersion: BOARD_VERSION,
     publicUrl: process.env.AGENT_BOARD_PUBLIC_URL?.trim() || `http://${HOST}:${PORT}`,
   }));
-  app.use('/api/jira', createJiraRouter(projectRepo, jiraImportExecutor));
   app.use('/api/github', createGitHubRouter(projectRepo, taskRepo));
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo, workerRepo, groupRepo));
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));
@@ -315,7 +292,6 @@ const agentManager = new AgentManager();
   workerSweepInterval.unref();
 
   server.listen(PORT, HOST, () => {
-    jiraImportScheduler?.start();
     console.log(`[server] listening on http://${HOST}:${PORT}`);
     console.log(`[server] WebSocket at ws://${HOST}:${PORT}/ws`);
     if (process.env.API_KEY) {
@@ -334,7 +310,6 @@ const agentManager = new AgentManager();
     console.log('[server] shutting down...');
     clearInterval(dispatchInterval);
     clearInterval(workerSweepInterval);
-    jiraImportScheduler?.stop();
     agentManager.shutdownAll();
     const closePromise = new Promise<void>((resolve) => {
       server.close(() => {
@@ -348,17 +323,6 @@ const agentManager = new AgentManager();
     forceExitTimer.unref();
 
     void (async () => {
-      try {
-        if (jiraImportScheduler) {
-          const schedulerDrained = await jiraImportScheduler.awaitIdle(4_800);
-          if (!schedulerDrained) {
-            console.warn('[server] jira import scheduler did not drain before shutdown deadline');
-          }
-        }
-      } catch (err) {
-        console.warn('[server] jira scheduler shutdown error:', err);
-      }
-
       try { cleanupDb(); } catch (err) { console.error('[server] db cleanup error:', err); }
       await closePromise;
       clearTimeout(forceExitTimer);

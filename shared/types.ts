@@ -209,16 +209,6 @@ export interface Project {
   goal?: string;
   context?: string;
   aliases?: string[];
-  readonly jiraImportEnabled: boolean;
-  readonly jiraImportIntervalMinutes: number;
-  readonly jiraImportAutoStart: boolean;
-  readonly jiraImportLastRunAt?: number;
-  readonly jiraImportLastCompletedAt?: number;
-  readonly jiraImportLastSuccessAt?: number;
-  readonly jiraImportLastError?: string;
-  readonly jiraImportLastTotal?: number;
-  readonly jiraImportLastCreated?: number;
-  readonly jiraImportLastSkipped?: number;
 }
 
 export interface CreateProjectRequest {
@@ -234,16 +224,6 @@ export interface CreateProjectRequest {
   goal?: string;
   context?: string;
   aliases?: string[];
-  readonly jiraImportEnabled?: boolean;
-  readonly jiraImportIntervalMinutes?: number;
-  readonly jiraImportAutoStart?: boolean;
-  readonly jiraImportLastRunAt?: number;
-  readonly jiraImportLastCompletedAt?: number;
-  readonly jiraImportLastSuccessAt?: number;
-  readonly jiraImportLastError?: string;
-  readonly jiraImportLastTotal?: number;
-  readonly jiraImportLastCreated?: number;
-  readonly jiraImportLastSkipped?: number;
 }
 
 export interface UpdateProjectRequest {
@@ -258,16 +238,6 @@ export interface UpdateProjectRequest {
   goal?: string | null;
   context?: string | null;
   aliases?: string[];
-  readonly jiraImportEnabled?: boolean;
-  readonly jiraImportIntervalMinutes?: number;
-  readonly jiraImportAutoStart?: boolean;
-  readonly jiraImportLastRunAt?: number;
-  readonly jiraImportLastCompletedAt?: number;
-  readonly jiraImportLastSuccessAt?: number;
-  readonly jiraImportLastError?: string;
-  readonly jiraImportLastTotal?: number;
-  readonly jiraImportLastCreated?: number;
-  readonly jiraImportLastSkipped?: number;
 }
 
 /** Server-side Agent Board configuration (persisted to the config file). */
@@ -456,7 +426,8 @@ export interface TaskAttachment {
   createdAt: number;
 }
 
-export interface JiraImportResult {
+/** Result of importing issues from an external tracker (currently GitHub). */
+export interface ImportResult {
   total: number;
   created: number;
   skipped: number;

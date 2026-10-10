@@ -30,7 +30,7 @@ export type {
   TaskClarificationAnswer,
   Column,
   WSMessage,
-  JiraImportResult,
+  ImportResult,
   A2AWorkflowRole,
   WorkflowPhase,
   A2AAgentProjectAccess,

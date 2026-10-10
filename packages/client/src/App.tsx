@@ -21,7 +21,6 @@ import { GroupPanel } from '@/components/GroupPanel';
 import { AgentPanel } from '@/components/AgentPanel';
 import type { TaskGroupWithChildren } from '@/lib/api';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
-import { JiraImportDialog } from '@/components/JiraImportDialog';
 import { ProjectsPage } from '@/components/ProjectsPage';
 import type { ProjectDialogInitialValues } from '@/components/ProjectDialog';
 import { WorkerConsole } from '@/components/Console/WorkerConsole';
@@ -48,7 +47,6 @@ type TaskSubmitData = {
 
 export function BoardPage({
   project,
-  projects,
   theme,
   toggleTheme,
   onBackToProjects,
@@ -56,7 +54,6 @@ export function BoardPage({
   initialTaskId,
 }: {
   project: Project;
-  projects: Project[];
   theme: 'dark' | 'light';
   toggleTheme: () => void;
   onBackToProjects: () => void;
@@ -70,11 +67,10 @@ export function BoardPage({
     defaultBaseBranch: project.defaultBaseBranch,
     defaultUseWorktree: project.defaultUseWorktree,
   };
-  const { tasks, error, clearError, showArchived, setShowArchived, addTask, updateTask, moveTask, runTask, stopTask, resumeClarification, deleteTask, archiveTask, unarchiveTask, openOpenCodeSession, configureAndRunTask, createPR, mergeLocal, cleanupWorktree, importAssignedJira } = useTasks(project.id);
+  const { tasks, error, clearError, showArchived, setShowArchived, addTask, updateTask, moveTask, runTask, stopTask, resumeClarification, deleteTask, archiveTask, unarchiveTask, openOpenCodeSession, configureAndRunTask, createPR, mergeLocal, cleanupWorktree } = useTasks(project.id);
   const { groups, createGroup, runGroup, stopGroup, deleteGroup, updateGroup, refreshGroup } = useTaskGroups(project.id);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
-  const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<TaskGroupWithChildren | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -369,8 +365,6 @@ export function BoardPage({
     if (deletingTask || deletingGroupId) {
       setDeletingTask(null);
       setDeletingGroupId(null);
-    } else if (jiraDialogOpen) {
-      setJiraDialogOpen(false);
     } else if (groupDialogOpen) {
       setGroupDialogOpen(false);
     } else if (dialogOpen) {
@@ -381,11 +375,11 @@ export function BoardPage({
     } else if (selectedTaskId) {
       setSelectedTaskId(null);
     }
-  }, [deletingTask, deletingGroupId, jiraDialogOpen, groupDialogOpen, dialogOpen, selectedGroupId, selectedTaskId]);
+  }, [deletingTask, deletingGroupId, groupDialogOpen, dialogOpen, selectedGroupId, selectedTaskId]);
 
   const isAnyOpen = useCallback(
-    () => jiraDialogOpen || dialogOpen || groupDialogOpen || selectedTaskId !== null || selectedGroupId !== null || deletingTask !== null || deletingGroupId !== null,
-    [jiraDialogOpen, dialogOpen, groupDialogOpen, selectedTaskId, selectedGroupId, deletingTask, deletingGroupId]
+    () => dialogOpen || groupDialogOpen || selectedTaskId !== null || selectedGroupId !== null || deletingTask !== null || deletingGroupId !== null,
+    [dialogOpen, groupDialogOpen, selectedTaskId, selectedGroupId, deletingTask, deletingGroupId]
   );
 
   useKeyboardShortcuts({
@@ -428,7 +422,6 @@ export function BoardPage({
         onClearFilters={handleClearFilters}
         onNewTask={handleOpenDialog}
         onNewGroup={handleOpenGroupDialog}
-        onImportJira={() => setJiraDialogOpen(true)}
       />
 
       <main className="flex-1 overflow-hidden">
@@ -473,14 +466,6 @@ export function BoardPage({
         onEditSubmit={handleEditGroupSubmit}
         lockedRepoPath={lockedRepoPath}
         projectDefaults={projectDefaults}
-      />
-
-      <JiraImportDialog
-        open={jiraDialogOpen}
-        onClose={() => setJiraDialogOpen(false)}
-        onImport={importAssignedJira}
-        projects={projects}
-        defaultProjectId={project.id}
       />
 
       <AgentPanel task={selectedTask} onClose={handleClosePanel} onRun={handleRunWithConfig} onStop={stopTask} onResumeClarification={resumeClarification} onCreatePR={createPR} onMergeLocal={mergeLocal} onCleanupWorktree={cleanupWorktree} onReconfigureRetry={handleReconfigureRetry} theme={theme} />
@@ -542,18 +527,6 @@ function parseCreateQuery(search: string): ProjectDialogInitialValues {
     useWorktreeParam === 'true' || useWorktreeParam === 'false' || useWorktreeParam === 'inherit'
       ? (useWorktreeParam as 'true' | 'false' | 'inherit')
       : undefined;
-  const jiraImportEnabledParam = params.get('jiraImportEnabled');
-  const jiraImportEnabled =
-    jiraImportEnabledParam === 'true'
-      ? true
-      : jiraImportEnabledParam === 'false'
-        ? false
-        : undefined;
-  const jiraImportIntervalParam = params.get('jiraImportIntervalMinutes');
-  const jiraImportIntervalMinutes =
-    jiraImportIntervalParam && !isNaN(Number(jiraImportIntervalParam))
-      ? Number(jiraImportIntervalParam)
-      : undefined;
 
   return {
     source,
@@ -564,8 +537,6 @@ function parseCreateQuery(search: string): ProjectDialogInitialValues {
     defaultPriority: params.get('defaultPriority') ?? undefined,
     defaultBaseBranch: params.get('defaultBaseBranch') ?? undefined,
     defaultUseWorktree,
-    jiraImportEnabled,
-    jiraImportIntervalMinutes,
     autoSubmit: params.get('autostart') === '1',
   };
 }
@@ -673,7 +644,6 @@ export function App() {
       <BoardPage
         key={selectedProject.id}
         project={selectedProject}
-        projects={projects}
         theme={theme}
         toggleTheme={toggleTheme}
         onBackToProjects={() => navigate('/projects')}

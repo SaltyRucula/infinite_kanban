@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Kanban, LayoutList, Search, Archive, ArrowUpDown, Filter, Plus, X, Menu, Download } from 'lucide-react';
+import { ArrowLeft, Kanban, LayoutList, Search, Archive, ArrowUpDown, Filter, Plus, X, Menu } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { FilterChips, type StatusFilter } from './FilterChips';
 import { useConnectionStatus } from '@/hooks/useConnectionStatus';
@@ -29,7 +29,6 @@ interface HeaderProps {
   onClearFilters: () => void;
   onNewTask: () => void;
   onNewGroup: () => void;
-  onImportJira?: () => void;
   title?: string;
   onBackToProjects?: () => void;
   onOpenConsole?: () => void;
@@ -42,7 +41,7 @@ const SORT_OPTIONS: { value: SortBy; label: string }[] = [
   { value: 'status', label: 'Status' },
 ];
 
-export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showArchived, onToggleArchived, sortBy, sortDir, onSortByChange, onSortDirChange, activeAgentTypes, activeStatuses, availableLabels, activeLabels, onToggleAgentType, onToggleStatus, onToggleLabel, onClearFilters, onNewTask, onNewGroup, onImportJira, title = 'AI Agent Board', onBackToProjects, onOpenConsole }: HeaderProps) {
+export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showArchived, onToggleArchived, sortBy, sortDir, onSortByChange, onSortDirChange, activeAgentTypes, activeStatuses, availableLabels, activeLabels, onToggleAgentType, onToggleStatus, onToggleLabel, onClearFilters, onNewTask, onNewGroup, title = 'AI Agent Board', onBackToProjects, onOpenConsole }: HeaderProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuSearchRef = useRef<HTMLInputElement>(null);
@@ -130,17 +129,6 @@ export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showAr
               <Plus className="h-3.5 w-3.5 shrink-0" />
               <span>New Group</span>
             </button>
-            {onImportJira && (
-              <button
-                onClick={onImportJira}
-                className="flex items-center gap-1.5 h-8 rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-300 text-xs font-medium hover:bg-zinc-700 hover:text-zinc-100 transition-colors px-3"
-                aria-label="Import Jira"
-                title="Import assigned issues from Jira"
-              >
-                <Download className="h-3.5 w-3.5 shrink-0" />
-                <span>Import Jira</span>
-              </button>
-            )}
           </div>
 
           {/* Divider */}
@@ -271,16 +259,6 @@ export function Header({ theme, toggleTheme, searchQuery, onSearchChange, showAr
               <Plus className="h-3.5 w-3.5 shrink-0" />
               New Group
             </button>
-            {onImportJira && (
-              <button
-                onClick={() => { onImportJira(); setMobileMenuOpen(false); }}
-                className="flex flex-1 items-center justify-center gap-1.5 h-9 rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-300 text-xs font-medium hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
-                aria-label="Import Jira"
-              >
-                <Download className="h-3.5 w-3.5 shrink-0" />
-                Import Jira
-              </button>
-            )}
           </div>
 
           {/* Sort row */}

@@ -651,31 +651,6 @@ test.describe('Projects API', () => {
     expect(overrideGroup).toMatchObject({ priority: 'low', baseBranch: 'main' });
     expect(overrideGroup.children?.[0]).toMatchObject({ agentType: 'opencode', useWorktree: true });
   });
-
-  test('validates scheduled Jira import parameters in project creation and updates', async ({ request }) => {
-    const repoPath = prepareTestRepo('projects-api-jira-schedule-val', { clean: true });
-
-    const lowIntervalRes = await request.post(`${API}/api/projects`, {
-      data: { name: 'Low Interval Project', repoPath, jiraImportEnabled: true, jiraImportIntervalMinutes: 2 },
-    });
-    expect(lowIntervalRes.status()).toBe(400);
-
-    const highIntervalRes = await request.post(`${API}/api/projects`, {
-      data: { name: 'High Interval Project', repoPath, jiraImportEnabled: true, jiraImportIntervalMinutes: 2000 },
-    });
-    expect(highIntervalRes.status()).toBe(400);
-
-    const validRes = await request.post(`${API}/api/projects`, {
-      data: { name: 'Valid Schedule Project', repoPath, jiraImportEnabled: true, jiraImportIntervalMinutes: 45 },
-    });
-    expect(validRes.status()).toBe(201);
-    const project = await validRes.json() as Project;
-    createdProjectIds.push(project.id);
-    expect(project).toMatchObject({
-      jiraImportEnabled: true,
-      jiraImportIntervalMinutes: 45,
-    });
-  });
 });
 
 test.describe('Projects page', () => {
@@ -923,73 +898,6 @@ test.describe('Projects page', () => {
       defaultBaseBranch: 'develop',
       defaultUseWorktree: true,
     });
-  });
-
-  test('configures, saves, and reopens scheduled Jira import settings through the project dialog', async ({ page, request }) => {
-    const repoPath = prepareTestRepo('projects-ui-jira-schedule', { clean: true });
-    const projectName = `Jira Schedule Project ${Date.now()}`;
-    let createdProjectId: string | undefined;
-
-    await page.goto('/projects');
-    await page.getByRole('button', { name: 'New Project' }).click();
-    await expect(page.getByRole('heading', { name: 'Create Project' })).toBeVisible();
-    await page.getByLabel('Project Name').fill(projectName);
-    await page.getByLabel('Local Path').fill(repoPath);
-
-    const scheduleCheckbox = page.getByLabel('Enable scheduled Jira import');
-    const intervalInput = page.getByLabel('Import interval (minutes)');
-    await expect(scheduleCheckbox).not.toBeChecked();
-    await expect(intervalInput).toBeDisabled();
-    await expect(intervalInput).toHaveValue('15');
-
-    await page.getByLabel('Enable scheduled Jira import').click();
-    await expect(scheduleCheckbox).toBeChecked();
-    await expect(intervalInput).toBeEnabled();
-    await intervalInput.fill('30');
-
-    await page.getByRole('button', { name: 'Create Project' }).click();
-    const projectCard = page.getByRole('article', { name: projectName });
-    await expect(projectCard).toBeVisible();
-
-    const listRes = await request.get(`${API}/api/projects`);
-    expect(listRes.ok()).toBe(true);
-    const projects = await listRes.json() as Project[];
-    const created = projects.find((p) => p.name === projectName);
-    expect(created).toBeTruthy();
-    createdProjectId = created!.id;
-    createdProjectIds.push(createdProjectId);
-
-    expect(created).toMatchObject({
-      jiraImportEnabled: true,
-      jiraImportIntervalMinutes: 30,
-    });
-
-    await projectCard.getByRole('button', { name: `Edit ${projectName}` }).click();
-    const editDialog = page.getByRole('dialog', { name: 'Edit Project' });
-    await expect(editDialog).toBeVisible();
-
-    const editScheduleCheckbox = editDialog.getByLabel('Enable scheduled Jira import');
-    const editIntervalInput = editDialog.getByLabel('Import interval (minutes)');
-    await expect(editScheduleCheckbox).toBeChecked();
-    await expect(editIntervalInput).toBeEnabled();
-    await expect(editIntervalInput).toHaveValue('30');
-
-    await editIntervalInput.fill('60');
-    await editDialog.getByRole('button', { name: 'Save Changes' }).click();
-    await expect(editDialog).not.toBeVisible();
-
-    const updatedRes = await request.get(`${API}/api/projects/${createdProjectId}`);
-    expect(updatedRes.ok()).toBe(true);
-    const updatedProject = await updatedRes.json() as Project;
-    expect(updatedProject).toMatchObject({
-      jiraImportEnabled: true,
-      jiraImportIntervalMinutes: 60,
-    });
-
-    await projectCard.getByRole('button', { name: `Edit ${projectName}` }).click();
-    await expect(editDialog).toBeVisible();
-    await expect(editDialog.getByLabel('Enable scheduled Jira import')).toBeChecked();
-    await expect(editDialog.getByLabel('Import interval (minutes)')).toHaveValue('60');
   });
 });
 

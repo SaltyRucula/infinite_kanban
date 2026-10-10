@@ -19,16 +19,6 @@ interface ProjectRow {
   goal: string | null;
   context: string | null;
   aliases: string;
-  jira_import_enabled: number;
-  jira_import_interval_minutes: number;
-  jira_import_auto_start: number;
-  jira_import_last_run_at: number | null;
-  jira_import_last_completed_at: number | null;
-  jira_import_last_success_at: number | null;
-  jira_import_last_error: string | null;
-  jira_import_last_total: number | null;
-  jira_import_last_created: number | null;
-  jira_import_last_skipped: number | null;
 }
 
 interface CountRow {
@@ -57,16 +47,6 @@ function rowToProject(row: ProjectRow, taskCounts?: ProjectTaskCounts): Project 
     goal: row.goal ?? undefined,
     context: row.context ?? undefined,
     aliases: JSON.parse(row.aliases || '[]'),
-    jiraImportEnabled: Boolean(row.jira_import_enabled),
-    jiraImportIntervalMinutes: row.jira_import_interval_minutes,
-    jiraImportLastRunAt: row.jira_import_last_run_at ?? undefined,
-    jiraImportLastCompletedAt: row.jira_import_last_completed_at ?? undefined,
-    jiraImportLastSuccessAt: row.jira_import_last_success_at ?? undefined,
-    jiraImportLastError: row.jira_import_last_error ?? undefined,
-    jiraImportLastTotal: row.jira_import_last_total ?? undefined,
-    jiraImportLastCreated: row.jira_import_last_created ?? undefined,
-    jiraImportLastSkipped: row.jira_import_last_skipped ?? undefined,
-    jiraImportAutoStart: Boolean(row.jira_import_auto_start),
     ...(taskCounts ? { taskCounts } : {}),
   };
 }
@@ -114,31 +94,15 @@ export class SqliteProjectRepository implements ProjectRepository {
     goal?: string;
     context?: string;
     aliases?: string[];
-    jiraImportEnabled?: boolean;
-    jiraImportIntervalMinutes?: number;
-    jiraImportLastRunAt?: number;
-    jiraImportLastCompletedAt?: number;
-    jiraImportLastSuccessAt?: number;
-    jiraImportLastError?: string;
-    jiraImportLastTotal?: number;
-    jiraImportLastCreated?: number;
-    jiraImportLastSkipped?: number;
-    jiraImportAutoStart?: boolean;
     createdAt: number;
     updatedAt: number;
   }): Promise<Project> {
     return this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO projects (id, name, repo_path, repo_url, is_default, created_at, updated_at,
-          default_agent_type, default_priority, default_base_branch, default_use_worktree, goal, context, aliases,
-          jira_import_enabled, jira_import_interval_minutes, jira_import_auto_start, jira_import_last_run_at,
-          jira_import_last_completed_at, jira_import_last_success_at, jira_import_last_error,
-          jira_import_last_total, jira_import_last_created, jira_import_last_skipped)
+          default_agent_type, default_priority, default_base_branch, default_use_worktree, goal, context, aliases)
         VALUES (@id, @name, @repo_path, @repo_url, @is_default, @created_at, @updated_at,
-          @default_agent_type, @default_priority, @default_base_branch, @default_use_worktree, @goal, @context, @aliases,
-          @jira_import_enabled, @jira_import_interval_minutes, @jira_import_auto_start, @jira_import_last_run_at,
-          @jira_import_last_completed_at, @jira_import_last_success_at, @jira_import_last_error,
-          @jira_import_last_total, @jira_import_last_created, @jira_import_last_skipped)
+          @default_agent_type, @default_priority, @default_base_branch, @default_use_worktree, @goal, @context, @aliases)
       `).run({
         id: input.id,
         name: input.name,
@@ -154,16 +118,6 @@ export class SqliteProjectRepository implements ProjectRepository {
         goal: input.goal ?? null,
         context: input.context ?? null,
         aliases: JSON.stringify(input.aliases ?? []),
-        jira_import_enabled: input.jiraImportEnabled === true ? 1 : 0,
-        jira_import_interval_minutes: input.jiraImportIntervalMinutes ?? 15,
-        jira_import_auto_start: input.jiraImportAutoStart === true ? 1 : 0,
-        jira_import_last_run_at: input.jiraImportLastRunAt ?? null,
-        jira_import_last_completed_at: input.jiraImportLastCompletedAt ?? null,
-        jira_import_last_success_at: input.jiraImportLastSuccessAt ?? null,
-        jira_import_last_error: input.jiraImportLastError ?? null,
-        jira_import_last_total: input.jiraImportLastTotal ?? null,
-        jira_import_last_created: input.jiraImportLastCreated ?? null,
-        jira_import_last_skipped: input.jiraImportLastSkipped ?? null,
       });
       const created = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(input.id) as ProjectRow;
       return rowToProject(created, this.getCounts(input.id));
@@ -181,16 +135,6 @@ export class SqliteProjectRepository implements ProjectRepository {
     goal?: string | null;
     context?: string | null;
     aliases?: string[];
-    jiraImportEnabled?: boolean;
-    jiraImportIntervalMinutes?: number;
-    jiraImportLastRunAt?: number | null;
-    jiraImportLastCompletedAt?: number | null;
-    jiraImportLastSuccessAt?: number | null;
-    jiraImportLastError?: string | null;
-    jiraImportLastTotal?: number | null;
-    jiraImportLastCreated?: number | null;
-    jiraImportLastSkipped?: number | null;
-    jiraImportAutoStart?: boolean;
     updatedAt: number;
   }): Promise<Project | undefined> {
     return this.db.transaction(() => {
@@ -212,27 +156,12 @@ export class SqliteProjectRepository implements ProjectRepository {
         goal: updates.goal === undefined ? row.goal : updates.goal,
         context: updates.context === undefined ? row.context : updates.context,
         aliases: updates.aliases === undefined ? row.aliases : JSON.stringify(updates.aliases),
-        jira_import_enabled: updates.jiraImportEnabled === undefined ? row.jira_import_enabled : updates.jiraImportEnabled ? 1 : 0,
-        jira_import_auto_start: updates.jiraImportAutoStart === undefined ? row.jira_import_auto_start : updates.jiraImportAutoStart ? 1 : 0,
-        jira_import_interval_minutes: updates.jiraImportIntervalMinutes ?? row.jira_import_interval_minutes,
-        jira_import_last_run_at: updates.jiraImportLastRunAt === undefined ? row.jira_import_last_run_at : updates.jiraImportLastRunAt,
-        jira_import_last_completed_at: updates.jiraImportLastCompletedAt === undefined ? row.jira_import_last_completed_at : updates.jiraImportLastCompletedAt,
-        jira_import_last_success_at: updates.jiraImportLastSuccessAt === undefined ? row.jira_import_last_success_at : updates.jiraImportLastSuccessAt,
-        jira_import_last_error: updates.jiraImportLastError === undefined ? row.jira_import_last_error : updates.jiraImportLastError,
-        jira_import_last_total: updates.jiraImportLastTotal === undefined ? row.jira_import_last_total : updates.jiraImportLastTotal,
-        jira_import_last_created: updates.jiraImportLastCreated === undefined ? row.jira_import_last_created : updates.jiraImportLastCreated,
-        jira_import_last_skipped: updates.jiraImportLastSkipped === undefined ? row.jira_import_last_skipped : updates.jiraImportLastSkipped,
       };
       this.db.prepare(`
         UPDATE projects
         SET name = @name, repo_path = @repo_path, repo_url = @repo_url, is_default = @is_default, updated_at = @updated_at,
           default_agent_type = @default_agent_type, default_priority = @default_priority,
-          default_base_branch = @default_base_branch, default_use_worktree = @default_use_worktree, goal = @goal, context = @context, aliases = @aliases,
-          jira_import_enabled = @jira_import_enabled, jira_import_interval_minutes = @jira_import_interval_minutes, jira_import_auto_start = @jira_import_auto_start,
-          jira_import_last_run_at = @jira_import_last_run_at, jira_import_last_completed_at = @jira_import_last_completed_at,
-          jira_import_last_success_at = @jira_import_last_success_at, jira_import_last_error = @jira_import_last_error,
-          jira_import_last_total = @jira_import_last_total, jira_import_last_created = @jira_import_last_created,
-          jira_import_last_skipped = @jira_import_last_skipped
+          default_base_branch = @default_base_branch, default_use_worktree = @default_use_worktree, goal = @goal, context = @context, aliases = @aliases
         WHERE id = @id
       `).run(merged);
       const updated = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow;

@@ -37,22 +37,11 @@ const child = spawn(isWindows ? 'npx tsx src/index.ts' : 'npx', isWindows ? [] :
     API_KEY: '',
     SERVICE_TOKENS: JSON.stringify([
       { token: 'e2e-worker-registration-token', scopes: ['workers:register'] },
-      { token: 'e2e-full-scope-token', scopes: ['projects:read', 'agents:read', 'a2a:send', 'jira:import', 'workers:register', 'workers:manage'] },
+      { token: 'e2e-full-scope-token', scopes: ['projects:read', 'agents:read', 'a2a:send', 'workers:register', 'workers:manage'] },
     ]),
     ALLOWED_ORIGINS: `http://localhost:${clientPort}`,
     ALLOWED_REPO_ROOTS: allowedRepoRoots,
     AGENTBOARD_HOME: agentboardHome,
-    // dotenv (loaded by src/index.ts) fills in any var absent here from
-    // packages/server/.env — without these overrides the e2e server picks
-    // up real Jira credentials from that file and Jira-import specs would
-    // silently call the real company Jira instead of a test's local fake
-    // server (see git blame). jira-assigned-agent-automation-f3.spec.ts's
-    // fake server listens on 127.0.0.1:3909; other specs mock at the
-    // browser/route level and don't depend on this value.
-    JIRA_BASE_URL: 'http://127.0.0.1:3909',
-    JIRA_USER_EMAIL: 'e2e@example.com',
-    JIRA_API_TOKEN: 'e2e-fake-token',
-    JIRA_IS_DATACENTER: 'false',
     // E2E never runs real agents; skip booting agent SDK clients so an
     // unauthenticated environment can't crash the server on startup.
     AGENTBOARD_DISABLE_AGENT_STARTUP: '1',

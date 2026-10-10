@@ -192,7 +192,7 @@ Two implementation notes worth keeping:
 
 ## 8. Security notes
 
-- A2A adds no new trust assumptions if the card's `securitySchemes` map onto today's tokens: full-access `API_KEY`, scoped `SERVICE_TOKENS` (`jira:import`-style scopes extend to `a2a:send`), per-worker tokens for the worker binding.
+- A2A adds no new trust assumptions if the card's `securitySchemes` map onto today's tokens: full-access `API_KEY`, scoped `SERVICE_TOKENS` (scopes such as `a2a:send`), per-worker tokens for the worker binding.
 - Outbound client calls must honour `network-policy.ts`: an A2A endpoint URL is attacker-influenced input, so it needs the same allowlist/SSRF treatment as the loopback session-bridge URL normalisation already applied in `routes/workers.ts`.
 - Push-notification webhook URLs are client-supplied: validate scheme/host, require a token, never follow redirects.
 - Inbound `Part`s are untrusted: enforce `MAX_TITLE_LENGTH`/`MAX_DESCRIPTION_LENGTH`, media-type allowlist, and attachment size limits; never accept `repoPath`, `worktreePath`, or any host path from a peer.

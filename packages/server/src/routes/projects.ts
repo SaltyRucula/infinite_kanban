@@ -13,7 +13,6 @@ import { broadcast } from '../websocket.js';
 import { MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH, isValidAgentType, isValidPriority } from '@ai-agent-board/shared/constants.js';
 import { errorMessage } from '../utils.js';
 import { getConfig, getCloneRoot, setCloneRoot } from '../config.js';
-import { parseJiraImportCreateSchedule, parseJiraImportSchedule } from '../jira/schedule-config.js';
 import {
   asyncHandler,
   broadcastProjectDelete,
@@ -199,18 +198,8 @@ export function createProjectsRouter(
   taskRepo: TaskRepository,
   groupRepo: TaskGroupRepository,
   agentManager: AgentManager,
-  onJiraImportScheduleChange?: () => void,
 ): Router {
   const router = Router();
-
-  const refreshJiraImportSchedule = () => {
-    if (!onJiraImportScheduleChange) return;
-    try {
-      onJiraImportScheduleChange();
-    } catch (err) {
-      console.warn('[projects] failed to refresh jira import schedule:', errorMessage(err));
-    }
-  };
 
   router.get('/', asyncHandler(async (_req: Request, res: Response) => {
     res.json(await projectRepo.getAllWithCounts());
@@ -325,8 +314,6 @@ export function createProjectsRouter(
     if (goal === 'invalid' || context === 'invalid') { res.status(400).json({ error: `goal and context must be strings of at most ${MAX_DESCRIPTION_LENGTH} characters` }); return; }
     const defaults = parseProjectDefaults(req.body, false);
     if (typeof defaults === 'string') { res.status(400).json({ error: defaults }); return; }
-    const schedule = parseJiraImportCreateSchedule(req.body);
-    if (typeof schedule === 'string') { res.status(400).json({ error: schedule }); return; }
 
     const project = await projectRepo.create({
       id: uuid(),
@@ -339,12 +326,10 @@ export function createProjectsRouter(
       defaultUseWorktree: defaults.defaultUseWorktree ?? undefined, aliases,
       ...(goal ? { goal } : {}),
       ...(context ? { context } : {}),
-      ...schedule,
       createdAt: now,
       updatedAt: now,
     });
     broadcastProjectUpdate(project);
-    refreshJiraImportSchedule();
     res.status(201).json(project);
   }));
 
@@ -365,16 +350,6 @@ export function createProjectsRouter(
       defaultBaseBranch?: string | null;
       defaultUseWorktree?: boolean | null;
       aliases?: string[];
-      jiraImportEnabled?: boolean;
-      jiraImportIntervalMinutes?: number;
-      jiraImportLastRunAt?: number | null;
-      jiraImportLastCompletedAt?: number | null;
-      jiraImportLastSuccessAt?: number | null;
-      jiraImportLastError?: string | null;
-      jiraImportLastTotal?: number | null;
-      jiraImportLastCreated?: number | null;
-      jiraImportLastSkipped?: number | null;
-      jiraImportAutoStart?: boolean;
       updatedAt: number;
     } = {
       updatedAt: Date.now(),
@@ -440,15 +415,11 @@ export function createProjectsRouter(
     const parsedDefaults = parseProjectDefaults(req.body, true);
     if (typeof parsedDefaults === 'string') { res.status(400).json({ error: parsedDefaults }); return; }
     Object.assign(updates, parsedDefaults);
-    const parsedSchedule = parseJiraImportSchedule(req.body, true);
-    if (typeof parsedSchedule === 'string') { res.status(400).json({ error: parsedSchedule }); return; }
-    Object.assign(updates, parsedSchedule);
     if (req.body.aliases !== undefined) { const aliases=parseAliases(req.body.aliases); if (typeof aliases === 'string') { res.status(400).json({error:aliases}); return; } updates.aliases=aliases; }
 
     const updated = await projectRepo.update(id, updates);
     if (!updated) { res.status(404).json({ error: 'project not found' }); return; }
     broadcastProjectUpdate(updated);
-    refreshJiraImportSchedule();
     res.json(updated);
   }));
 
@@ -485,7 +456,6 @@ export function createProjectsRouter(
       broadcast({ type: 'task_deleted', payload: { id: task.id } });
     }
     broadcastProjectDelete(id);
-    refreshJiraImportSchedule();
     res.status(204).send();
   }));
 

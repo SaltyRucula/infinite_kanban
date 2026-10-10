@@ -22,13 +22,13 @@
 - **Human in the loop.** Send follow-up messages to a running agent and answer its clarifying questions; tasks waiting on you sit in a dedicated **Pending** column.
 - **Safe git workflow.** Optional per-task branches in git worktrees, one-click local merge or PR creation, and automatic worktree cleanup.
 - **Task groups.** Launch 2–20 related tasks at once with a parallelism limit and track them as one card.
-- **Integrations.** An idempotent orchestration API for chat assistants and automation, plus scheduled import of your assigned Jira issues.
+- **Integrations.** An idempotent orchestration API for chat assistants and automation, plus import of open GitHub repository issues.
 - **Everyday board tools.** Projects, templates, priorities, labels, filters and search, archiving, keyboard shortcuts, and dark/light themes.
 - **Simple storage.** SQLite with zero configuration, or PostgreSQL for shared deployments.
 
 ## How it works
 
-1. **Create a task** in Backlog, or import it from Jira or the orchestration API.
+1. **Create a task** in Backlog, or import it from GitHub issues or the orchestration API.
 2. **Assign a worker and start it.** The task moves to **In Progress** and the worker's agent begins, streaming events to the board.
 3. **Steer if needed.** Send follow-up messages, and answer the agent's clarifying questions from the task panel.
 4. **Review.** Completed work moves to **Review** with the agent's output and changes.
@@ -104,7 +104,7 @@ More in [Development](docs/development.md).
 | [Workers](docs/workers.md) | Registering and running workers, runner profiles, Docker worker |
 | [A2A](docs/a2a.md) | Agent-to-agent protocol: endpoints, sending work, streaming, conformance check |
 | [Deployment](docs/deployment.md) | systemd + nginx + Cloudflare, Docker Compose, macOS launchd, security checklist |
-| [Integrations](docs/integrations.md) | Orchestration API, Hermes plugin, Jira import and scheduling |
+| [Integrations](docs/integrations.md) | Orchestration API, Hermes plugin, GitHub issue import |
 | [Development](docs/development.md) | Local workflow, tests, required gate |
 | [Architecture](docs/architecture.md) | Components, task lifecycle, execution paths, events and retention |
 

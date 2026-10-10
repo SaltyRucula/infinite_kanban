@@ -15,7 +15,6 @@ import type {
   UpdateProjectRequest,
   ProjectPathValidation,
   ProjectConfig,
-  JiraImportResult,
   A2AAgent,
   A2AWorkflowRole,
 } from '@/types';
@@ -230,9 +229,6 @@ export const api = {
 
   unarchiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/unarchive`, { method: 'PATCH' }),
-
-  importAssignedJira: (projectId: string) =>
-    request<JiraImportResult>('/jira/import-assigned', { method: 'POST', body: JSON.stringify({ projectId }) }),
 
   // --- Groups ---
   getGroups: (includeArchived = false, projectId?: string) =>

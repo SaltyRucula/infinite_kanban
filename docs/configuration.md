@@ -39,17 +39,6 @@ This is the authoritative reference for Infinite Kanban's environment variables.
 | `PROJECTS_DIR` | _(unset)_ | Extra root added to the default allowlist when `ALLOWED_REPO_ROOTS` is unset. |
 | `AGENTBOARD_DISABLE_AGENT_STARTUP` | _(unset)_ | Set to `1`/`true` to skip agent detection at startup (used by tests). |
 
-### Jira import
-
-All Jira variables are server-only and never sent to the client or logs. Behaviour is described in [Integrations › Jira](integrations.md#jira-assigned-issue-import).
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JIRA_BASE_URL` | _(unset)_ | Jira base URL, e.g. `https://jira.example.com`. |
-| `JIRA_USER_EMAIL` | _(unset)_ | Jira user email (required for basic auth mode). |
-| `JIRA_API_TOKEN` | _(unset)_ | Jira API token, used only in the `Authorization` header sent to Jira. |
-| `JIRA_IS_DATACENTER` | `false` | `true` = `Bearer <token>` (Jira Data Center). Otherwise basic `email:token` (Jira Cloud). |
-
 ### Service tokens
 
 `SERVICE_TOKENS` holds credentials for integrations that should not get full `API_KEY` access. Prefer storing the SHA-256 digest of the token instead of the token itself:
@@ -65,7 +54,6 @@ SERVICE_TOKENS='[{"sha256":"<sha256-of-token>","scopes":["projects:read","agents
 | `orchestrations:create` | `POST /api/orchestrations`, `POST /api/orchestrations/:id/retry` |
 | `orchestrations:read` | `GET /api/orchestrations/:id` |
 | `orchestrations:message` | `POST /api/orchestrations/:id/message` |
-| `jira:import` | `/api/jira/*` |
 | `workers:register` | `POST /api/workers/register` (worker bootstrap) |
 
 Service tokens cannot merge, create PRs, delete resources, or mutate projects. When `API_KEY` is set, every route requires either the API key or a service token with the matching scope. When only `SERVICE_TOKENS` is set, the browser/API surface stays open (behind your outer access boundary) and only the scoped routes above require a token. Worker endpoints under `/api/workers/me/*` always authenticate with the worker's own token instead.

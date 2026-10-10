@@ -1,4 +1,4 @@
-import type { JiraImportResult, Priority, Project, Task, TaskProvenance } from '../types.js';
+import type { ImportResult, Priority, Project, Task, TaskProvenance } from '../types.js';
 import { MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH } from '@ai-agent-board/shared/constants.js';
 import { buildTask } from '../routes/helpers.js';
 import type { GitHubIssue } from './client.js';
@@ -63,7 +63,7 @@ function toTask(issue: GitHubIssue, project: Project): Task {
   });
 }
 
-export async function importGitHubIssues(deps: GitHubImportDependencies): Promise<JiraImportResult> {
+export async function importGitHubIssues(deps: GitHubImportDependencies): Promise<ImportResult> {
   const tasks: Task[] = [];
   let skipped = 0;
   for (const issue of deps.issues) {

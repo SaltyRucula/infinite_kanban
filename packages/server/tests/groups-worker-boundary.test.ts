@@ -20,9 +20,6 @@ const project: Project = {
   defaultPriority: 'medium',
   defaultBaseBranch: 'main',
   defaultUseWorktree: true,
-  jiraImportEnabled: false,
-  jiraImportIntervalMinutes: 15,
-  jiraImportAutoStart: false,
 };
 
 function makeGroup(): TaskGroup {

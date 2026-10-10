@@ -14,14 +14,9 @@ function createDatabase(): Database.Database {
       id TEXT PRIMARY KEY, name TEXT NOT NULL, repo_path TEXT, repo_url TEXT,
       is_default INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
       default_agent_type TEXT, default_priority TEXT, default_base_branch TEXT,
-      default_use_worktree INTEGER, aliases TEXT NOT NULL DEFAULT '[]',
-      jira_import_enabled INTEGER NOT NULL DEFAULT 0, jira_import_interval_minutes INTEGER NOT NULL DEFAULT 15,
-      jira_import_auto_start INTEGER NOT NULL DEFAULT 0, jira_import_last_run_at INTEGER,
-      jira_import_last_completed_at INTEGER, jira_import_last_success_at INTEGER,
-      jira_import_last_error TEXT, jira_import_last_total INTEGER, jira_import_last_created INTEGER,
-      jira_import_last_skipped INTEGER
+      default_use_worktree INTEGER, aliases TEXT NOT NULL DEFAULT '[]'
     );
-    INSERT INTO projects VALUES ('default', 'Default', NULL, NULL, 1, 1, 1, NULL, NULL, NULL, NULL, '[]', 0, 15, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    INSERT INTO projects VALUES ('default', 'Default', NULL, NULL, 1, 1, 1, NULL, NULL, NULL, NULL, '[]');
     CREATE TABLE task_groups (id TEXT PRIMARY KEY, project_id TEXT, column_id TEXT, archived INTEGER);
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY, project_id TEXT, title TEXT, description TEXT, priority TEXT, column_id TEXT,

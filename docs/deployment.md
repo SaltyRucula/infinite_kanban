@@ -70,7 +70,7 @@ cp .env.example .env   # set POSTGRES_PASSWORD, ALLOWED_HOSTS, ALLOWED_ORIGINS
 docker compose --env-file .env up -d --build
 ```
 
-The stack leaves `API_KEY` unset, so the board is open to anyone who can reach port 80. Run it only on a private network or behind your own access layer. Use `SERVICE_TOKENS` to protect the orchestration, Jira, and worker-registration routes.
+The stack leaves `API_KEY` unset, so the board is open to anyone who can reach port 80. Run it only on a private network or behind your own access layer. Use `SERVICE_TOKENS` to protect the orchestration and worker-registration routes.
 
 ## Option 3: macOS login services (launchd)
 
