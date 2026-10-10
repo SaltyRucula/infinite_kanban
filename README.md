@@ -102,6 +102,7 @@ More in [Development](docs/development.md).
 |-------|--------|
 | [Configuration](docs/configuration.md) | All environment variables, service-token scopes |
 | [Workers](docs/workers.md) | Registering and running workers, runner profiles, Docker worker |
+| [A2A](docs/a2a.md) | Agent-to-agent protocol: endpoints, sending work, streaming, conformance check |
 | [Deployment](docs/deployment.md) | systemd + nginx + Cloudflare, Docker Compose, macOS launchd, security checklist |
 | [Integrations](docs/integrations.md) | Orchestration API, Hermes plugin, Jira import and scheduling |
 | [Development](docs/development.md) | Local workflow, tests, required gate |

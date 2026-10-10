@@ -1,5 +1,6 @@
 import express, { type Router } from 'express';
-import { DefaultRequestHandler, UnauthenticatedUser, type User } from '@a2a-js/sdk/server';
+import { DefaultRequestHandler, type User } from '@a2a-js/sdk/server';
+import { TaskState } from '@a2a-js/sdk';
 import { agentCardHandler, jsonRpcHandler, restHandler } from '@a2a-js/sdk/server/express';
 import { BOARD_A2A_BASE_PATH, boardAgentCard } from '@ai-agent-board/a2a/cards.js';
 import type { TaskRepository } from '../repositories/types.js';
@@ -9,6 +10,8 @@ import { authenticateToken } from '../middleware/auth.js';
 import { getAllTasksAcrossProjects } from '../startup-recovery.js';
 import { cancelBoardTask } from './cancel.js';
 import { CancellationLog } from './cancellations.js';
+import { A2APeerUser, BoardEventBusManager } from './call-context.js';
+import { boardEvents, type BoardEventHub } from './event-hub.js';
 import { BoardAgentExecutor } from './executor.js';
 import { BoardTaskStore } from './task-store.js';
 
@@ -25,15 +28,46 @@ export interface A2ARouterOptions {
   readonly boardVersion: string;
   /** Public origin peers reach this board on, e.g. `https://kanban.example.com`. */
   readonly publicUrl: string;
-}
-
-class A2APeer implements User {
-  constructor(private readonly principal: string) {}
-  get isAuthenticated(): boolean { return true; }
-  get userName(): string { return this.principal; }
+  /** Live board activity for streaming peers; defaults to the process-wide hub. */
+  readonly events?: BoardEventHub;
 }
 
 const PEER_KEY = 'a2aPeer';
+const STREAMING_KEY = 'a2aStreaming';
+
+/**
+ * Whether this request asked for a stream, decided from the request itself:
+ * the JSON-RPC method for the JSON-RPC binding, the `:subscribe` suffix for
+ * the REST binding. The marker then rides on the user so both the executor and
+ * the bus manager can see it.
+ */
+export function isStreamingRequest(req: express.Request): boolean {
+  const method = (req.body as { method?: unknown } | undefined)?.method;
+  if (method === 'SendStreamingMessage' || method === 'SubscribeToTask') return true;
+  if (typeof method === 'string') return false;
+  // REST binding: POST /a2a/v1/message:stream, POST /a2a/v1/tasks/{id}:subscribe
+  return /:(stream|subscribe)$/.test(req.path);
+}
+
+/**
+ * Drops an unset `status` filter from a `ListTasks` call.
+ *
+ * The official `@a2a-js/sdk` client serializes "no status filter" as the proto
+ * `UNRECOGNIZED` sentinel (`-1`), which the SDK's own server then refuses with
+ * `Invalid status filter: -1` — so an unfiltered `listTasks()` from the
+ * reference client fails against a stock server. Normalizing the sentinel to
+ * absent here makes the common call work; a real filter is untouched and still
+ * validated by the handler.
+ *
+ * Remove once the SDK stops emitting the sentinel (tracked in docs/a2a.md).
+ */
+export function normalizeListTasksStatus(req: express.Request): void {
+  const body = req.body as { method?: unknown; params?: { status?: unknown } } | undefined;
+  const isListTasks = body?.method === 'ListTasks' || /\/tasks$/.test(req.path);
+  if (!isListTasks || !body?.params) return;
+  const status = body.params.status;
+  if (status === -1 || status === 'UNRECOGNIZED') delete body.params.status;
+}
 
 export function authRequired(): boolean {
   return Boolean(process.env.API_KEY) || Boolean(process.env.SERVICE_TOKENS);
@@ -49,6 +83,8 @@ export function authRequired(): boolean {
  * of an exception surfacing through the protocol handler as a server error.
  */
 export function a2aAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  res.locals[STREAMING_KEY] = isStreamingRequest(req);
+  normalizeListTasksStatus(req);
   if (!authRequired()) { next(); return; }
 
   const header = req.headers.authorization;
@@ -63,10 +99,18 @@ export function a2aAuthMiddleware(req: express.Request, res: express.Response, n
   next();
 }
 
-/** Maps the already-authenticated principal onto the SDK's user model. */
+/**
+ * Maps the already-authenticated principal onto the SDK's user model, carrying
+ * the streaming marker so bus lifetime can depend on the call (see
+ * `call-context.ts`).
+ */
 export async function buildA2AUser(req: express.Request): Promise<User> {
-  const principal = (req.res?.locals as Record<string, unknown> | undefined)?.[PEER_KEY];
-  return typeof principal === 'string' ? new A2APeer(principal) : new UnauthenticatedUser();
+  const locals = req.res?.locals as Record<string, unknown> | undefined;
+  const principal = locals?.[PEER_KEY];
+  const streaming = locals?.[STREAMING_KEY] === true;
+  return typeof principal === 'string'
+    ? new A2APeerUser(principal, streaming, true)
+    : new A2APeerUser('anonymous', streaming, false);
 }
 
 /**
@@ -100,7 +144,23 @@ export function createA2ARouter(options: A2ARouterOptions): Router {
       agents: options.agents,
       deepLink,
       cancellations,
+      events: options.events ?? boardEvents,
     }),
+    new BoardEventBusManager(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      // Bus lifetime is decided per call by BoardEventBusManager (streaming
+      // keeps it, blocking sends settle immediately). These states apply only
+      // to the calls that manager declines, and match the SDK default of
+      // keeping an interrupted run attachable.
+      keepBusAliveStates: [
+        TaskState.TASK_STATE_INPUT_REQUIRED,
+        TaskState.TASK_STATE_AUTH_REQUIRED,
+      ],
+    },
   );
 
   const router = express.Router();

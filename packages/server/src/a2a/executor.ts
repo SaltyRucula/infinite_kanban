@@ -2,6 +2,7 @@ import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestCon
 import { Role, TaskState } from '@a2a-js/sdk';
 import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { BOARD_EXTENSION_URI } from '@ai-agent-board/a2a/extension.js';
+import { isTerminalTaskState, toTaskState } from '@ai-agent-board/a2a/state.js';
 import type { TaskRepository } from '../repositories/types.js';
 import type { ProjectRepository } from '../repositories/project-types.js';
 import type { AgentManager } from '../services/agent-manager.js';
@@ -10,6 +11,9 @@ import { broadcastTaskUpdate, buildTask, startAgentForTask } from '../routes/hel
 import { cancelBoardTask } from './cancel.js';
 import type { CancellationLog } from './cancellations.js';
 import { intakeWorkRequest, type BoardWorkRequest } from './intake.js';
+import { isStreamingCall } from './call-context.js';
+import type { BoardEventHub } from './event-hub.js';
+import { relayTaskUpdates } from './relay.js';
 import { contextIdFor, toA2ATask } from './projection.js';
 import type { Task } from '../types.js';
 
@@ -20,6 +24,12 @@ export interface BoardAgentExecutorOptions {
   readonly deepLink?: (taskId: string, projectId: string) => string;
   /** Shared with the task store so a cancelled run projects as cancelled. */
   readonly cancellations: CancellationLog;
+  /**
+   * Live board activity, relayed to streaming peers. Absent in contexts that
+   * only need request/response (the board then behaves as before: the peer
+   * receives the admitted task and polls `GetTask`).
+   */
+  readonly events?: BoardEventHub;
 }
 
 /** Marks the board's refusal to take the work at all (A2A `TASK_STATE_REJECTED`). */
@@ -50,6 +60,7 @@ export class BoardAgentExecutor implements AgentExecutor {
   private readonly agents: AgentManager;
   private readonly deepLink?: (taskId: string, projectId: string) => string;
   private readonly cancellations: CancellationLog;
+  private readonly events?: BoardEventHub;
 
   constructor(options: BoardAgentExecutorOptions) {
     this.taskRepo = options.taskRepo;
@@ -57,6 +68,7 @@ export class BoardAgentExecutor implements AgentExecutor {
     this.agents = options.agents;
     this.deepLink = options.deepLink;
     this.cancellations = options.cancellations;
+    this.events = options.events;
   }
 
   execute = async (requestContext: RequestContext, eventBus: ExecutionEventBus): Promise<void> => {
@@ -87,8 +99,40 @@ export class BoardAgentExecutor implements AgentExecutor {
     // minutes to an hour and is carried out by the normal execution path. The
     // peer follows it with `GetTask`, a stream, or a push notification.
     eventBus.publish(AgentEvent.task(this.project(task)));
-    eventBus.finished();
+    this.streamUntilTerminal(task, eventBus, requestContext);
   };
+
+  /**
+   * Keeps the bus open for the life of the run so a streaming peer receives
+   * progress, then ends the stream on the first terminal state.
+   *
+   * A run that is already terminal (or a board with no event hub wired) gets
+   * the previous behaviour: close immediately and let the peer poll.
+   */
+  private streamUntilTerminal(
+    task: Task,
+    eventBus: ExecutionEventBus,
+    requestContext: RequestContext,
+  ): void {
+    const state = toTaskState(
+      { agentStatus: task.agentStatus, columnId: task.columnId },
+      this.cancellations.has(task.id) ? { canceled: true } : {},
+    );
+    // A blocking `SendMessage` waits for the bus to settle, so only a caller
+    // that asked for a stream gets a bus held open for the run's lifetime.
+    if (!this.events || !isStreamingCall(requestContext.context) || isTerminalTaskState(state)) {
+      eventBus.finished();
+      return;
+    }
+    relayTaskUpdates({
+      taskId: task.id,
+      contextId: contextIdFor(task),
+      eventBus,
+      hub: this.events,
+      cancellations: this.cancellations,
+      loadTask: (id) => this.taskRepo.getById(id),
+    });
+  }
 
   cancelTask = async (taskId: string, eventBus: ExecutionEventBus): Promise<void> => {
     const cleared = await cancelBoardTask(
