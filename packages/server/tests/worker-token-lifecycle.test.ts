@@ -30,7 +30,9 @@ function createDatabase(): Database.Database {
       updated_at INTEGER NOT NULL,
       disabled_at INTEGER,
       token_issued_at INTEGER NOT NULL,
-      owner_id TEXT
+      owner_id TEXT,
+      accepted_project_ids_json TEXT NOT NULL DEFAULT '[]',
+      accepted_labels_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE TABLE worker_task_sessions (
       task_id TEXT NOT NULL,
