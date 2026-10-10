@@ -199,6 +199,51 @@ test('group create does not inherit project paths and returns portable children'
   });
 });
 
+test('group create resolves child dependency indexes to generated sibling IDs', async () => {
+  const harness = createHarness();
+  await withApp(harness, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/groups`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Ordered deploy',
+        children: [
+          { title: 'Apply infrastructure' },
+          { title: 'Deploy application', dependsOn: [0] },
+        ],
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    const created = harness.created.children;
+    assert.ok(created);
+    assert.deepEqual(created[1]?.dependsOn, [created[0]?.id]);
+    const body = await response.json();
+    assert.deepEqual(body.children[1]?.dependsOn, [body.children[0]?.id]);
+  });
+});
+
+test('group create rejects cyclic child dependencies before persisting a group', async () => {
+  const harness = createHarness();
+  await withApp(harness, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/groups`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Cyclic deploy',
+        children: [
+          { title: 'Apply infrastructure', dependsOn: [1] },
+          { title: 'Deploy application', dependsOn: [0] },
+        ],
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(String((await response.json()).error), /cycle/i);
+    assert.equal(harness.created.group, undefined);
+  });
+});
+
 test('group run requires worker assignment and never starts a server agent group', async () => {
   const harness = createHarness([makeChild('child-1')]);
   await withApp(harness, async (baseUrl) => {

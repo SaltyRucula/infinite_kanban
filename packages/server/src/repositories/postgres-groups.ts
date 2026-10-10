@@ -39,6 +39,7 @@ interface TaskRow {
   archived: boolean;
   group_id: string | null;
   group_order: number | null;
+  depends_on: string | null;
   timeout_minutes: number | null;
 }
 
@@ -81,6 +82,7 @@ function rowToTask(row: TaskRow): Task {
     archived: row.archived,
     groupId: row.group_id ?? undefined,
     groupOrder: row.group_order ?? undefined,
+    dependsOn: row.depends_on ? JSON.parse(row.depends_on) as string[] : undefined,
     timeoutMinutes: row.timeout_minutes ?? undefined,
     labels: [],
   };
@@ -142,19 +144,21 @@ export class PostgresTaskGroupRepository implements TaskGroupRepository {
           agentType: child.agentType,
           branchName: child.branchName,
           groupId: group.id,
-           groupOrder: child.groupOrder ?? i,
-           labels: child.labels ?? [],
+          groupOrder: child.groupOrder ?? i,
+          dependsOn: child.dependsOn,
+          labels: child.labels ?? [],
            ...(child.agentPreference === undefined ? {} : { agentPreference: child.agentPreference }),
         };
 
         await client.query(
           `INSERT INTO tasks (id, project_id, title, description, priority, column_id, agent_status, agent_type,
-             created_at, repo_path, base_branch, use_worktree, branch_name, archived, group_id, group_order, labels, agent_preference)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+             created_at, repo_path, base_branch, use_worktree, branch_name, archived, group_id, group_order, depends_on, labels, agent_preference)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
           [task.id, task.projectId, task.title, task.description, task.priority, task.columnId, task.agentStatus,
             task.agentType ?? 'opencode', task.createdAt, task.repoPath ?? null,
            task.baseBranch ?? null, task.useWorktree ?? null, task.branchName ?? null,
-            false, group.id, task.groupOrder ?? i, JSON.stringify(task.labels ?? []), task.agentPreference ?? null],
+            false, group.id, task.groupOrder ?? i, task.dependsOn ? JSON.stringify(task.dependsOn) : null,
+            JSON.stringify(task.labels ?? []), task.agentPreference ?? null],
         );
 
         createdChildren.push(task);

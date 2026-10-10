@@ -29,6 +29,8 @@ export interface CreateGroupChild {
   description?: string;
   agentType?: AgentType;
   useWorktree?: boolean;
+  /** Zero-based indexes of sibling children that must complete first. */
+  dependsOn?: number[];
 }
 
 export interface ResumeClarificationRequest {

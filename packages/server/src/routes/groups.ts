@@ -124,6 +124,9 @@ export function createGroupsRouter(
       }
     }
 
+    const dependencyError = validateChildDependencies(children);
+    if (dependencyError) { res.status(400).json({ error: dependencyError }); return; }
+
     const now = Date.now();
     const groupId = uuid();
 
@@ -143,12 +146,16 @@ export function createGroupsRouter(
       createdAt: now,
     };
 
+    const childIds = children.map(() => uuid());
     const childDefs = children.map((child: any, i: number) => {
       const useWorktree = child.useWorktree !== undefined
         ? child.useWorktree
         : (project.defaultUseWorktree ?? true);
+      const dependsOn = Array.isArray(child.dependsOn)
+        ? child.dependsOn.map((index: number) => childIds[index])
+        : undefined;
       return {
-        id: uuid(),
+        id: childIds[i],
         projectId: project.id,
         title: child.title.trim(),
         description: child.description?.trim() || '',
@@ -161,6 +168,7 @@ export function createGroupsRouter(
         groupId,
         groupOrder: i,
         labels: [],
+        ...(dependsOn === undefined ? {} : { dependsOn }),
       };
     });
 
@@ -403,6 +411,51 @@ export function createGroupsRouter(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
+
+function validateChildDependencies(children: any[]): string | undefined {
+  const dependencies: number[][] = [];
+
+  for (let childIndex = 0; childIndex < children.length; childIndex++) {
+    const raw = children[childIndex]?.dependsOn;
+    if (raw === undefined) {
+      dependencies.push([]);
+      continue;
+    }
+    if (!Array.isArray(raw) || !raw.every(Number.isInteger)) {
+      return `children[${childIndex}].dependsOn must be an array of child indexes`;
+    }
+    if (new Set(raw).size !== raw.length) {
+      return `children[${childIndex}].dependsOn must not contain duplicate indexes`;
+    }
+    for (const dependencyIndex of raw) {
+      if (dependencyIndex < 0 || dependencyIndex >= children.length) {
+        return `children[${childIndex}].dependsOn references an unknown child index`;
+      }
+      if (dependencyIndex === childIndex) {
+        return `children[${childIndex}].dependsOn cannot reference itself`;
+      }
+    }
+    dependencies.push(raw);
+  }
+
+  const visiting = new Set<number>();
+  const visited = new Set<number>();
+  const visit = (childIndex: number): boolean => {
+    if (visiting.has(childIndex)) return true;
+    if (visited.has(childIndex)) return false;
+    visiting.add(childIndex);
+    for (const dependencyIndex of dependencies[childIndex]) {
+      if (visit(dependencyIndex)) return true;
+    }
+    visiting.delete(childIndex);
+    visited.add(childIndex);
+    return false;
+  };
+
+  return dependencies.some((_, childIndex) => visit(childIndex))
+    ? 'children dependencies must not contain a cycle'
+    : undefined;
+}
 
 function slugify(text: string): string {
   return text

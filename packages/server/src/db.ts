@@ -231,6 +231,7 @@ function migrate(db: Database.Database): void {
   if (!colNames.has('worker_attempt')) db.exec(`ALTER TABLE tasks ADD COLUMN worker_attempt INTEGER NOT NULL DEFAULT 0`);
   if (!colNames.has('labels')) db.exec(`ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'`);
   if (!colNames.has('agent_preference')) db.exec(`ALTER TABLE tasks ADD COLUMN agent_preference TEXT`);
+  if (!colNames.has('depends_on')) db.exec(`ALTER TABLE tasks ADD COLUMN depends_on TEXT`);
   db.exec(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS workers (
@@ -489,6 +490,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
          worker_attempt INTEGER NOT NULL DEFAULT 0,
          labels TEXT NOT NULL DEFAULT '[]',
          agent_preference TEXT,
+        depends_on TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (group_id) REFERENCES task_groups(id) ON DELETE CASCADE
       );
@@ -499,7 +501,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes
         , clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
-         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference
+         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference, depends_on
       )
       SELECT
         id, title, description, priority, column_id, agent_status, created_at,
@@ -507,7 +509,7 @@ function ensureSqliteProjectForeignKeys(db: Database.Database): void {
         worktree_path, agent_type, archived, project_id, group_id, group_order, summary,
         external_source, external_key, provenance, run_requested_at, run_claimed_at, timeout_minutes,
         clarification_request, clarification_answer, assigned_worker_id, worker_claim_token_hash,
-         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference
+         worker_claimed_at, worker_lease_expires_at, worker_attempt, labels, agent_preference, depends_on
       FROM tasks;
 
       DROP TABLE tasks;
@@ -703,6 +705,7 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   await addCol('worker_attempt', 'INTEGER NOT NULL DEFAULT 0');
   await addCol('labels', "TEXT NOT NULL DEFAULT '[]'");
   await addCol('agent_preference', 'TEXT');
+  await addCol('depends_on', 'TEXT');
   await pool.query(`UPDATE tasks SET agent_type = 'opencode' WHERE agent_type IS NULL OR agent_type NOT IN ('opencode', 'codex')`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workers (
