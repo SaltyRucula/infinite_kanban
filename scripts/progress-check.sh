@@ -14,4 +14,10 @@ if [ ! -d node_modules ]; then
   npm ci --include=dev --ignore-scripts --no-audit --fund=false >/dev/null 2>&1
 fi
 
+# Workspace packages are symlinked, so the worker imports their built output.
+# Without this the suite dies on a missing @ai-agent-board/a2a/dist file.
+npm run build:shared >/dev/null 2>&1
+npm run build:a2a >/dev/null 2>&1
+npm run build -w @ai-agent-board/opencode-compat >/dev/null 2>&1
+
 node --import tsx/esm --test --test-timeout=30000 packages/worker/tests/execution-progress.test.ts
