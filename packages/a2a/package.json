@@ -12,7 +12,8 @@
     "./extension.js": "./dist/extension.js",
     "./state.js": "./dist/state.js",
     "./events.js": "./dist/events.js",
-    "./assignment.js": "./dist/assignment.js"
+    "./assignment.js": "./dist/assignment.js",
+    "./execution.js": "./dist/execution.js"
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.3.0",

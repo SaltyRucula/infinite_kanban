@@ -14,6 +14,7 @@ import {
 import type { Task, AgentEvent, Priority, ColumnId } from '@/types';
 import { api, connectWS } from '@/lib/api';
 import { useWorkRequestGroups } from '@/hooks/useWorkRequestGroups';
+import { WorkflowPanel } from '../WorkflowPanel';
 
 interface TaskDetailPanelProps {
   task: Task | null;
@@ -265,6 +266,7 @@ export function TaskDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        <WorkflowPanel key={task.id} taskId={task.id} />
         <div className="flex flex-wrap gap-2">
           {isRunning ? (
             <button

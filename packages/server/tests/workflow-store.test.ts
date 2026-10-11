@@ -1,0 +1,7 @@
+import assert from 'node:assert/strict';import test from 'node:test';import {newDb} from 'pg-mem';import Database from 'better-sqlite3';
+import {PostgresWorkflowStore,SqliteWorkflowStore,type BoardWorkflowRun} from '../src/repositories/workflow-store.js';
+test('SQLite and PostgreSQL SQL preserve complete documents across reconstruction and fence conflicting writers',async()=>{
+ const sqlite=new Database(':memory:');const pg=newDb().adapters.createPg();const pool=new pg.Pool();const postgres=new PostgresWorkflowStore(pool as any);await postgres.init();
+ const stores=[new SqliteWorkflowStore(sqlite),postgres];
+ try{for(const store of stores){const run:BoardWorkflowRun={id:'r',taskId:'t',projectId:'p',version:0,phase:'implementing',repository:'https://github.com/o/r',baseRevision:'a'.repeat(40),requirements:'Requirements',requiredCapabilities:[],policy:{autoFinish:false,maxRounds:3,maxDispatches:6,deadline:123,requiredChecks:[]},assignments:[],diagnostics:[]};await store.save(run,0);const competing=(await store.get('t'))!;run.phase='canceled';await store.save(run,1);competing.phase='done';await assert.rejects(()=>store.save(competing,1),/concurrently/);assert.equal((await store.get('t'))?.phase,'canceled');assert.equal((await store.list()).length,1);const reopened=store instanceof SqliteWorkflowStore?new SqliteWorkflowStore(sqlite):new PostgresWorkflowStore(pool as any);assert.deepEqual(await reopened.get('t'),run);}}finally{sqlite.close();await pool.end();}
+});

@@ -8,7 +8,8 @@
   },
   "exports": {
     "./types.js": "./dist/types.js",
-    "./constants.js": "./dist/constants.js"
+    "./constants.js": "./dist/constants.js",
+    "./execution.js": "./dist/execution.js"
   },
   "devDependencies": {
     "typescript": "~5.7.0"

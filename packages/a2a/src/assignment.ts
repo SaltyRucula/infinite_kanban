@@ -39,6 +39,7 @@ function dataPart(value: unknown): Part {
 export function assignmentPrompt(assignment: WorkerTaskAssignment): string {
   const lines = [assignment.title];
   if (assignment.description) lines.push('', assignment.description);
+  if (assignment.repoUrl) lines.push('', `Repository: ${assignment.repoUrl}`);
   if (assignment.project?.goal) lines.push('', `Project goal: ${assignment.project.goal}`);
   if (assignment.project?.context) lines.push(`Project context: ${assignment.project.context}`);
   if (assignment.mode === 'review') {

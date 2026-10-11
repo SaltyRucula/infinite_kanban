@@ -30,6 +30,8 @@ export interface A2ARouterOptions {
   readonly publicUrl: string;
   /** Live board activity for streaming peers; defaults to the process-wide hub. */
   readonly events?: BoardEventHub;
+  /** Refuse legacy mutation of tasks controlled by the board coordinator. */
+  readonly ownsTask?: (taskId: string) => Promise<boolean>;
 }
 
 const PEER_KEY = 'a2aPeer';
@@ -128,7 +130,7 @@ export function createA2ARouter(options: A2ARouterOptions): Router {
   });
 
   const cancellations = new CancellationLog();
-  const cancelDeps = { taskRepo: options.taskRepo, agents: options.agents, cancellations };
+  const cancelDeps = { taskRepo: options.taskRepo, agents: options.agents, cancellations, ownsTask: options.ownsTask };
   const requestHandler = new DefaultRequestHandler(
     card,
     new BoardTaskStore({
@@ -145,6 +147,7 @@ export function createA2ARouter(options: A2ARouterOptions): Router {
       deepLink,
       cancellations,
       events: options.events ?? boardEvents,
+      ownsTask: options.ownsTask,
     }),
     new BoardEventBusManager(),
     undefined,
@@ -167,6 +170,26 @@ export function createA2ARouter(options: A2ARouterOptions): Router {
   // The card is public discovery metadata (spec §8.2) and carries no task data.
   router.use(A2A_AGENT_CARD_PATH, agentCardHandler({ agentCardProvider: requestHandler }));
   router.use(BOARD_A2A_BASE_PATH, a2aAuthMiddleware);
+  // Refuse before the SDK creates/updates an event bus or cached Task. Throwing
+  // inside an executor would instead be projected by the SDK as a failed task.
+  router.use(BOARD_A2A_BASE_PATH, async (req, res, next) => {
+    try {
+      const body = req.body;
+      const rpc = typeof body?.method === 'string';
+      const method = rpc ? body.method : req.path;
+      const params = rpc ? body.params : body;
+      let taskId: unknown;
+      if (['CancelTask', 'tasks/cancel'].includes(method)) taskId = params?.id;
+      else if (['SendMessage', 'SendStreamingMessage', 'message/send', 'message/stream'].includes(method) || /\/message:(send|stream)$/.test(method)) taskId = params?.message?.taskId;
+      else if (req.method === 'POST' && /\/tasks\/[^/]+:cancel$/.test(req.path)) taskId = decodeURIComponent(req.path.match(/\/tasks\/([^/]+):cancel$/)![1]);
+      if (typeof taskId === 'string' && await options.ownsTask?.(taskId)) {
+        const message = 'task is owned by its workflow; use workflow approval/cancel';
+        res.status(409).json(rpc ? { jsonrpc: '2.0', id: body.id, error: { code: -32000, message } } : { error: message });
+        return;
+      }
+      next();
+    } catch (error) { next(error); }
+  });
   router.use(BOARD_A2A_BASE_PATH, jsonRpcHandler({ requestHandler, userBuilder: buildA2AUser }));
   router.use(BOARD_A2A_BASE_PATH, restHandler({ requestHandler, userBuilder: buildA2AUser }));
   return router;

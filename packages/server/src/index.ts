@@ -16,6 +16,10 @@ import { createAttachmentsRouter } from './routes/attachments.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createGitHubRouter } from './routes/github.js';
 import { createA2AAgentsRouter } from './routes/a2a-agents.js';
+import { createBoardWorkflowRouter } from './routes/board-workflow.js';
+import { createWorkflowOwnershipGuard } from './routes/workflow-ownership.js';
+import { BoardWorkflowCoordinator } from './services/board-workflow.js';
+import { SqliteWorkflowStore, PostgresWorkflowStore, type WorkflowStore } from './repositories/workflow-store.js';
 import { createA2ARouter } from './a2a/router.js';
 import type { AttachmentStore } from './repositories/attachment-types.js';
 import { AgentManager } from './services/agent-manager.js';
@@ -73,6 +77,7 @@ let attachmentStore: AttachmentStore;
 let workerRepo: WorkerRepository;
 let enrollmentCodeRepo: EnrollmentCodeRepository;
 let a2aAgentRepo: A2AAgentRepository;
+let workflowStore: WorkflowStore;
 let cleanupDb: () => void;
 
 // Initialize AgentManager
@@ -102,6 +107,9 @@ const agentManager = new AgentManager();
     attachmentStore = new PostgresAttachmentStore(pool);
     const { PostgresA2AAgentRepository } = await import('./repositories/postgres-a2a-agents.js');
     a2aAgentRepo = new PostgresA2AAgentRepository(pool);
+    const pgWorkflowStore = new PostgresWorkflowStore(pool);
+    await pgWorkflowStore.init();
+    workflowStore = pgWorkflowStore;
     cleanupDb = () => { pool.end(); };
     console.log('[server] using PostgreSQL backend');
   } else {
@@ -121,6 +129,7 @@ const agentManager = new AgentManager();
     attachmentStore = new SqliteAttachmentStore(db);
     const { SqliteA2AAgentRepository } = await import('./repositories/sqlite-a2a-agents.js');
     a2aAgentRepo = new SqliteA2AAgentRepository(db);
+    workflowStore = new SqliteWorkflowStore(db);
     cleanupDb = () => { db.close(); };
     console.log('[server] using SQLite backend');
   }
@@ -139,6 +148,9 @@ const agentManager = new AgentManager();
     );
   };
 
+  const workflow = new BoardWorkflowCoordinator(workflowStore, taskRepo, a2aAgentRepo);
+  app.use('/api/tasks', createBoardWorkflowRouter(workflow));
+  app.use('/api', createWorkflowOwnershipGuard(workflow, { tasks: taskRepo, groups: groupRepo }));
   app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager));
   // The board as an A2A server: peers discover it at /.well-known/agent-card.json
   // and send work to /a2a/v1 over JSON-RPC or HTTP+JSON. Mounted outside /api
@@ -149,7 +161,10 @@ const agentManager = new AgentManager();
     agents: agentManager,
     boardVersion: BOARD_VERSION,
     publicUrl: process.env.AGENT_BOARD_PUBLIC_URL?.trim() || `http://${HOST}:${PORT}`,
+    ownsTask: (taskId) => workflow.ownsTask(taskId),
   }));
+  const workflowTimer = setInterval(() => { void workflow.tick().catch(e => console.error('[workflow] reconciliation failed', e)); }, 1000);
+  workflowTimer.unref();
   app.use('/api/github', createGitHubRouter(projectRepo, taskRepo));
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo, workerRepo, groupRepo));
   app.use('/api/tasks', createAgentRouter(taskRepo, agentManager, groupRepo, projectRepo, workerRepo));

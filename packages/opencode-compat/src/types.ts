@@ -55,7 +55,7 @@ export type TurnOpts = {
   readonly disabledTools?: Readonly<Record<string, boolean>>;
 };
 
-export type TurnResult = { readonly text: string; readonly error?: string };
+export type TurnResult = { readonly text: string; /** Final assistant message only, excluding earlier tool-step narration. */ readonly finalText?: string; readonly error?: string };
 
 /**
  * A tool call awaiting a human/agent answer (v2's structured question

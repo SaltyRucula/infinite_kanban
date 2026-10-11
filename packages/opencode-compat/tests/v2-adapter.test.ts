@@ -193,6 +193,7 @@ test('runTurn blocks until the SSE terminal event, not until /prompt responds (a
 
     assert.ok(elapsed >= delayMs - 20, `expected runTurn to block at least ~${delayMs}ms, took ${elapsed}ms`);
     assert.equal(result.text, 'DONE');
+    assert.equal(result.finalText, 'DONE');
     assert.equal(result.error, undefined);
 
     // The /prompt call itself must have returned near-instantly (well
