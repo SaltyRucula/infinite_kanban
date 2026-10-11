@@ -24,6 +24,7 @@ export interface BoardAgentExecutorOptions {
   readonly deepLink?: (taskId: string, projectId: string) => string;
   /** Shared with the task store so a cancelled run projects as cancelled. */
   readonly cancellations: CancellationLog;
+  readonly ownsTask?: (taskId: string) => Promise<boolean>;
   /**
    * Live board activity, relayed to streaming peers. Absent in contexts that
    * only need request/response (the board then behaves as before: the peer
@@ -60,6 +61,7 @@ export class BoardAgentExecutor implements AgentExecutor {
   private readonly agents: AgentManager;
   private readonly deepLink?: (taskId: string, projectId: string) => string;
   private readonly cancellations: CancellationLog;
+  private readonly ownsTask?: (taskId: string) => Promise<boolean>;
   private readonly events?: BoardEventHub;
 
   constructor(options: BoardAgentExecutorOptions) {
@@ -68,6 +70,7 @@ export class BoardAgentExecutor implements AgentExecutor {
     this.agents = options.agents;
     this.deepLink = options.deepLink;
     this.cancellations = options.cancellations;
+    this.ownsTask = options.ownsTask;
     this.events = options.events;
   }
 
@@ -136,7 +139,7 @@ export class BoardAgentExecutor implements AgentExecutor {
 
   cancelTask = async (taskId: string, eventBus: ExecutionEventBus): Promise<void> => {
     const cleared = await cancelBoardTask(
-      { taskRepo: this.taskRepo, agents: this.agents, cancellations: this.cancellations },
+      { taskRepo: this.taskRepo, agents: this.agents, cancellations: this.cancellations, ownsTask: this.ownsTask },
       taskId,
     );
     if (!cleared) throw new TaskNotFoundError(`task ${taskId} does not exist`);
@@ -147,6 +150,9 @@ export class BoardAgentExecutor implements AgentExecutor {
   private async continueTask(requestContext: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
     const existing = requestContext.task;
     if (!existing) throw new TaskNotFoundError('no task to continue');
+    if (await this.ownsTask?.(existing.id)) {
+      throw new UnsupportedOperationError('task is owned by its workflow; legacy follow-up is forbidden');
+    }
     const task = await this.taskRepo.getById(existing.id);
     if (!task) throw new TaskNotFoundError(`task ${existing.id} does not exist`);
 

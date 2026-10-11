@@ -1,3 +1,4 @@
+import { UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import type { TaskRepository } from '../repositories/types.js';
 import type { AgentManager } from '../services/agent-manager.js';
 import { broadcastTaskUpdate } from '../routes/helpers.js';
@@ -8,6 +9,7 @@ export interface CancelBoardTaskDeps {
   readonly taskRepo: TaskRepository;
   readonly agents: AgentManager;
   readonly cancellations: CancellationLog;
+  readonly ownsTask?: (taskId: string) => Promise<boolean>;
 }
 
 /**
@@ -21,6 +23,9 @@ export interface CancelBoardTaskDeps {
  * observation of a cancelled status (when it is not).
  */
 export async function cancelBoardTask(deps: CancelBoardTaskDeps, taskId: string): Promise<Task | undefined> {
+  if (await deps.ownsTask?.(taskId)) {
+    throw new UnsupportedOperationError('task is owned by its workflow; use workflow cancellation');
+  }
   const task = await deps.taskRepo.getById(taskId);
   if (!task) return undefined;
 

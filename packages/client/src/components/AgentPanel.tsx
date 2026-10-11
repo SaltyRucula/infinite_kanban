@@ -37,6 +37,7 @@ import type {
 import { classifyAgentEventImportance } from '@/types';
 import { getAgentDisplay } from '@/lib/agent-config';
 import { TerminalView } from './TerminalView';
+import { WorkflowPanel } from './WorkflowPanel';
 import { api, connectWS } from '@/lib/api';
 import type { ResumeClarificationRequest, ResumeClarificationResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -1074,6 +1075,7 @@ export function AgentPanel({ task, onClose, onRun, onStop, onResumeClarification
             </div>
           )}
 
+          <WorkflowPanel key={task.id} taskId={task.id} />
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
             <div className="min-w-0 flex-1">

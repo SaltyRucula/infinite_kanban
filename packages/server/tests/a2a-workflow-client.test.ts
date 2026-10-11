@@ -84,7 +84,7 @@ test('dispatches, polls, retries and cancels through a secret-free JSON-RPC boun
       if (sendAttempts === 1) return respond(response, { error: 'retry' }, 503);
       return respond(response, {
         jsonrpc: '2.0', id: payload.id,
-        result: { id: 'remote-task-1', status: { state: 'working' } },
+        result: { task: { id: 'remote-task-1', status: { state: 'TASK_STATE_WORKING' } } },
       });
     }
     if (payload.method === 'GetTask') {
@@ -228,7 +228,7 @@ test('rejects a direct message answer with an actionable error', async () => {
     fetcher: async () => new Response(JSON.stringify({
       jsonrpc: '2.0',
       id: 'message-only-1',
-      result: { messageId: 'reply-1', role: 'ROLE_AGENT', parts: [{ text: 'done already' }] },
+      result: { message: { messageId: 'reply-1', role: 'ROLE_AGENT', parts: [{ text: 'done already' }] } },
     }), { headers: { 'content-type': 'application/json' } }),
   });
   const params = createA2AMessageSendParams(ticket(), {

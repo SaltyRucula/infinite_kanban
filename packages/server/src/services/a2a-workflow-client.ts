@@ -39,7 +39,7 @@ export interface A2ATextPart {
 export interface A2AMessage {
   readonly role: 'ROLE_USER';
   readonly messageId: string;
-  readonly parts: readonly A2ATextPart[];
+  readonly parts: readonly (A2ATextPart | { readonly data: unknown })[];
 }
 
 export interface A2AMessageSendParams {
@@ -51,7 +51,7 @@ export interface A2ADispatchReceipt {
   readonly remoteTaskId: string;
 }
 
-export type A2ARemoteTaskState = 'pending' | 'running' | 'input_required' | 'completed' | 'failed' | 'canceled';
+export type A2ARemoteTaskState = 'pending' | 'running' | 'input_required' | 'completed' | 'failed' | 'canceled' | 'rejected';
 
 export interface A2ARemoteTaskUpdate {
   readonly state: A2ARemoteTaskState;
@@ -107,6 +107,8 @@ function normalizedState(value: unknown): A2ARemoteTaskState {
       return 'input_required';
     case 'completed':
       return 'completed';
+    case 'rejected':
+      return 'rejected';
     case 'failed':
       return 'failed';
     case 'canceled':
@@ -193,9 +195,9 @@ export class JsonRpcA2AExecutor {
    * protocol version: flattened parts for v1.0, tagged parts for v0.3.
    */
   private wireParams(params: A2AMessageSendParams): unknown {
-    const parts = params.message.parts.map((part) => (this.protocolVersion === '1.0'
-      ? { text: part.text }
-      : { kind: 'text', text: part.text }));
+    const parts = params.message.parts.map((part) => ('data' in part
+      ? (this.protocolVersion === '1.0' ? { data: part.data } : { kind: 'data', data: part.data })
+      : (this.protocolVersion === '1.0' ? { text: part.text } : { kind: 'text', text: part.text })));
     return {
       message: {
         role: this.protocolVersion === '1.0' ? 'ROLE_USER' : 'user',
@@ -203,14 +205,24 @@ export class JsonRpcA2AExecutor {
         parts,
       },
       metadata: params.metadata,
+      configuration: this.protocolVersion === '1.0' ? { returnImmediately: true } : { blocking: false },
     };
   }
 
   async dispatch(params: A2AMessageSendParams): Promise<A2ADispatchReceipt> {
     const method = METHOD_NAMES[this.protocolVersion].send;
-    const task = parseTaskResult(
-      await this.request(method, params.message.messageId, params.message.messageId, this.wireParams(params)),
-    );
+    const result = await this.request(method, params.message.messageId, params.message.messageId, this.wireParams(params));
+    let taskResult = result;
+    if (this.protocolVersion === '1.0') {
+      if (!isRecord(result) || Object.hasOwn(result, 'task') === Object.hasOwn(result, 'message')) {
+        throw new A2AExecutorError('protocol', 'A2A SendMessage result must contain exactly one of task or message.');
+      }
+      if (Object.hasOwn(result, 'message')) {
+        throw new A2AExecutorError('protocol', 'A2A agent answered with a direct message; the board requires a task it can track.');
+      }
+      taskResult = result.task;
+    }
+    const task = parseTaskResult(taskResult);
     return { remoteTaskId: task.id };
   }
 

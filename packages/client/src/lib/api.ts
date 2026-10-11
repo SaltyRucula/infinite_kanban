@@ -44,6 +44,18 @@ export interface ResumeClarificationResponse {
   message: string;
 }
 
+export interface WorkflowView {
+ id: string; phase: string; acceptedRevision?: string;
+ assignments: { assignment: { assignmentId: string; role: string; attempt: number; endpointId: string }; state: string; result?: { summary: string; verdict?: string; evidence: {check: string; outcome: string}[] } }[];
+ diagnostics: {category: string; reason: string}[];
+}
+export const workflowApi = {
+ get: (id: string) => request<WorkflowView>(`/tasks/${id}/workflow`),
+ start: (id: string, input: {repository: string; baseRevision: string}) => request<WorkflowView>(`/tasks/${id}/workflow/run`, {method: 'POST', body: JSON.stringify(input)}),
+ approve: (id: string, revision: string) => request<WorkflowView>(`/tasks/${id}/workflow/approve`, {method: 'POST', body: JSON.stringify({revision})}),
+ cancel: (id: string) => request<WorkflowView>(`/tasks/${id}/workflow/cancel`, {method: 'POST', body: '{}'}),
+};
+
 function withQuery(path: string, params: Record<string, string | boolean | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {

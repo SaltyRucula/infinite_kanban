@@ -651,7 +651,9 @@ export function createV2Adapter(input: CreateV2AdapterInput): OpenCodeAdapter {
         const marker = `${NEEDS_INPUT_MARKER} ${signal.question}`;
         return { text: accumulatedText ? `${accumulatedText}\n\n${marker}` : marker };
       }
-      return { text: accumulatedText, ...(signal.error ? { error: signal.error } : {}) };
+      const finalMessageId = textOrder.at(-1)?.split(':')[0];
+      const finalText = textOrder.filter(key => key.split(':')[0] === finalMessageId).map(key => textByKey.get(key) ?? '').join('\n');
+      return { text: accumulatedText, finalText, ...(signal.error ? { error: signal.error } : {}) };
     },
 
     async interrupt(id: string): Promise<void> {
