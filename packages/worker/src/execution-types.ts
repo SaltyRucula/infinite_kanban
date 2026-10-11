@@ -17,12 +17,19 @@ export interface ExecutionEndpointConfig {
   checks: { name: string; command: string; args: string[] }[];
 }
 
+/** A single visible step, relayed to the board while the run is still going. */
+export interface HarnessProgress {
+  type: 'thinking' | 'tool_call' | 'command' | 'command_output' | 'file_write' | 'output';
+  content: string;
+}
+
 export interface HarnessInput {
   directory: string;
   prompt: string;
   readOnly: boolean;
   deadline: number;
   signal?: AbortSignal;
+  onProgress?: (progress: HarnessProgress) => void;
 }
 
 /** Run one turn in `directory` and return the model's final text. */

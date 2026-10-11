@@ -7,6 +7,9 @@ import { admitExecution, executeAssignment, type ExecutionEndpointConfig } from 
 import type { ExecutionAssignment, ExecutionResult } from '@ai-agent-board/shared/execution.js';
 import { canonicalRepoUrl } from './repository-resolution.js';
 
+/** Keep the newest activity; an operator wants "what is it doing now". */
+const MAX_HISTORY = 200;
+
 interface StoredTask {
   id: string;
   contextId: string;
@@ -16,6 +19,8 @@ interface StoredTask {
     message?: { messageId: string; role: string; parts: { text: string }[] };
   };
   artifacts: unknown[];
+  /** A2A history: progress the board reads with an ordinary GetTask. */
+  history?: { messageId: string; role: 'ROLE_AGENT'; parts: { text: string }[]; metadata?: { kind: string } }[];
 }
 interface StoredExecution {
   assignment?: ExecutionAssignment;
