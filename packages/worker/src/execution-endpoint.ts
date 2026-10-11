@@ -3,9 +3,14 @@ import { executionArtifacts } from '@ai-agent-board/a2a/execution.js';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { admitExecution, executeAssignment, type ExecutionEndpointConfig } from './execution-adapter.js';
 import type { ExecutionAssignment, ExecutionResult } from '@ai-agent-board/shared/execution.js';
+import type { HarnessProgress } from './execution-types.js';
 import { canonicalRepoUrl } from './repository-resolution.js';
+
+/** Keep the newest activity; an operator wants "what is it doing now". */
+const MAX_HISTORY = 200;
 
 interface StoredTask {
   id: string;
@@ -16,6 +21,8 @@ interface StoredTask {
     message?: { messageId: string; role: string; parts: { text: string }[] };
   };
   artifacts: unknown[];
+  /** A2A history: progress the board reads with an ordinary GetTask. */
+  history?: { messageId: string; role: 'ROLE_AGENT'; parts: { text: string }[]; metadata?: { kind: string } }[];
 }
 interface StoredExecution {
   assignment?: ExecutionAssignment;
@@ -31,6 +38,7 @@ export async function startExecutionEndpoint(
       a: ExecutionAssignment,
       config: ExecutionEndpointConfig,
       signal: AbortSignal,
+      onProgress?: (progress: HarnessProgress) => void,
     ) => Promise<ExecutionResult>;
   } = {},
 ) {
@@ -215,9 +223,25 @@ export async function startExecutionEndpoint(
           await persist();
           const aborter = new AbortController();
           active.set(id, aborter);
-          const execute = options.execute ?? ((a, c, signal) => executeAssignment(a, c, undefined, signal));
+          const onProgress = (progress: HarnessProgress) => {
+            void serialize(async () => {
+              if (closed || !isPending(task)) return;
+              const history = (task.history ??= []);
+              history.push({
+                messageId: randomUUID(),
+                role: 'ROLE_AGENT',
+                parts: [{ text: progress.content }],
+                metadata: { kind: progress.type },
+              });
+              if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+              await persist();
+            }).catch(() => {});
+          };
+          const execute =
+            options.execute ??
+            ((a, c, signal, onProgress) => executeAssignment(a, c, undefined, signal, onProgress));
           void Promise.resolve()
-            .then(() => execute(assignment, config, aborter.signal))
+            .then(() => execute(assignment, config, aborter.signal, onProgress))
             .then(
               (result) =>
                 serialize(async () => {
