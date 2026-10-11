@@ -3,36 +3,22 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile as callback } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Codex } from '@openai/codex-sdk';
-import { createV1Adapter, createV2Adapter, spawnOpenCodeServer } from '@ai-agent-board/opencode-compat';
 import {
   strictRecord,
   validateAssignment,
   validateResult,
   type ExecutionAssignment,
   type ExecutionResult,
-  type ExecutionRole,
 } from '@ai-agent-board/shared/execution.js';
+import { extractJsonDocument } from './harness-output.js';
+import { isHarnessName, readOnlyDenial, resolveHarness } from './harness-registry.js';
 import { canonicalRepoUrl } from './repository-resolution.js';
+import type { ExecutionEndpointConfig, ExecutionHarness } from './execution-types.js';
+
+export type { ExecutionEndpointConfig, ExecutionHarness, HarnessInput } from './execution-types.js';
+
 const execFile = promisify(callback);
-export interface ExecutionEndpointConfig {
-  harness: 'opencode' | 'codex';
-  model?: string;
-  roles: ExecutionRole[];
-  projects: string[];
-  repositories: Record<string, string>;
-  stateDirectory: string;
-  capabilities: string[];
-  checks: { name: string; command: string; args: string[] }[];
-}
-export interface HarnessInput {
-  directory: string;
-  prompt: string;
-  readOnly: boolean;
-  deadline: number;
-  signal?: AbortSignal;
-}
-export type ExecutionHarness = (input: HarnessInput) => Promise<string>;
+
 export function admitExecution(value: unknown, config: ExecutionEndpointConfig): ExecutionAssignment {
   const a = validateAssignment(value);
   if (!config.projects.includes(a.projectId)) throw new Error('endpoint refuses project consent');
@@ -44,82 +30,19 @@ export function admitExecution(value: unknown, config: ExecutionEndpointConfig):
   if (Date.now() >= a.constraints.deadline) throw new Error('expired assignment');
   if (a.constraints.readOnly && a.role !== 'review')
     throw new Error('readOnly is only supported for snapshot review');
+  // Refuse rather than review with a harness whose read-only cannot be enforced.
+  if (a.role === 'review' && isHarnessName(config.harness)) {
+    const denial = readOnlyDenial(config.harness);
+    if (denial) throw new Error(denial);
+  }
   return a;
 }
+
+/** Resolve the configured brain. Unknown names fail here, naming what is supported. */
 export function harnessFor(config: ExecutionEndpointConfig): ExecutionHarness {
-  if (config.harness === 'codex')
-    return async (input) => {
-      const thread = new Codex().startThread({
-        workingDirectory: input.directory,
-        model: config.model,
-        sandboxMode: input.readOnly ? 'read-only' : 'workspace-write',
-        approvalPolicy: 'never',
-        networkAccessEnabled: false,
-        webSearchMode: 'disabled',
-      });
-      const result = await thread.run(input.prompt, {
-        signal: input.signal ?? AbortSignal.timeout(Math.max(1, input.deadline - Date.now())),
-      });
-      return result.finalResponse;
-    };
-  return async (input) => {
-    const server = await spawnOpenCodeServer({
-      hostname: '127.0.0.1',
-      port: 0,
-      spawnOptions: { cwd: input.directory },
-    });
-    try {
-      if (input.readOnly && server.apiVersion !== 2)
-        throw new Error('read-only review requires enforceable OpenCode v2 edit/shell permissions');
-      const adapter =
-        server.apiVersion === 2
-          ? createV2Adapter({
-              baseUrl: server.baseUrl,
-              directory: input.directory,
-              password: server.serverPassword,
-              turnDeadlineMs: Math.max(1, input.deadline - Date.now()),
-            })
-          : createV1Adapter({ baseUrl: server.baseUrl, directory: input.directory });
-      const model = config.model?.split('/');
-      const session = await adapter.createSession({
-        title: 'Board execution',
-        directory: input.directory,
-        agent: 'build',
-        headlessPermissions: true,
-        ...(model?.length === 2 ? { model: { providerID: model[0], modelID: model[1] } } : {}),
-        ...(input.readOnly
-          ? {
-              disabledTools: {
-                edit: false,
-                write: false,
-                patch: false,
-                shell: false,
-                bash: false,
-                webfetch: false,
-              },
-            }
-          : {}),
-      });
-      const abort = () => {
-        void adapter.interrupt(session);
-        server.process.kill('SIGTERM');
-      };
-      input.signal?.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(abort, Math.max(1, input.deadline - Date.now()));
-      try {
-        const turn = await adapter.runTurn(session, input.prompt);
-        if (turn.error) throw new Error(turn.error);
-        return turn.finalText ?? turn.text;
-      } finally {
-        clearTimeout(timer);
-        input.signal?.removeEventListener('abort', abort);
-        await adapter.deleteSession(session).catch(() => {});
-      }
-    } finally {
-      server.process.kill('SIGTERM');
-    }
-  };
+  return resolveHarness(config.harness)(config);
 }
+
 /** Endpoint-owned isolated checkout and evidence. Harness text is JSON, not a verdict marker. */
 export async function executeAssignment(
   value: unknown,
@@ -161,9 +84,19 @@ export async function executeAssignment(
     signal,
   });
   signal?.throwIfAborted();
-  // Full JSON document only. Reject narrative, fenced JSON and additional settlement fields.
+  // Structured document only: narration around it is tolerated, unknown settlement
+  // fields inside it are not. Keep the raw text when it cannot be parsed —
+  // otherwise a harness incompatibility is invisible to whoever has to fix it.
+  let document: unknown;
+  try {
+    document = extractJsonDocument(output);
+  } catch (error) {
+    const rawPath = path.join(config.stateDirectory, `${a.assignmentId}.output.txt`);
+    await fs.writeFile(rawPath, output, { mode: 0o600 }).catch(() => undefined);
+    throw new Error(`${error instanceof Error ? error.message : 'unparsable harness output'} (raw output: ${rawPath})`);
+  }
   const report = strictRecord(
-    JSON.parse(output),
+    document,
     a.role === 'review' ? ['summary', 'verdict', 'findings'] : ['summary'],
   );
   if (typeof report.summary !== 'string' || !report.summary.trim())
