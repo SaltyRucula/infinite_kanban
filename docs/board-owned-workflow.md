@@ -69,8 +69,16 @@ agentboard-worker execute \
 | `--board` / `--api-key` | Board URL and bearer token when the board requires one |
 | `--port` / `--state-dir` | Fixed listen port and identity/artifact directory |
 
-Run it twice — once per role — because the board refuses to let an endpoint
-review its own work. The two endpoints need different `--state-dir` values.
+`--role` takes both: `--role implementation,review`. An endpoint is not an
+implementer or a reviewer by nature, it is whatever roles it accepts, and the
+board keeps the two apart **per task by identity** — it refuses to let the
+endpoint that produced a revision review it. So a fleet of identical dual-role
+endpoints is the normal deployment: each one implements some tasks and reviews
+others.
+
+You still need at least two endpoints. A single dual-role endpoint implements a
+task and then escalates with `no eligible distinct review endpoint`, rather
+than reviewing its own work. Each endpoint needs its own `--state-dir`.
 Registration failures are fatal on purpose: an endpoint that is running but
 unknown to the board looks healthy while silently receiving no work.
 

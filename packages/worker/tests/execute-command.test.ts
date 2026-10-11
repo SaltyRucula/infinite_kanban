@@ -33,6 +33,46 @@ test('flags become an endpoint configuration with the harness owned locally', as
   assert.equal(config.stateDirectory, '/tmp/endpoint-state');
 });
 
+test('one endpoint can hold both roles, and its card advertises each of them', async () => {
+  const stateDirectory = await mkdtemp(path.join(tmpdir(), 'endpoint-cli-'));
+  const config = executionEndpointConfig({ ...base, role: 'implementation,review' });
+  assert.deepEqual(config.roles, ['implementation', 'review']);
+  // The default identity directory must not collide with a single-role endpoint's.
+  assert.match(executionEndpointConfig({ ...base, role: 'review,implementation' }).stateDirectory, /implementation-review$/);
+
+  const calls: { url: string; body: unknown }[] = [];
+  const board = createServer((request, response) => {
+    let raw = '';
+    request.on('data', (chunk) => { raw += chunk; });
+    request.on('end', () => {
+      calls.push({ url: request.url ?? '', body: raw ? JSON.parse(raw) : undefined });
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ id: 'agent-both' }));
+    });
+  });
+  await new Promise<void>((resolve) => board.listen(0, '127.0.0.1', resolve));
+  const connection = await connectExecutionEndpoint({
+    ...base,
+    role: 'implementation,review',
+    board: `http://127.0.0.1:${(board.address() as AddressInfo).port}`,
+    'state-dir': stateDirectory,
+    port: '0',
+  });
+  try {
+    // Both roles are granted in one request, so the board can pick either.
+    assert.deepEqual(calls.at(-1)?.body, { roles: ['implementation', 'review'] });
+    const card = await (await fetch(`${connection.baseUrl}/.well-known/agent-card.json`)).json();
+    assert.deepEqual(card.skills.map((skill: { id: string }) => skill.id), ['implementation', 'review']);
+    const review = card.skills.find((skill: { id: string }) => skill.id === 'review');
+    // Only the review skill may claim the read-only snapshot capability.
+    assert.ok(review.tags.includes('review:snapshot'));
+    assert.ok(!card.skills.find((skill: { id: string }) => skill.id === 'implementation').tags.includes('review:snapshot'));
+  } finally {
+    await connection.close();
+    await new Promise<void>((resolve) => board.close(() => resolve()));
+  }
+});
+
 test('several projects and repositories are accepted, and capabilities default to git:revision', () => {
   const config = executionEndpointConfig({
     ...base,
@@ -53,6 +93,8 @@ test('unusable configurations are refused before anything starts', () => {
   const cases: [Record<string, string>, RegExp][] = [
     [{ ...base, role: '' }, /--role/],
     [{ ...base, role: 'reviewer' }, /implementation.*review/],
+    [{ ...base, role: 'implementation,reviewer' }, /implementation.*review/],
+    [{ ...base, role: 'implementation,implementation' }, /once/],
     [{ ...base, harness: 'claude' }, /opencode.*codex/],
     [{ ...base, project: '' }, /--project/],
     [{ ...base, repo: '' }, /--repo/],
