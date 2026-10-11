@@ -31,7 +31,11 @@ and reads back the workflow and task. It exits nonzero on failure, without synth
 fallback. Logs, endpoint state, source fixture, evidence artifacts and `report.json`
 remain in a printed scratch directory. Its portable repository identity is an
 explicit local fixture mapping, not a claim that a demo repository exists on GitHub.
-The preexisting `demo-two-agents.mjs` is still a legacy demo, not A2A proof.
+Pass a board URL to drive a board you are already watching
+(`node scripts/demo-board-a2a.mjs http://127.0.0.1:8080`); with no argument the
+demo starts and tears down its own private board. The legacy poll/claim demo
+has been removed: it settled reviews by parsing a `REVIEW_VERDICT` marker out
+of narrative text, which this contract rejects.
 
 `DEMO_OPENCODE_MODEL` and `DEMO_CODEX_MODEL` select endpoint-local models.
 The verified OpenCode deployment uses `github-copilot/gpt-6.1-sol`; this is a

@@ -91,13 +91,13 @@ If a worker stops heartbeating, its lease expires and the server marks the task 
 
 ### Two workers, one task: implement then review
 
-`scripts/demo-two-agents.mjs` runs the whole cycle against a local board as a worked example: it creates a throwaway git repository, enrols an implementer and a reviewer as separate worker processes, has the implementer complete a task, hands the card over, and has the reviewer report a verdict.
+This section describes the **legacy** worker path, where the handoff is driven
+through task labels and assignment. For new work prefer the board-owned
+workflow in [docs/board-owned-workflow.md](board-owned-workflow.md), where the
+board owns the handoff and the reviewer returns a structured verdict instead of
+a prose marker; `scripts/demo-board-a2a.mjs` is its end-to-end demo.
 
-```bash
-node scripts/demo-two-agents.mjs http://127.0.0.1:8080
-```
-
-The handoff is driven by two board mechanisms:
+On the legacy path the handoff is driven by two board mechanisms:
 
 - **`assignedWorkerId`** targets a specific worker. It is a `PATCH /api/tasks/:id` field — task creation does not accept it.
 - **Consent** decides what a worker is allowed to take: it must have opted into the task's project and into *every* label on the task. Giving the implementer `--accepted-labels implement` and the reviewer `--accepted-labels review` means relabelling the card is what moves work between them, rather than two eligible workers racing for it.
