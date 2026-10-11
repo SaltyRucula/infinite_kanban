@@ -34,30 +34,47 @@ const readOnlyHooks: AgentSessionHooks = {
   ),
 };
 
-/** Progress is public history; never forward SDK metadata or local credentials. */
-function progressReporter(input: HarnessInput, extraSecrets: string[] = []): (event: AgentEvent) => void {
+/**
+ * Strip credentials and host paths from a progress line.
+ *
+ * Exported so the rules can be tested directly: progress becomes task history
+ * the board stores and shows, so a leak here is a leak into the board.
+ */
+export function redactProgressContent(content: string, extraSecrets: string[] = [], directory?: string): string {
+  // Matching on the variable NAME alone redacts the VALUE everywhere it appears,
+  // so `API_KEY_ENABLED=true` would blank out every "true" in the log. Only
+  // values long enough to be a real credential are worth substring-redacting;
+  // the pattern rules below still catch structured secrets of any length.
+  const MIN_SECRET_LENGTH = 12;
   const secrets = [
     ...extraSecrets,
     ...Object.entries(process.env)
       .filter(([name]) => /(?:key|token|secret|password|credential|authorization)/i.test(name))
       .map(([, value]) => value ?? ''),
-  ].filter(Boolean).sort((a, b) => b.length - a.length);
-  return (event) => {
-    if (!input.onProgress) return;
-    let content = event.content;
-    for (const secret of secrets) content = content.replaceAll(secret, '[redacted]');
-    content = content
+  ]
+    .filter((value) => value.length >= MIN_SECRET_LENGTH)
+    .sort((a, b) => b.length - a.length);
+  let redacted = content;
+  for (const secret of secrets) redacted = redacted.replaceAll(secret, '[redacted]');
+  redacted = redacted
       .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[redacted]')
       .replace(/\b(?:Bearer|Basic)\s+[\w.+/=-]+/gi, '[redacted]')
       .replace(/\bserver password\s+\S+/gi, '[redacted]')
       .replace(/\b[\w.-]*(?:key|token|secret|password|credential|pwd)[\w.-]*["']?\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '[redacted]')
       .replace(/\b(?:sk-|gh[pousr]_|github_pat_)[\w-]+|\bAKIA[0-9A-Z]{16}\b|\beyJ[\w-]+\.eyJ[\w-]+\.[\w-]+/g, '[redacted]')
       .replace(/([a-z][a-z\d+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@');
-    if (input.directory) content = content.replaceAll(input.directory, '[local workspace]');
-    content = content
-      .replace(/\bfile:\/\/[^\s"'<>]+/gi, '[local path]')
-      .replace(/\b[A-Za-z]:[\\/][^\s"'<>]+|\\\\[^\s"'<>]+/g, '[local path]')
-      .replace(/(^|[^\w/\]])\/(?!\/)[^\s"'`<>),;\]}]+/g, '$1[local path]');
+  if (directory) redacted = redacted.replaceAll(directory, '[local workspace]');
+  return redacted
+    .replace(/\bfile:\/\/[^\s"'<>]+/gi, '[local path]')
+    .replace(/\b[A-Za-z]:[\\/][^\s"'<>]+|\\\\[^\s"'<>]+/g, '[local path]')
+    .replace(/(^|[^\w/\]])\/(?!\/)[^\s"'`<>),;\]}]+/g, '$1[local path]');
+}
+
+/** Forward SDK events to the board as redacted, bounded progress. */
+function progressReporter(input: HarnessInput, extraSecrets: string[] = []): (event: AgentEvent) => void {
+  return (event) => {
+    if (!input.onProgress) return;
+    const content = redactProgressContent(event.content, extraSecrets, input.directory);
     let type: HarnessProgress['type'];
     switch (event.type) {
       case 'thinking': case 'tool_call': case 'command': case 'command_output': case 'file_write': case 'output':

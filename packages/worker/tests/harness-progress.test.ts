@@ -16,6 +16,8 @@ test('real harness registry forwards provider and OpenCode progress', async (t) 
     if (error.stdout) t.diagnostic(error.stdout);
     throw error;
   });
-  assert.match(result.stdout, /# tests 12\b/);
-  assert.match(result.stdout, /# fail 0\b/);
+  assert.match(result.stdout, /# fail 0\b/, result.stdout);
+  // A floor, not an exact count: adding a case should not fail this wrapper.
+  const ran = Number(/# tests (\d+)/.exec(result.stdout)?.[1] ?? 0);
+  assert.ok(ran >= 12, `expected at least 12 harness progress cases, ran ${ran}\n${result.stdout}`);
 });
