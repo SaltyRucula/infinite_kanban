@@ -2,7 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
-import { createWSS } from './websocket.js';
+import { randomUUID } from 'node:crypto';
+import { broadcast, createWSS } from './websocket.js';
 import { initDatabase, initPostgresDatabase, isPostgresUrl } from './db.js';
 import { loadConfig } from './config.js';
 import { SqliteTaskRepository } from './repositories/sqlite.js';
@@ -148,7 +149,31 @@ const agentManager = new AgentManager();
     );
   };
 
-  const workflow = new BoardWorkflowCoordinator(workflowStore, taskRepo, a2aAgentRepo);
+  // Record every workflow decision on the task's own event log. Without this a
+  // failed run reaches the board with no events and the panel can only report
+  // that it has nothing to show.
+  const workflow = new BoardWorkflowCoordinator(
+    workflowStore,
+    taskRepo,
+    a2aAgentRepo,
+    undefined,
+    undefined,
+    (event) => {
+      const stored = {
+        id: randomUUID(),
+        taskId: event.taskId,
+        type: event.type,
+        content: event.content,
+        timestamp: Date.now(),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
+      };
+      void taskRepo.insertEvent(stored)
+        .then(() => { broadcast({ type: 'agent_event', payload: stored }); })
+        .catch((error: unknown) => {
+          console.error('[server] failed to record workflow event', error);
+        });
+    },
+  );
   app.use('/api/tasks', createBoardWorkflowRouter(workflow));
   app.use('/api', createWorkflowOwnershipGuard(workflow, { tasks: taskRepo, groups: groupRepo }));
   app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager));

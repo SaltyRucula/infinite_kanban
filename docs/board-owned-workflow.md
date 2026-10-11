@@ -86,6 +86,39 @@ The harness never appears in the task. Swapping `--harness` on the review
 endpoint changes who reviews, with no change to the task, the policy or the
 board.
 
+## What a run looks like while it is running
+
+The coordinator records every decision it makes on the task's own event log,
+and relays the endpoint's progress into the same stream, so the panel shows:
+
+```
+[tool_call]      Assigned implementation attempt 1 to Execution endpoint (opencode)
+[tool_call]      Reading add.cjs
+[command]        node --test add.test.cjs
+[command_output] ok 1 - adds
+[output]         Accepted implementation of 0906f7e0 (implementation: passed, node-tests: passed)
+[tool_call]      Assigned review attempt 2 to Execution endpoint (opencode)
+[test_result]    Accepted review of 0906f7e0 — verdict approved (snapshot-review: passed)
+[complete]       Approved 0906f7e0 by open-deployment
+```
+
+Failures are recorded the same way. Before this, an escalated run reached the
+board as a `failed` task with **no events at all**, and the panel could only
+say *"This run did not record an error event."* — the board admitting it had
+thrown the reason away. Now the reason is the event:
+
+```
+[error] Workflow escalated during dispatch: no eligible implementation endpoint
+        with repository access and consent
+```
+
+Progress is relayed exactly once per message. The relayed ids are persisted
+with the dispatch, so restarting the server resumes the stream instead of
+replaying the backlog into the panel.
+
+The event sink is advisory: if recording fails, the workflow continues. Losing
+a line of narration must never cost a run.
+
 ## Which brains an endpoint can run
 
 `--harness` resolves against a registry rather than a hardcoded pair:
