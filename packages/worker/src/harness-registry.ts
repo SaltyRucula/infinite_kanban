@@ -6,9 +6,9 @@ import {
   HermesProvider,
   OpenClawProvider,
 } from '@codewithdan/agent-sdk-core/providers';
-import type { AgentProvider, AgentSessionHooks } from '@codewithdan/agent-sdk-core/types';
+import type { AgentEvent, AgentProvider, AgentSessionHooks } from '@codewithdan/agent-sdk-core/types';
 import { createV1Adapter, createV2Adapter, spawnOpenCodeServer } from '@ai-agent-board/opencode-compat';
-import type { ExecutionEndpointConfig, ExecutionHarness, HarnessInput } from './execution-types.js';
+import type { ExecutionEndpointConfig, ExecutionHarness, HarnessInput, HarnessProgress } from './execution-types.js';
 
 /**
  * One entry per brain the endpoint can drive.
@@ -34,6 +34,45 @@ const readOnlyHooks: AgentSessionHooks = {
   ),
 };
 
+/** Progress is public history; never forward SDK metadata or local credentials. */
+function progressReporter(input: HarnessInput, extraSecrets: string[] = []): (event: AgentEvent) => void {
+  const secrets = [
+    ...extraSecrets,
+    ...Object.entries(process.env)
+      .filter(([name]) => /(?:key|token|secret|password|credential|authorization)/i.test(name))
+      .map(([, value]) => value ?? ''),
+  ].filter(Boolean).sort((a, b) => b.length - a.length);
+  return (event) => {
+    if (!input.onProgress) return;
+    let content = event.content;
+    for (const secret of secrets) content = content.replaceAll(secret, '[redacted]');
+    content = content
+      .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[redacted]')
+      .replace(/\b(?:Bearer|Basic)\s+[\w.+/=-]+/gi, '[redacted]')
+      .replace(/\bserver password\s+\S+/gi, '[redacted]')
+      .replace(/\b[\w.-]*(?:key|token|secret|password|credential|pwd)[\w.-]*["']?\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '[redacted]')
+      .replace(/\b(?:sk-|gh[pousr]_|github_pat_)[\w-]+|\bAKIA[0-9A-Z]{16}\b|\beyJ[\w-]+\.eyJ[\w-]+\.[\w-]+/g, '[redacted]')
+      .replace(/([a-z][a-z\d+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@');
+    if (input.directory) content = content.replaceAll(input.directory, '[local workspace]');
+    content = content
+      .replace(/\bfile:\/\/[^\s"'<>]+/gi, '[local path]')
+      .replace(/\b[A-Za-z]:[\\/][^\s"'<>]+|\\\\[^\s"'<>]+/g, '[local path]')
+      .replace(/(^|[^\w/\]])\/(?!\/)[^\s"'`<>),;\]}]+/g, '$1[local path]');
+    let type: HarnessProgress['type'];
+    switch (event.type) {
+      case 'thinking': case 'tool_call': case 'command': case 'command_output': case 'file_write': case 'output':
+        type = event.type;
+        break;
+      case 'file_read': type = 'tool_call'; break;
+      case 'file_edit': type = 'file_write'; break;
+      case 'test_result': type = 'command_output'; break;
+      default: type = 'output';
+    }
+    // Observability must not change the outcome or final-text accumulation.
+    try { input.onProgress({ type, content: content.slice(0, 2000) }); } catch { /* best effort */ }
+  };
+}
+
 /** Drive any `AgentProvider` from the shared SDK and return its final text. */
 function fromProvider(
   factory: (config: ExecutionEndpointConfig) => AgentProvider,
@@ -43,6 +82,7 @@ function fromProvider(
     const provider = factory(config);
     await provider.start();
     let text = '';
+    const reportProgress = progressReporter(input);
     const session = await provider.createSession({
       contextId: `board-execution-${Date.now()}`,
       workingDirectory: input.directory,
@@ -51,6 +91,7 @@ function fromProvider(
         : 'You are implementing a change in an isolated checkout. Return only the requested JSON.',
       // Output events carry the model's text; later snapshots replace earlier ones.
       onEvent: (event) => {
+        reportProgress(event);
         if (event.type !== 'output') return;
         // Providers differ: some stream deltas, some resend the whole snapshot.
         // Appending a snapshot duplicates the message, so detect that case.
@@ -101,14 +142,33 @@ const openCodeHarness: HarnessEntry['create'] = (config) => async (input: Harnes
         ? { disabledTools: { edit: false, write: false, patch: false, shell: false, bash: false, webfetch: false } }
         : {}),
     });
-    const abort = (): void => { void adapter.interrupt(session); server.process.kill('SIGTERM'); };
+    const progressController = new AbortController();
+    const reportProgress = progressReporter(input, [server.serverPassword]);
+    const abort = (): void => {
+      progressController.abort();
+      void adapter.interrupt(session);
+      server.process.kill('SIGTERM');
+    };
     input.signal?.addEventListener('abort', abort, { once: true });
+    if (input.signal?.aborted) abort();
     const timer = setTimeout(abort, Math.max(1, input.deadline - Date.now()));
     try {
+      // Start before runTurn so events emitted during the turn are observable.
+      // Do not await this task: even a broken subscription must not block a turn.
+      void (async () => {
+        try {
+          if (progressController.signal.aborted) return;
+          for await (const event of adapter.subscribe(session, progressController.signal)) {
+            if (progressController.signal.aborted) break;
+            reportProgress(event);
+          }
+        } catch { /* progress is best effort, including abort/network failures */ }
+      })();
       const turn = await adapter.runTurn(session, input.prompt);
       if (turn.error) throw new Error(turn.error);
       return turn.finalText ?? turn.text;
     } finally {
+      progressController.abort();
       clearTimeout(timer);
       input.signal?.removeEventListener('abort', abort);
       await adapter.deleteSession(session).catch(() => undefined);
