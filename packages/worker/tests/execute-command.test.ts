@@ -73,6 +73,12 @@ test('one endpoint can hold both roles, and its card advertises each of them', a
   }
 });
 
+test('a harness without read-only enforcement can still implement', () => {
+  const config = executionEndpointConfig({ ...base, harness: 'claude', role: 'implementation' });
+  assert.equal(config.harness, 'claude');
+  assert.deepEqual(config.roles, ['implementation']);
+});
+
 test('several projects and repositories are accepted, and capabilities default to git:revision', () => {
   const config = executionEndpointConfig({
     ...base,
@@ -95,7 +101,11 @@ test('unusable configurations are refused before anything starts', () => {
     [{ ...base, role: 'reviewer' }, /implementation.*review/],
     [{ ...base, role: 'implementation,reviewer' }, /implementation.*review/],
     [{ ...base, role: 'implementation,implementation' }, /once/],
-    [{ ...base, harness: 'claude' }, /opencode.*codex/],
+    [{ ...base, harness: 'gpt5' }, /unknown harness "gpt5".*opencode/s],
+    // claude is a supported brain, but it cannot enforce a read-only review,
+    // so asking it to review must fail at connection time, not at run time.
+    [{ ...base, harness: 'claude', role: 'review' }, /claude.*review/s],
+    [{ ...base, harness: 'claude', role: 'implementation,review' }, /claude.*review/s],
     [{ ...base, project: '' }, /--project/],
     [{ ...base, repo: '' }, /--repo/],
     // A bare path cannot be matched against the portable identity on the wire.
@@ -153,6 +163,49 @@ test('connect registers its own agent card with the board and grants the role', 
     assert.deepEqual(card.skills.map((skill: { id: string }) => skill.id), ['implementation']);
     assert.ok(card.skills[0].tags.includes('execution:v1'));
     assert.ok(card.skills[0].tags.includes('consent:p1'));
+  } finally {
+    await connection.close();
+    await new Promise<void>((resolve) => board.close(() => resolve()));
+  }
+});
+
+test('restarting an endpoint reuses its existing registration instead of dying on the unique card URL', async () => {
+  const stateDirectory = await mkdtemp(path.join(tmpdir(), 'endpoint-cli-'));
+  const calls: { method: string; url: string }[] = [];
+  let cardUrl = '';
+  const board = createServer((request, response) => {
+    let raw = '';
+    request.on('data', (chunk) => { raw += chunk; });
+    request.on('end', () => {
+      calls.push({ method: request.method ?? '', url: request.url ?? '' });
+      response.setHeader('content-type', 'application/json');
+      if (request.method === 'POST' && request.url === '/api/a2a-agents') {
+        // Remember what was offered, then answer as a board already holding it.
+        cardUrl = JSON.parse(raw || '{}').agentCardUrl ?? cardUrl;
+        response.statusCode = 409;
+        response.end(JSON.stringify({ error: 'UNIQUE constraint failed: a2a_agents.agent_card_url' }));
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/api/a2a-agents') {
+        response.end(JSON.stringify([
+          { id: 'other', agentCardUrl: 'http://127.0.0.1:1/.well-known/agent-card.json' },
+          { id: 'existing', agentCardUrl: cardUrl },
+        ]));
+        return;
+      }
+      response.end(JSON.stringify({ id: 'existing' }));
+    });
+  });
+  await new Promise<void>((resolve) => board.listen(0, '127.0.0.1', resolve));
+  const boardUrl = `http://127.0.0.1:${(board.address() as AddressInfo).port}`;
+  const connection = await connectExecutionEndpoint({ ...base, board: boardUrl, 'state-dir': stateDirectory, port: '0' });
+  try {
+    assert.equal(cardUrl, `${connection.baseUrl}/.well-known/agent-card.json`);
+    assert.equal(connection.agentId, 'existing');
+    // It must refresh the stored card (the endpoint may now advertise new roles)
+    // and re-grant roles, rather than trusting a stale directory row.
+    assert.ok(calls.some((call) => call.method === 'POST' && call.url === '/api/a2a-agents/existing/refresh'), JSON.stringify(calls));
+    assert.ok(calls.some((call) => call.method === 'PUT' && call.url.includes('/projects/p1/roles')), JSON.stringify(calls));
   } finally {
     await connection.close();
     await new Promise<void>((resolve) => board.close(() => resolve()));

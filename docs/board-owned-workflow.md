@@ -62,7 +62,7 @@ agentboard-worker execute \
 | `--role` | `implementation` or `review` — the only thing the board routes on |
 | `--project` | Projects this endpoint consents to serve (comma separated) |
 | `--repo` | `portable-identity=/local/path`; comma-separate several. The identity is what travels on the wire; the path is only where this machine keeps that repository |
-| `--harness` | `opencode` or `codex`, endpoint-local (default `opencode`) |
+| `--harness` | which brain this endpoint runs, endpoint-local (default `opencode`) |
 | `--model` | Endpoint-local model, never a task property |
 | `--check` | `name=command args`, run in the isolated checkout to produce evidence |
 | `--capability` | Advertised capabilities (default `git:revision`) |
@@ -85,6 +85,32 @@ unknown to the board looks healthy while silently receiving no work.
 The harness never appears in the task. Swapping `--harness` on the review
 endpoint changes who reviews, with no change to the task, the policy or the
 board.
+
+## Which brains an endpoint can run
+
+`--harness` resolves against a registry rather than a hardcoded pair:
+
+| Harness | Implementation | Review | Why |
+|---|---|---|---|
+| `opencode` | yes | yes | v2 enforces edit **and** shell denies (v1 is refused) |
+| `codex` | yes | yes | SDK read-only sandbox |
+| `hermes` | yes | yes | ACP asks permission per tool call |
+| `openclaw`, `grok` | yes | yes | same ACP permission flow |
+| `copilot` | yes | **no** | it inspects files through the shell, which a read-only review must deny |
+| `claude` | yes | **no** | the provider ignores permission hooks, so edits cannot be prevented |
+
+`review` is **refused at connection time** for a harness that cannot enforce
+read-only, with the reason printed. That is the contract rule — an endpoint must
+refuse what it cannot enforce — applied to the brain, not just the assignment.
+A prompt asking a model not to edit is not an enforcement mechanism.
+
+These are observations, not guesses: the Copilot entry was downgraded after a
+real review run ended with nothing but its opening narration, because every
+file read it attempted went through the denied shell.
+
+Harnesses also differ in output discipline. The endpoint requires a structured
+document, but tolerates narration or a ``` fence around it, and keeps the raw
+text next to the assignment id when it cannot find one.
 
 ## Native endpoints and admission
 

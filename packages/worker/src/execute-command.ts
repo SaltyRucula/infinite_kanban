@@ -1,12 +1,12 @@
 import path from 'node:path';
 import os from 'node:os';
 import { startExecutionEndpoint } from './execution-endpoint.js';
+import { harnessNames, isHarnessName, readOnlyDenial } from './harness-registry.js';
 import type { ExecutionEndpointConfig } from './execution-adapter.js';
 
 export type ExecuteArgs = Readonly<Record<string, string>>;
 
 const ROLES = ['implementation', 'review'] as const;
-const HARNESSES = ['opencode', 'codex'] as const;
 
 function list(value: string | undefined): string[] {
   return (value ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
@@ -38,9 +38,10 @@ export function executionEndpointConfig(args: ExecuteArgs): ExecutionEndpointCon
   // card do not depend on the order the flags happened to be typed in.
   const orderedRoles = ROLES.filter((role) => roles.includes(role));
 
+  // Any brain in the registry, not a hardcoded pair.
   const harness = (args.harness ?? 'opencode').trim();
-  if (!HARNESSES.includes(harness as (typeof HARNESSES)[number])) {
-    throw new Error(`--harness must be one of ${HARNESSES.join(', ')}`);
+  if (!isHarnessName(harness)) {
+    throw new Error(`unknown harness "${harness}"; supported: ${harnessNames().join(', ')}`);
   }
 
   const projects = list(args.project);
@@ -68,8 +69,14 @@ export function executionEndpointConfig(args: ExecuteArgs): ExecutionEndpointCon
     return { name: entry.slice(0, separator).trim(), command, args: commandArgs };
   });
 
+  // Fail at connection time rather than accepting review work we cannot enforce.
+  if (orderedRoles.includes('review')) {
+    const denial = readOnlyDenial(harness);
+    if (denial) throw new Error(denial);
+  }
+
   return {
-    harness: harness as (typeof HARNESSES)[number],
+    harness,
     ...(args.model?.trim() ? { model: args.model.trim() } : {}),
     roles: [...orderedRoles],
     projects,
@@ -87,18 +94,40 @@ export interface ExecutionConnection {
   close(): Promise<void>;
 }
 
-async function boardRequest(board: string, route: string, method: string, body: unknown, apiKey?: string): Promise<unknown> {
+async function boardRequest(board: string, route: string, method: string, body?: unknown, apiKey?: string): Promise<unknown> {
   const response = await fetch(new URL(route, board), {
     method,
     headers: {
       'Content-Type': 'application/json',
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`${method} ${route} -> ${response.status} ${text}`);
   return text ? JSON.parse(text) : undefined;
+}
+
+/**
+ * Registering is idempotent: an endpoint restarted on the same port offers a
+ * card URL the board already knows, which it rejects as a duplicate. Adopting
+ * that row (and refreshing it, since the endpoint may now advertise different
+ * roles) is what makes `execute` safe to just run again.
+ */
+async function registerOrAdopt(board: string, agentCardUrl: string, apiKey?: string): Promise<string> {
+  try {
+    const created = await boardRequest(board, '/api/a2a-agents', 'POST', { agentCardUrl }, apiKey) as { id?: string };
+    if (!created?.id) throw new Error('the board did not return an agent id for this endpoint');
+    return created.id;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/409|unique|duplicate/i.test(message)) throw error;
+    const directory = await boardRequest(board, '/api/a2a-agents', 'GET', undefined, apiKey) as { id: string; agentCardUrl: string }[];
+    const existing = directory.find((agent) => agent.agentCardUrl === agentCardUrl);
+    if (!existing) throw error;
+    await boardRequest(board, `/api/a2a-agents/${existing.id}/refresh`, 'POST', {}, apiKey);
+    return existing.id;
+  }
 }
 
 /**
@@ -113,11 +142,7 @@ export async function connectExecutionEndpoint(args: ExecuteArgs): Promise<Execu
 
   const endpoint = await startExecutionEndpoint(config, { port: Number(args.port ?? 0) });
   try {
-    const registration = await boardRequest(board, '/api/a2a-agents', 'POST', {
-      agentCardUrl: `${endpoint.baseUrl}/.well-known/agent-card.json`,
-    }, apiKey) as { id?: string };
-    const agentId = registration?.id;
-    if (!agentId) throw new Error('the board did not return an agent id for this endpoint');
+    const agentId = await registerOrAdopt(board, `${endpoint.baseUrl}/.well-known/agent-card.json`, apiKey);
 
     for (const projectId of config.projects) {
       await boardRequest(board, `/api/a2a-agents/${agentId}/projects/${projectId}/roles`, 'PUT', {
