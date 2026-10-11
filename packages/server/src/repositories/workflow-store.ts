@@ -1,10 +1,25 @@
 import type Database from 'better-sqlite3';
 import type { Pool } from 'pg';
 import type { ExecutionAssignment, ExecutionResult } from '@ai-agent-board/shared/execution.js';
-export interface WorkflowDispatch { assignment: ExecutionAssignment; endpoint: string; protocolVersion: '1.0'|'0.3'; state: 'prepared'|'sending'|'running'|'accepted'|'fenced'; remoteTaskId?: string; result?: ExecutionResult }
+export interface WorkflowDispatch {
+  assignment: ExecutionAssignment;
+  endpoint: string;
+  protocolVersion: '1.0'|'0.3';
+  state: 'prepared'|'sending'|'running'|'accepted'|'fenced';
+  remoteTaskId?: string;
+  result?: ExecutionResult;
+  /**
+   * Progress message ids already relayed to the task's event log. Persisted so
+   * a restarted coordinator resumes rather than replaying the whole backlog;
+   * bounded to match the endpoint's own history cap.
+   */
+  relayed?: string[];
+}
 export interface BoardWorkflowRun {
  id: string; taskId: string; projectId: string; version: number;
  phase: 'implementing'|'reviewing'|'awaiting_approval'|'done'|'escalated'|'dispatch_uncertain'|'canceled';
+ /** Fingerprint of the last projection written to the task; suppresses identical rewrites. */
+ projectedKey?: string;
  repository: string; baseRevision: string; requirements: string; requiredCapabilities: string[];
  policy: { autoFinish: boolean; maxRounds: number; maxDispatches: number; deadline: number; requiredChecks: string[] };
  assignments: WorkflowDispatch[]; diagnostics: { at: number; category: 'dispatch'|'execution'|'acceptance'; reason: string; response?: unknown }[];

@@ -53,9 +53,18 @@ export interface A2ADispatchReceipt {
 
 export type A2ARemoteTaskState = 'pending' | 'running' | 'input_required' | 'completed' | 'failed' | 'canceled' | 'rejected';
 
+/** One progress line reported by the endpoint while the run is in flight. */
+export interface A2ARemoteProgress {
+  readonly messageId: string;
+  readonly text: string;
+  readonly kind?: string;
+}
+
 export interface A2ARemoteTaskUpdate {
   readonly state: A2ARemoteTaskState;
   readonly artifacts: readonly unknown[];
+  /** A2A task history: agent messages describing progress so far. */
+  readonly history?: readonly A2ARemoteProgress[];
 }
 
 export type A2AFetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -145,13 +154,47 @@ function parseTaskResult(value: unknown, expectedTaskId?: string): { id: string;
     throw new A2AExecutorError('protocol', 'A2A task artifacts must be an array when present.');
   }
 
+  // Omit the key entirely when there is no progress, rather than carrying an
+  // explicit undefined into every update.
+  const history = parseHistory(value.history);
   return {
     id,
     update: {
       state: normalizedState(status.state),
       artifacts: artifacts ?? [],
+      ...(history ? { history } : {}),
     },
   };
+}
+
+/**
+ * Read progress out of A2A task history.
+ *
+ * Progress is advisory: a malformed entry is skipped rather than failing the
+ * poll, because losing the run over a cosmetic field would be worse than
+ * losing one line of narration. Only agent messages are relayed; the board's
+ * own request is already known.
+ */
+function parseHistory(value: unknown): readonly A2ARemoteProgress[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const progress: A2ARemoteProgress[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const role = readString(entry.role);
+    if (role && role !== 'ROLE_AGENT' && role !== 'agent') continue;
+    const messageId = readString(entry.messageId);
+    const parts = Array.isArray(entry.parts) ? entry.parts : [];
+    const text = parts
+      .map((part) => (isRecord(part) ? readString(part.text) : undefined))
+      .filter((part): part is string => Boolean(part))
+      .join('')
+      || readString(entry.text);
+    if (!messageId || !text) continue;
+    const metadata = isRecord(entry.metadata) ? entry.metadata : undefined;
+    const kind = readString(metadata?.kind) ?? readString(entry.kind);
+    progress.push({ messageId, text, ...(kind ? { kind } : {}) });
+  }
+  return progress.length ? progress : undefined;
 }
 
 /**
