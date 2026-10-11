@@ -61,7 +61,7 @@ agentboard-worker execute \
 |---|---|
 | `--role` | `implementation` or `review` — the only thing the board routes on |
 | `--project` | Projects this endpoint consents to serve (comma separated) |
-| `--repo` | `portable-identity=/local/path`, repeatable; the identity is what travels on the wire |
+| `--repo` | `portable-identity=/local/path`; comma-separate several. The identity is what travels on the wire; the path is only where this machine keeps that repository |
 | `--harness` | `opencode` or `codex`, endpoint-local (default `opencode`) |
 | `--model` | Endpoint-local model, never a task property |
 | `--check` | `name=command args`, run in the isolated checkout to produce evidence |
