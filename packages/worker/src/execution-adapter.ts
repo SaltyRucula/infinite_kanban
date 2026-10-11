@@ -13,7 +13,7 @@ import {
 import { extractJsonDocument } from './harness-output.js';
 import { isHarnessName, readOnlyDenial, resolveHarness } from './harness-registry.js';
 import { canonicalRepoUrl } from './repository-resolution.js';
-import type { ExecutionEndpointConfig, ExecutionHarness } from './execution-types.js';
+import type { ExecutionEndpointConfig, ExecutionHarness, HarnessProgress } from './execution-types.js';
 
 export type { ExecutionEndpointConfig, ExecutionHarness, HarnessInput } from './execution-types.js';
 
@@ -49,6 +49,7 @@ export async function executeAssignment(
   config: ExecutionEndpointConfig,
   harness: ExecutionHarness = harnessFor(config),
   signal?: AbortSignal,
+  onProgress?: (progress: HarnessProgress) => void,
 ): Promise<ExecutionResult> {
   const a = admitExecution(value, config);
   const source = Object.entries(config.repositories).find(
@@ -82,6 +83,7 @@ export async function executeAssignment(
     readOnly: a.role === 'review',
     deadline: a.constraints.deadline,
     signal,
+    onProgress,
   });
   signal?.throwIfAborted();
   // Structured document only: narration around it is tolerated, unknown settlement
