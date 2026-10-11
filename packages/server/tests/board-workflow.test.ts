@@ -29,6 +29,45 @@ function result(a:ExecutionAssignment, role:ExecutionRole, verdict:ExecutionResu
  return {schemaVersion:1, taskId:a.taskId, workflowRunId:a.workflowRunId, assignmentId:a.assignmentId, attempt:a.attempt, role, endpointId:a.endpointId, revision, summary:'Checked', evidence:[{check:'test',revision,outcome:'passed',artifact:'urn:sha256:'+'c'.repeat(64)}], ...(role==='review'?{verdict,findings:verdict==='approved'?[]:[{severity:'error' as const,explanation:'fix bug'}]}:{})};
 }
 function clean(v:ExecutionResult): ExecutionResult {return JSON.parse(JSON.stringify(v));}
+
+/**
+ * Endpoints are not typed as implementers or reviewers. The board keeps the two
+ * apart per task by identity, so an endpoint that holds both roles implements
+ * some tasks and reviews others — but never reviews its own revision.
+ */
+test('endpoints holding both roles are routed by identity, and cannot review their own revision', async () => {
+  const dualRole: A2AAgent[] = agents.map((agent) => ({
+    ...agent,
+    projectAccess: [{ ...agent.projectAccess[0], roles: ['implementation', 'review'] }],
+  }));
+
+  const f = fixture();
+  f.setAgents(dualRole);
+  const c = f.make();
+  let run = await c.start('t', { repository: 'https://github.com/o/r', baseRevision: revision });
+  const implementation = run.assignments[0].assignment;
+  await c.accept('t', clean(result(implementation, 'implementation')), implementation.endpointId);
+
+  run = (await c.get('t'))!;
+  const review = run.assignments[1].assignment;
+  assert.equal(review.role, 'review');
+  assert.notEqual(review.endpointId, implementation.endpointId);
+  assert.equal(review.targetRevision, output);
+  f.db.close();
+
+  // The same endpoint alone cannot cover both halves of one task.
+  const solo = fixture();
+  solo.setAgents([dualRole[0]]);
+  const lone = solo.make();
+  const started = await lone.start('t', { repository: 'https://github.com/o/r', baseRevision: revision });
+  const only = started.assignments[0].assignment;
+  await lone.accept('t', clean(result(only, 'implementation')), only.endpointId);
+  const escalated = (await lone.get('t'))!;
+  assert.equal(escalated.phase, 'escalated');
+  assert.equal(escalated.assignments.length, 1);
+  assert.match(escalated.diagnostics.at(-1)!.reason, /distinct review endpoint/);
+  solo.db.close();
+});
 test('durably hands implementation to a distinct reviewer pinned to revision and requires exact human approval',async()=>{
  const f=fixture(); const c=f.make();
  let run=await c.start('t',{repository:'https://github.com/o/r',baseRevision:revision});

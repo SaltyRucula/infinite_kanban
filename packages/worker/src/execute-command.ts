@@ -21,11 +21,22 @@ function list(value: string | undefined): string[] {
  * the projects this endpoint consents to.
  */
 export function executionEndpointConfig(args: ExecuteArgs): ExecutionEndpointConfig {
-  const role = (args.role ?? '').trim();
-  if (!role) throw new Error('--role is required (implementation or review)');
-  if (!ROLES.includes(role as (typeof ROLES)[number])) {
-    throw new Error(`--role must be one of ${ROLES.join(', ')}`);
+  // An endpoint is not an implementer or a reviewer by nature; it is whatever
+  // roles it is configured to accept. The board keeps the two apart per task by
+  // refusing to let the endpoint that produced a revision review it, so one
+  // endpoint holding both roles is normal: it implements some tasks and reviews
+  // others.
+  const roles = list(args.role);
+  if (!roles.length) throw new Error('--role is required (implementation, review, or both)');
+  for (const role of roles) {
+    if (!ROLES.includes(role as (typeof ROLES)[number])) {
+      throw new Error(`--role must be one of ${ROLES.join(', ')}`);
+    }
   }
+  if (new Set(roles).size !== roles.length) throw new Error('--role may name each role only once');
+  // Keep a stable order so the default identity directory and the advertised
+  // card do not depend on the order the flags happened to be typed in.
+  const orderedRoles = ROLES.filter((role) => roles.includes(role));
 
   const harness = (args.harness ?? 'opencode').trim();
   if (!HARNESSES.includes(harness as (typeof HARNESSES)[number])) {
@@ -60,11 +71,11 @@ export function executionEndpointConfig(args: ExecuteArgs): ExecutionEndpointCon
   return {
     harness: harness as (typeof HARNESSES)[number],
     ...(args.model?.trim() ? { model: args.model.trim() } : {}),
-    roles: [role as (typeof ROLES)[number]],
+    roles: [...orderedRoles],
     projects,
     repositories,
     stateDirectory: args['state-dir']?.trim()
-      || path.join(os.homedir(), `.agentboard-endpoint-${role}`),
+      || path.join(os.homedir(), `.agentboard-endpoint-${orderedRoles.join('-')}`),
     capabilities: list(args.capability).length ? list(args.capability) : ['git:revision'],
     checks,
   };
@@ -126,7 +137,7 @@ export async function executeCommand(args: ExecuteArgs): Promise<void> {
   const config = executionEndpointConfig(args);
   console.log(`execution endpoint listening at ${connection.baseUrl}`);
   console.log(`  registered with the board as agent ${connection.agentId}`);
-  console.log(`  role ${config.roles[0]} · harness ${config.harness}${config.model ? ` · model ${config.model}` : ''}`);
+  console.log(`  roles ${config.roles.join(', ')} · harness ${config.harness}${config.model ? ` · model ${config.model}` : ''}`);
   console.log(`  projects ${config.projects.join(', ')}`);
   for (const [identity, local] of Object.entries(config.repositories)) console.log(`  repository ${identity} -> ${local}`);
   console.log('  waiting for the board to assign work; Ctrl-C to stop');
