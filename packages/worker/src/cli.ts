@@ -34,6 +34,7 @@ import {
   type WorkspaceSettings,
 } from './local-runner.js';
 import { OpenCodeSessionBridge } from './opencode-session-bridge.js';
+import { executeCommand } from './execute-command.js';
 import { resolveRepositoryWorkspace } from './repository-resolution.js';
 import { startAgentSdkTask, type SdkRunResult } from './sdk-runner.js';
 
@@ -618,12 +619,13 @@ export type CommandHandlers = {
   register(args: CommandArgs, enrollmentCode?: string): Promise<void>;
   run(): Promise<void>;
   serve(args: CommandArgs): Promise<void>;
+  execute(args: CommandArgs): Promise<void>;
 };
 
 export async function dispatchCommand(
   command: string | undefined,
   args: CommandArgs,
-  handlers: CommandHandlers = { preflight: runStartPreflight, register, run, serve: serveA2A },
+  handlers: CommandHandlers = { preflight: runStartPreflight, register, run, serve: serveA2A, execute: executeCommand },
 ): Promise<void> {
   if (command === 'start') {
     await handlers.preflight?.();
@@ -636,8 +638,18 @@ export async function dispatchCommand(
     await handlers.run();
   } else if (command === 'a2a-serve') {
     await handlers.serve(args);
+  } else if (command === 'execute') {
+    // The board-owned path: this process is an execution endpoint the board
+    // dials, not a worker that polls the board for claims.
+    await handlers.execute(args);
   } else {
-    throw new Error('usage: agentboard-worker start --code <enrollment-url> | register|run|a2a-serve [options]');
+    throw new Error(
+      'usage: agentboard-worker start --code <enrollment-url>\n'
+      + '     | execute --role implementation|review --project <id> --repo <identity>=<path>'
+      + ' [--harness opencode|codex] [--model m] [--board url] [--api-key k] [--port n]'
+      + ' [--check name=cmd] [--capability a,b] [--state-dir path]\n'
+      + '     | register|run|a2a-serve [options]',
+    );
   }
 }
 

@@ -42,6 +42,42 @@ The verified OpenCode deployment uses `github-copilot/gpt-6.1-sol`; this is a
 local demo default, not a board routing requirement. Model listing is not proof
 of usable authorization. No CLI auth files are read by the demo or board.
 
+## Connecting an execution endpoint
+
+One command per endpoint. It starts the endpoint, registers its Agent Card with
+the board and asks for the role, then waits for the board to dial it:
+
+```sh
+agentboard-worker execute \
+  --role implementation \
+  --project <projectId> \
+  --repo https://github.com/you/repo=/local/checkout \
+  --harness opencode \
+  --check "tests=npm test" \
+  --board http://127.0.0.1:8080
+```
+
+| Flag | Meaning |
+|---|---|
+| `--role` | `implementation` or `review` — the only thing the board routes on |
+| `--project` | Projects this endpoint consents to serve (comma separated) |
+| `--repo` | `portable-identity=/local/path`, repeatable; the identity is what travels on the wire |
+| `--harness` | `opencode` or `codex`, endpoint-local (default `opencode`) |
+| `--model` | Endpoint-local model, never a task property |
+| `--check` | `name=command args`, run in the isolated checkout to produce evidence |
+| `--capability` | Advertised capabilities (default `git:revision`) |
+| `--board` / `--api-key` | Board URL and bearer token when the board requires one |
+| `--port` / `--state-dir` | Fixed listen port and identity/artifact directory |
+
+Run it twice — once per role — because the board refuses to let an endpoint
+review its own work. The two endpoints need different `--state-dir` values.
+Registration failures are fatal on purpose: an endpoint that is running but
+unknown to the board looks healthy while silently receiving no work.
+
+The harness never appears in the task. Swapping `--harness` on the review
+endpoint changes who reviews, with no change to the task, the policy or the
+board.
+
 ## Native endpoints and admission
 
 An endpoint can be implemented externally without this worker. Advertise A2A

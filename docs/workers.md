@@ -52,6 +52,17 @@ Enrollment registers one worker and saves its credentials locally. The worker wr
 
 Registration also writes the runner block automatically. No hand-editing JSON is required.
 
+### Legacy worker or execution endpoint?
+
+`agentboard-worker start --code <enrollment-url>` connects a **legacy worker**:
+it polls the board, claims assigned tasks and runs them. That is the path this
+page documents.
+
+`agentboard-worker execute --role implementation …` connects an **execution
+endpoint** for the board-owned workflow, which the board dials instead of being
+polled. See [docs/board-owned-workflow.md](board-owned-workflow.md); prefer it
+for new work.
+
 ### Several workers on one machine
 
 Set `AGENTBOARD_WORKER_HOME` to give a worker its own identity directory:
