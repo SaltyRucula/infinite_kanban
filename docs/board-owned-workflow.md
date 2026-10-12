@@ -119,6 +119,32 @@ replaying the backlog into the panel.
 The event sink is advisory: if recording fails, the workflow continues. Losing
 a line of narration must never cost a run.
 
+## Reachability
+
+A registration is a claim, not a guarantee. An endpoint that is killed keeps
+its row, stays enabled, and used to keep winning routing — so the board
+dispatched into a socket nobody was listening on, and the run stalled with no
+cause anywhere.
+
+The board now re-fetches each enabled endpoint's Agent Card every 30 seconds.
+After three consecutive failures the endpoint is marked unreachable and routing
+skips it; one successful probe clears the state. Three, not one, because a
+restart or a dropped packet must not strand routing and escalate a healthy
+workflow.
+
+`enabled` and reachability are deliberately separate: **enabled is an operator
+decision, reachability is an observation**. A flapping endpoint never silently
+disables itself, so nobody has to re-enable it by hand after a hiccup.
+
+When nothing can be routed to, the escalation says how many registered
+endpoints are unreachable, rather than only that no endpoint was eligible.
+
+```
+GET /api/a2a-agents
+  unreachableSince   when the board first could not reach it (absent = reachable)
+  probeFailures      consecutive failed probes
+```
+
 ## Which brains an endpoint can run
 
 `--harness` resolves against a registry rather than a hardcoded pair:

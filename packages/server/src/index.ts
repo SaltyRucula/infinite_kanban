@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { randomUUID } from 'node:crypto';
+import { AgentLivenessProbe } from './services/agent-liveness.js';
 import { broadcast, createWSS } from './websocket.js';
 import { initDatabase, initPostgresDatabase, isPostgresUrl } from './db.js';
 import { loadConfig } from './config.js';
@@ -190,6 +191,17 @@ const agentManager = new AgentManager();
     ownsTask: (taskId) => workflow.ownsTask(taskId),
   }));
   const workflowTimer = setInterval(() => { void workflow.tick().catch(e => console.error('[workflow] reconciliation failed', e)); }, 1000);
+
+  // A registration is a claim, not a guarantee: probe endpoints so a killed one
+  // stops winning routing instead of stalling runs with no cause (#118).
+  const liveness = new AgentLivenessProbe(a2aAgentRepo, {
+    onChange: (agent) => {
+      console.warn(`[liveness] endpoint ${agent.id} is now ${agent.unreachableSince ? 'unreachable' : 'reachable'}`);
+      broadcast({ type: 'a2a_agent_update', payload: agent });
+    },
+  });
+  void liveness.sweep();
+  liveness.start();
   workflowTimer.unref();
   app.use('/api/github', createGitHubRouter(projectRepo, taskRepo));
   app.use('/api/tasks', createTaskRouter(taskRepo, agentManager, projectRepo, workerRepo, groupRepo));
@@ -349,6 +361,7 @@ const agentManager = new AgentManager();
   // Graceful shutdown
   function shutdown() {
     console.log('[server] shutting down...');
+    liveness.stop();
     clearInterval(dispatchInterval);
     clearInterval(workerSweepInterval);
     agentManager.shutdownAll();

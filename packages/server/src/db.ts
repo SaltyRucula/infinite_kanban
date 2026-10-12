@@ -87,9 +87,14 @@ function migrate(db: Database.Database): void {
       created_at            INTEGER NOT NULL,
       updated_at            INTEGER NOT NULL,
       last_validated_at     INTEGER NOT NULL,
-      last_validation_error TEXT
+      last_validation_error TEXT,
+      unreachable_since     INTEGER,
+      probe_failures        INTEGER NOT NULL DEFAULT 0
     )
   `);
+  const a2aCols = new Set((db.pragma('table_info(a2a_agents)') as { name: string }[]).map((c) => c.name));
+  if (!a2aCols.has('unreachable_since')) db.exec(`ALTER TABLE a2a_agents ADD COLUMN unreachable_since INTEGER`);
+  if (!a2aCols.has('probe_failures')) db.exec(`ALTER TABLE a2a_agents ADD COLUMN probe_failures INTEGER NOT NULL DEFAULT 0`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS a2a_agent_project_roles (
       agent_id   TEXT NOT NULL REFERENCES a2a_agents(id) ON DELETE CASCADE,
@@ -607,7 +612,9 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
       created_at            BIGINT NOT NULL,
       updated_at            BIGINT NOT NULL,
       last_validated_at     BIGINT NOT NULL,
-      last_validation_error TEXT
+      last_validation_error TEXT,
+      unreachable_since     BIGINT,
+      probe_failures        INTEGER NOT NULL DEFAULT 0
     )
   `);
   await pool.query(`
@@ -858,6 +865,8 @@ export async function initPostgresDatabase(pool: Pool): Promise<void> {
   // Add importance column if it doesn't exist yet (additive, nullable — old
   // rows read back with importance = undefined; see postgres.ts getEventsByTaskId).
   await pool.query(`ALTER TABLE events ADD COLUMN IF NOT EXISTS importance TEXT`);
+  await pool.query(`ALTER TABLE a2a_agents ADD COLUMN IF NOT EXISTS unreachable_since BIGINT`);
+  await pool.query(`ALTER TABLE a2a_agents ADD COLUMN IF NOT EXISTS probe_failures INTEGER NOT NULL DEFAULT 0`);
 
   // Templates table
   await pool.query(`
