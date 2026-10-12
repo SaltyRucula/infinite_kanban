@@ -174,6 +174,7 @@ const agentManager = new AgentManager();
         });
     },
   );
+  await workflow.reconcileFailedProjections();
   app.use('/api/tasks', createBoardWorkflowRouter(workflow));
   app.use('/api', createWorkflowOwnershipGuard(workflow, { tasks: taskRepo, groups: groupRepo }));
   app.use('/api/projects', createProjectsRouter(projectRepo, taskRepo, groupRepo, agentManager));

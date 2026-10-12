@@ -35,6 +35,19 @@ export class BoardWorkflowCoordinator {
  }
  private async locked<T>(id:string, fn:()=>Promise<T>):Promise<T> {const previous=this.locks.get(id)??Promise.resolve();const next=previous.catch(()=>{}).then(fn);this.locks.set(id,next);try{return await next;}finally{if(this.locks.get(id)===next)this.locks.delete(id);}}
  get(id:string) {return this.store.get(id);}
+ /** Repair old failed projections at startup without polling or dispatching work. */
+ async reconcileFailedProjections() {
+  for (const entry of await this.store.list()) await this.locked(entry.taskId, async () => {
+   const run = await this.store.get(entry.taskId);
+   if (!run || (run.phase !== 'escalated' && run.phase !== 'dispatch_uncertain')) return;
+   const task = await this.tasks.getById(run.taskId);
+   if (task?.columnId !== 'in-progress') return;
+   // Keep the existing summary and workflow checkpoints, even when the old
+   // projectedKey would suppress project(). Only the task projection is stale.
+   const updated = await this.tasks.update(run.taskId, { columnId: 'backlog', agentStatus: 'failed' });
+   if (updated) broadcastTaskUpdate(updated);
+  });
+ }
  async ownsTask(id: string): Promise<boolean> {
   const run = await this.store.get(id);
   return Boolean(run && (run.phase !== 'canceled' || run.projectedPhase !== 'canceled'));
@@ -61,7 +74,8 @@ export class BoardWorkflowCoordinator {
   if (run.projectedKey === key) return;
   if (['canceled', 'done'].includes(run.phase) && run.projectedPhase === run.phase) return;
   const complete=run.phase==='done';const review=run.phase==='reviewing'||run.phase==='awaiting_approval';
-  const task=await this.tasks.update(run.taskId,{columnId:complete?'done':review?'review':run.phase==='canceled'?'backlog':'in-progress',agentStatus:complete||run.phase==='awaiting_approval'?'complete':run.phase==='escalated'||run.phase==='dispatch_uncertain'?'failed':run.phase==='canceled'?'idle':'executing',summary:`Workflow ${run.phase}${run.diagnostics.length?': '+run.diagnostics.at(-1)!.reason:''}`,completedAt:complete?Date.now():undefined});if(task) {
+  const failed=run.phase==='escalated'||run.phase==='dispatch_uncertain';
+  const task=await this.tasks.update(run.taskId,{columnId:complete?'done':review?'review':failed||run.phase==='canceled'?'backlog':'in-progress',agentStatus:complete||run.phase==='awaiting_approval'?'complete':failed?'failed':run.phase==='canceled'?'idle':'executing',summary:`Workflow ${run.phase}${run.diagnostics.length?': '+run.diagnostics.at(-1)!.reason:''}`,completedAt:complete?Date.now():undefined});if(task) {
    broadcastTaskUpdate(task);
    if (run.projectedPhase !== run.phase || run.projectedKey !== key) { run.projectedPhase = run.phase; run.projectedKey = key; await this.save(run); }
   }
