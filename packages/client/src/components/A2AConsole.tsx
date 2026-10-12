@@ -11,6 +11,20 @@ interface A2AConsoleProps {
   onOpenBoard: () => void;
 }
 
+/**
+ * Reachability as observed by the board's probe, not as claimed at registration.
+ * A killed endpoint keeps its row and stays enabled, so "registered" alone says
+ * nothing about whether the board can dispatch to it.
+ */
+function reachability(agent: A2AAgent): { label: string; className: string; reachable: boolean } {
+  if (!agent.enabled) return { label: 'Disabled by operator', className: 'text-muted-foreground', reachable: false };
+  if (agent.unreachableSince) {
+    const minutes = Math.max(1, Math.round((Date.now() - agent.unreachableSince) / 60_000));
+    return { label: `Unreachable for ${minutes}m — routing skips it`, className: 'text-red-600', reachable: false };
+  }
+  return { label: 'Reachable', className: 'text-emerald-600', reachable: true };
+}
+
 function projectRoles(agent: A2AAgent, projectId: string): A2AWorkflowRole[] {
   return agent.projectAccess.find((access) => access.projectId === projectId)?.roles ?? [];
 }
@@ -85,6 +99,9 @@ export function A2AConsole({ project, theme, toggleTheme, onBackToProjects, onOp
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">Agent Directory</h2>
+              <p className="mt-1 text-sm text-muted-foreground" data-testid="endpoint-availability">
+                {agents.filter((agent) => agent.enabled && !agent.unreachableSince && projectRoles(agent, project.id).length > 0).length} of {agents.length} registered endpoints can take work on this project.
+              </p>
               <p className="text-sm text-muted-foreground">Register trusted Agent Cards and grant this project workflow roles.</p>
             </div>
             <button onClick={() => void loadAgents()} aria-label="Refresh directory" className="rounded border border-border p-2 hover:bg-muted"><RefreshCw className="h-4 w-4" /></button>
@@ -99,8 +116,9 @@ export function A2AConsole({ project, theme, toggleTheme, onBackToProjects, onOp
             <ul className="space-y-3">
               {agents.map((agent) => {
                 const roles = projectRoles(agent, project.id);
+                const status = reachability(agent);
                 return <li key={agent.id} className="rounded border border-border p-4">
-                  <div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2 font-medium"><Bot className="h-4 w-4" />{agent.name}</div><p className="mt-1 text-sm text-muted-foreground">{agent.description || agent.endpoint}</p>{agent.lastValidationError && <p className="mt-1 text-sm text-red-600">Last refresh: {agent.lastValidationError}</p>}</div><div className="flex gap-1"><button onClick={() => void api.refreshA2AAgent(agent.id).then(updateAgent).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not refresh Agent Card.'))} aria-label={`Refresh ${agent.name}`} className="rounded border border-border p-2 hover:bg-muted"><RefreshCw className="h-4 w-4" /></button><button onClick={() => void api.deleteA2AAgent(agent.id).then(() => setAgents((current) => current.filter((item) => item.id !== agent.id))).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not delete Agent Card.'))} aria-label={`Delete ${agent.name}`} className="rounded border border-border p-2 hover:bg-muted"><Trash2 className="h-4 w-4" /></button></div></div>
+                  <div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2 font-medium"><Bot className="h-4 w-4" />{agent.name}</div><p className="mt-1 text-sm text-muted-foreground">{agent.description || agent.endpoint}</p>{agent.lastValidationError && <p className="mt-1 text-sm text-red-600">Last refresh: {agent.lastValidationError}</p>}<p className={`mt-1 text-sm ${status.className}`} data-testid={`endpoint-reachability-${agent.id}`}><span aria-hidden className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${status.reachable ? 'bg-emerald-500' : agent.enabled ? 'bg-red-500' : 'bg-muted-foreground'}`} />{status.label}</p></div><div className="flex gap-1"><button onClick={() => void api.refreshA2AAgent(agent.id).then(updateAgent).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not refresh Agent Card.'))} aria-label={`Refresh ${agent.name}`} className="rounded border border-border p-2 hover:bg-muted"><RefreshCw className="h-4 w-4" /></button><button onClick={() => void api.deleteA2AAgent(agent.id).then(() => setAgents((current) => current.filter((item) => item.id !== agent.id))).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not delete Agent Card.'))} aria-label={`Delete ${agent.name}`} className="rounded border border-border p-2 hover:bg-muted"><Trash2 className="h-4 w-4" /></button></div></div>
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><button onClick={() => void api.setA2AAgentEnabled(agent.id, !agent.enabled).then(updateAgent).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not change agent status.'))} className="rounded border border-border px-2 py-1 hover:bg-muted">{agent.enabled ? 'Enabled' : 'Disabled'}</button>{(['implementation', 'review'] as const).map((role) => <label key={role} className="flex items-center gap-1"><input type="checkbox" checked={roles.includes(role)} onChange={() => void toggleRole(agent, role)} />{role}</label>)}</div>
                 </li>;
               })}
