@@ -167,6 +167,50 @@ test('a settled workflow stops rebroadcasting identical task state', async () =>
   f.db.close();
 });
 
+/**
+ * #118: a killed endpoint kept its registration, stayed enabled, and kept
+ * winning routing, so the board dispatched into a socket nobody was listening
+ * on and the run stalled with no cause. Reachability must gate routing.
+ */
+test('an unreachable endpoint is not dispatched to, and a reachable one still is', async () => {
+  const f = fixture();
+  const down = { ...agents[0], id: 'down', unreachableSince: 10 };
+  const up = { ...agents[0], id: 'up' };
+  const roster = [down, up].map((agent) => ({
+    ...agent,
+    projectAccess: [{ agentId: agent.id, projectId: 'p', roles: ['implementation' as const], createdAt: 1, updatedAt: 1 }],
+  }));
+  const coordinator = new BoardWorkflowCoordinator(
+    f.store,
+    { getById: async () => ({ id: 't', projectId: 'p', title: 'x', description: 'y', columnId: 'backlog' as const, agentStatus: 'idle' as const, agentType: 'opencode' as const, priority: 'medium' as const, labels: [], createdAt: 1 }) as never,
+      update: async (_id: string, changes: Partial<Task>) => ({ ...changes } as Task) },
+    { getAll: async () => roster as never },
+    () => ({ dispatch: async (p: A2AMessageSendParams) => ({ remoteTaskId: p.message.messageId }), getUpdate: async () => ({ state: 'running' as const, artifacts: [] }), cancel: async () => {} }),
+    async () => {},
+  );
+  const run = await coordinator.start('t', { repository: 'https://github.com/o/r', baseRevision: revision });
+  assert.equal(run.phase, 'implementing');
+  assert.equal(run.assignments[0].assignment.endpointId, 'up', 'routing must skip the unreachable endpoint');
+  f.db.close();
+});
+
+test('a workflow escalates rather than dispatching when every endpoint is unreachable', async () => {
+  const f = fixture();
+  const roster = agents.map((agent) => ({ ...agent, unreachableSince: 10 }));
+  const coordinator = new BoardWorkflowCoordinator(
+    f.store,
+    { getById: async () => ({ id: 't', projectId: 'p', title: 'x', description: 'y', columnId: 'backlog' as const, agentStatus: 'idle' as const, agentType: 'opencode' as const, priority: 'medium' as const, labels: [], createdAt: 1 }) as never,
+      update: async (_id: string, changes: Partial<Task>) => ({ ...changes } as Task) },
+    { getAll: async () => roster as never },
+    () => ({ dispatch: async () => { throw new Error('must not dispatch'); }, getUpdate: async () => ({ state: 'running' as const, artifacts: [] }), cancel: async () => {} }),
+    async () => {},
+  );
+  const run = await coordinator.start('t', { repository: 'https://github.com/o/r', baseRevision: revision });
+  assert.equal(run.phase, 'escalated');
+  assert.match(run.diagnostics.at(-1)!.reason, /endpoint/);
+  f.db.close();
+});
+
 test('a coordinator without an event sink still runs', async () => {
   const db = new Database(':memory:');
   const store = new SqliteWorkflowStore(db);

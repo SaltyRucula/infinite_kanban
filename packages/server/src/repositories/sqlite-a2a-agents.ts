@@ -6,6 +6,7 @@ interface AgentRow {
   id: string; agent_card_url: string; name: string; description: string; version: string;
   endpoint: string; protocol_version: string; skills_json: string; enabled: number;
   created_at: number; updated_at: number; last_validated_at: number; last_validation_error: string | null;
+  unreachable_since: number | null; probe_failures: number;
 }
 interface AccessRow { agent_id: string; project_id: string; roles_json: string; created_at: number; updated_at: number; }
 
@@ -46,6 +47,25 @@ export class SqliteA2AAgentRepository implements A2AAgentRepository {
     return this.getById(id);
   }
 
+  /**
+   * Record one reachability probe. Unreachability is only declared after
+   * repeated failures, so a single blip cannot strand routing, and a recovery
+   * clears the failure outright.
+   */
+  async recordProbe(id: string, ok: boolean, now: number, unreachableAfter: number, error?: string): Promise<A2AAgent | undefined> {
+    if (ok) {
+      this.db.prepare('UPDATE a2a_agents SET last_validated_at = ?, last_validation_error = NULL, unreachable_since = NULL, probe_failures = 0, updated_at = ? WHERE id = ?').run(now, now, id);
+      return this.getById(id);
+    }
+    const current = this.db.prepare('SELECT probe_failures, unreachable_since FROM a2a_agents WHERE id = ?').get(id) as { probe_failures: number; unreachable_since: number | null } | undefined;
+    if (!current) return undefined;
+    const failures = (current.probe_failures ?? 0) + 1;
+    const unreachableSince = current.unreachable_since ?? (failures >= unreachableAfter ? now : null);
+    this.db.prepare('UPDATE a2a_agents SET probe_failures = ?, unreachable_since = ?, last_validation_error = ?, updated_at = ? WHERE id = ?')
+      .run(failures, unreachableSince, error ?? 'endpoint unreachable', now, id);
+    return this.getById(id);
+  }
+
   async recordRefreshFailure(id: string, error: string, now: number): Promise<A2AAgent | undefined> {
     this.db.prepare('UPDATE a2a_agents SET last_validation_error = ?, updated_at = ? WHERE id = ?').run(error, now, id);
     return this.getById(id);
@@ -62,6 +82,6 @@ export class SqliteA2AAgentRepository implements A2AAgentRepository {
   private toAgent(row: AgentRow): A2AAgent {
     const accessRows = this.db.prepare('SELECT * FROM a2a_agent_project_roles WHERE agent_id = ? ORDER BY project_id ASC').all(row.id) as AccessRow[];
     const projectAccess: A2AAgentProjectAccess[] = accessRows.map((access) => ({ agentId: access.agent_id, projectId: access.project_id, roles: parseRoles(access.roles_json), createdAt: access.created_at, updatedAt: access.updated_at }));
-    return { id: row.id, agentCardUrl: row.agent_card_url, name: row.name, description: row.description, version: row.version, endpoint: row.endpoint, protocolVersion: row.protocol_version, skills: parseSkills(row.skills_json), enabled: Boolean(row.enabled), createdAt: row.created_at, updatedAt: row.updated_at, lastValidatedAt: row.last_validated_at, ...(row.last_validation_error ? { lastValidationError: row.last_validation_error } : {}), projectAccess };
+    return { id: row.id, agentCardUrl: row.agent_card_url, name: row.name, description: row.description, version: row.version, endpoint: row.endpoint, protocolVersion: row.protocol_version, skills: parseSkills(row.skills_json), enabled: Boolean(row.enabled), createdAt: row.created_at, updatedAt: row.updated_at, lastValidatedAt: row.last_validated_at, ...(row.last_validation_error ? { lastValidationError: row.last_validation_error } : {}), ...(row.unreachable_since ? { unreachableSince: row.unreachable_since } : {}), ...(row.probe_failures ? { probeFailures: row.probe_failures } : {}), projectAccess };
   }
 }

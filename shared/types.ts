@@ -465,6 +465,14 @@ export interface A2AAgent {
   updatedAt: number;
   lastValidatedAt: number;
   lastValidationError?: string;
+  /**
+   * When the board first could not reach this endpoint, after repeated probes.
+   * Absent means reachable. Routing skips unreachable endpoints: a registration
+   * is a claim, and reachability has to be observed rather than assumed.
+   */
+  unreachableSince?: number;
+  /** Consecutive failed probes; a single blip must not strand routing. */
+  probeFailures?: number;
   projectAccess: A2AAgentProjectAccess[];
 }
 
@@ -478,4 +486,6 @@ export type WSMessage =
   | { type: 'project_updated'; payload: Project }
   | { type: 'project_deleted'; payload: { id: string } }
   | { type: 'worker_updated'; payload: Worker }
-  | { type: 'worker_removed'; payload: { id: string } };
+  | { type: 'worker_removed'; payload: { id: string } }
+  /** An execution endpoint's reachability changed; the roster should re-render. */
+  | { type: 'a2a_agent_update'; payload: A2AAgent };

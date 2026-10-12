@@ -20,6 +20,8 @@ export interface A2AAgentRepository {
   setEnabled(id: string, enabled: boolean, now: number): Promise<A2AAgent | undefined>;
   setProjectRoles(id: string, projectId: string, roles: readonly A2AWorkflowRole[], now: number): Promise<A2AAgent | undefined>;
   recordRefreshFailure(id: string, error: string, now: number): Promise<A2AAgent | undefined>;
+  /** Record one reachability probe; see the SQLite implementation for the failure policy. */
+  recordProbe(id: string, ok: boolean, now: number, unreachableAfter: number, error?: string): Promise<A2AAgent | undefined>;
   refresh(id: string, input: Omit<RegisterA2AAgentInput, 'id' | 'agentCardUrl' | 'enabled' | 'now'> & { now: number }): Promise<A2AAgent | undefined>;
   delete(id: string): Promise<boolean>;
 }

@@ -94,9 +94,11 @@ export class BoardWorkflowCoordinator {
   const implementation=[...run.assignments].reverse().find(d=>d.assignment.role==='implementation'&&d.result);
   const candidates=(await this.agents.getAll()).filter(agent=>{
    const tags=agent.skills.flatMap(s=>s.tags);
-   return agent.enabled && agent.projectAccess.some(p=>p.projectId===run.projectId&&p.roles.includes(role)) && ['execution:v1',`repository:${normalizeRepoUrl(run.repository)}`,`consent:${run.projectId}`,...run.requiredCapabilities,...(role==='review'?['review:snapshot']:[])].every(t=>tags.includes(t)) && (role!=='review'||(agent.id!==implementation?.assignment.endpointId && agent.endpoint!==implementation?.endpoint));
+   // enabled is an operator decision; unreachableSince is an observation. Both
+   // must hold, or the board dials a socket nobody is listening on (#118).
+   return agent.enabled && !agent.unreachableSince && agent.projectAccess.some(p=>p.projectId===run.projectId&&p.roles.includes(role)) && ['execution:v1',`repository:${normalizeRepoUrl(run.repository)}`,`consent:${run.projectId}`,...run.requiredCapabilities,...(role==='review'?['review:snapshot']:[])].every(t=>tags.includes(t)) && (role!=='review'||(agent.id!==implementation?.assignment.endpointId && agent.endpoint!==implementation?.endpoint));
   });
-  const endpoint=candidates[0];if(!endpoint){await this.escalate(run,'dispatch',`no eligible ${role==='review'?'distinct review':'implementation'} endpoint with repository access and consent`);return;}
+  const endpoint=candidates[0];if(!endpoint){const unreachable=(await this.agents.getAll()).filter(a=>a.enabled&&a.unreachableSince).length;await this.escalate(run,'dispatch',`no eligible ${role==='review'?'distinct review':'implementation'} endpoint with repository access and consent${unreachable?` (${unreachable} registered endpoint${unreachable>1?'s are':' is'} unreachable)`:''}`);return;}
   const assignment=validateAssignment({schemaVersion:1,taskId:run.taskId,projectId:run.projectId,workflowRunId:run.id,assignmentId:randomUUID(),attempt:run.assignments.length+1,role,endpointId:endpoint.id,repository:run.repository,baseRevision:run.acceptedRevision??run.baseRevision,requirements:run.requirements,requiredCapabilities:run.requiredCapabilities,constraints:{deadline:run.policy.deadline,...(role==='review'?{readOnly:true}:{})},...(role==='review'?{targetRevision:run.acceptedRevision,parentImplementationAssignmentId:implementation?.assignment.assignmentId}:{})});
   const d:WorkflowDispatch={assignment,endpoint:endpoint.endpoint,protocolVersion:negotiateProtocolVersion(endpoint.protocolVersion),state:'sending'};
   run.assignments.push(d);run.phase=role==='review'?'reviewing':'implementing';await this.save(run);
