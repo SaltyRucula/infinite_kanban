@@ -8,7 +8,10 @@ export PATH="$HOME/.nvm/versions/node/v22.23.3/bin:$PATH"
 unset NODE_ENV
 
 if [ ! -d node_modules ]; then
-  npm ci --include=dev --ignore-scripts --no-audit --fund=false >/dev/null 2>&1
+  # Native modules must build: these suites use better-sqlite3, and skipping
+  # scripts leaves the binding missing. An implementation endpoint hides this
+  # by installing during its own work; a read-only reviewer cannot.
+  npm ci --include=dev --no-audit --fund=false >/dev/null 2>&1
 fi
 
 npm run build:shared >/dev/null 2>&1

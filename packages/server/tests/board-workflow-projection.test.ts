@@ -105,6 +105,33 @@ test('startup reconciliation repairs cached stuck projections once, preserving t
   }
 });
 
+/**
+ * The sweep is awaited during startup, so an unguarded throw takes the whole
+ * server down and abandons the rest of the sweep: every later stuck task would
+ * stay stuck with nothing to say why.
+ */
+test('one failing entry neither aborts startup nor abandons the rest of the sweep', async (t) => {
+  const f = fixture(t);
+  for (const id of ['unhappy', 'healthy']) {
+    f.addTask(id, { columnId: 'in-progress', agentStatus: 'failed', summary: `Workflow escalated: ${id}` });
+    await persistRun(f, id, 'escalated');
+  }
+  const failing = {
+    getById: f.tasks.getById,
+    update: async (id: string, changes: Partial<Task>) => {
+      if (id === 'unhappy') throw new Error('task store is unhappy');
+      return f.tasks.update(id, changes);
+    },
+  };
+  const coordinator = new BoardWorkflowCoordinator(f.store, failing, { getAll: async () => roster }, f.executor);
+
+  await assert.doesNotReject(() => coordinator.reconcileFailedProjections());
+
+  assert.equal(f.rows.get('healthy')?.columnId, 'backlog', 'the healthy task must still be reconciled');
+  assert.equal(f.rows.get('unhappy')?.columnId, 'in-progress');
+  assert.equal(f.executor.mock.callCount(), 0);
+});
+
 test('startup reconciliation leaves live runs, other columns, missing tasks and tasks without workflows untouched', async (t) => {
   const f = fixture(t);
   for (const phase of ['implementing', 'reviewing', 'awaiting_approval', 'done', 'canceled'] as const) {

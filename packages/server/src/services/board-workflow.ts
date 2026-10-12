@@ -37,16 +37,25 @@ export class BoardWorkflowCoordinator {
  get(id:string) {return this.store.get(id);}
  /** Repair old failed projections at startup without polling or dispatching work. */
  async reconcileFailedProjections() {
-  for (const entry of await this.store.list()) await this.locked(entry.taskId, async () => {
-   const run = await this.store.get(entry.taskId);
-   if (!run || (run.phase !== 'escalated' && run.phase !== 'dispatch_uncertain')) return;
-   const task = await this.tasks.getById(run.taskId);
-   if (task?.columnId !== 'in-progress') return;
-   // Keep the existing summary and workflow checkpoints, even when the old
-   // projectedKey would suppress project(). Only the task projection is stale.
-   const updated = await this.tasks.update(run.taskId, { columnId: 'backlog', agentStatus: 'failed' });
-   if (updated) broadcastTaskUpdate(updated);
-  });
+  let entries: Awaited<ReturnType<WorkflowStore['list']>>;
+  // One unreadable run must not take the server down with it, nor abandon the
+  // rest of the sweep: every other startup recovery path logs and continues.
+  try { entries = await this.store.list(); }
+  catch (error) { console.error('[workflow] could not list runs to reconcile stuck tasks', error); return; }
+  for (const entry of entries) {
+   try {
+    await this.locked(entry.taskId, async () => {
+     const run = await this.store.get(entry.taskId);
+     if (!run || (run.phase !== 'escalated' && run.phase !== 'dispatch_uncertain')) return;
+     const task = await this.tasks.getById(run.taskId);
+     if (task?.columnId !== 'in-progress') return;
+     // Keep the existing summary and workflow checkpoints, even when the old
+     // projectedKey would suppress project(). Only the task projection is stale.
+     const updated = await this.tasks.update(run.taskId, { columnId: 'backlog', agentStatus: 'failed' });
+     if (updated) broadcastTaskUpdate(updated);
+    });
+   } catch (error) { console.error(`[workflow] could not reconcile stuck task ${entry.taskId}`, error); }
+  }
  }
  async ownsTask(id: string): Promise<boolean> {
   const run = await this.store.get(id);
