@@ -97,10 +97,25 @@ test.describe('Worker console shell', () => {
     const disable = await request.patch(`${API}/api/workers/${worker.worker.id}/status`, { data: { status: 'disabled' } });
     expect(disable.status()).toBe(200);
 
+    let workerDeleteRequests = 0;
+    page.on('request', (browserRequest) => {
+      if (browserRequest.method() === 'DELETE' && new URL(browserRequest.url()).pathname === `/api/workers/${worker.worker.id}`) {
+        workerDeleteRequests += 1;
+      }
+    });
+
     await page.getByRole('button', { name: 'Agent Roster' }).click();
     await expect(page.getByText(name)).toBeVisible();
     await page.getByRole('button', { name: `Remove worker ${name}` }).click();
 
+    const confirmation = page.getByRole('dialog', { name: 'Remove worker confirmation' });
+    await expect(confirmation).toBeVisible();
+    expect(workerDeleteRequests).toBe(0);
+    const beforeConfirmation = await (await request.get(`${API}/api/workers`)).json() as Array<{ id: string }>;
+    expect(beforeConfirmation.some((registered) => registered.id === worker.worker.id)).toBe(true);
+    await confirmation.getByRole('button', { name: 'Remove worker' }).click();
+
+    await expect.poll(() => workerDeleteRequests).toBe(1);
     await expect(page.getByText(name)).not.toBeVisible();
     const workers = await (await request.get(`${API}/api/workers`)).json() as Array<{ id: string }>;
     expect(workers.some((registered) => registered.id === worker.worker.id)).toBe(false);
@@ -146,6 +161,59 @@ test.describe('Worker console shell', () => {
       'Bearer e2e-full-scope-token',
       'Bearer worker-management-token',
     ]);
+    expect(attempts).toBe(2);
+  });
+
+  test('retries worker removal with a worker-management credential after the browser API key is rejected', async ({ page, request }) => {
+    const name = `credential-removal-worker-${Date.now()}`;
+    const registration = await request.post(`${API}/api/workers/register`, {
+      headers: { Authorization: 'Bearer e2e-worker-registration-token' },
+      data: {
+        name,
+        agentTypes: ['opencode'],
+        maxConcurrentTasks: 1,
+        hostname: `${name}-host`,
+        acceptedProjectIds: ['default'],
+        acceptedLabels: [],
+      },
+    });
+    expect(registration.ok()).toBeTruthy();
+    const worker = (await registration.json()) as { worker: { id: string } };
+    const authorizations: string[] = [];
+    let attempts = 0;
+    let removed = false;
+    await page.route(`**/api/workers/${worker.worker.id}`, async (route) => {
+      attempts += 1;
+      authorizations.push((await route.request().headerValue('Authorization')) ?? '');
+      if (attempts === 1) {
+        await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) });
+        return;
+      }
+      removed = true;
+      await route.fulfill({ status: 204 });
+    });
+    await page.route('**/api/workers', async (route) => {
+      const response = await route.fetch();
+      const workers = await response.json() as Array<{ id: string }>;
+      await route.fulfill({ response, body: JSON.stringify(removed ? workers.filter((candidate) => candidate.id !== worker.worker.id) : workers) });
+    });
+
+    await page.getByRole('button', { name: 'Agent Roster' }).click();
+    await expect(page.getByText(name)).toBeVisible();
+    await page.getByRole('button', { name: `Remove worker ${name}` }).click();
+
+    const credentialDialog = page.getByRole('dialog', { name: 'Remove worker confirmation' });
+    await expect(credentialDialog).toBeVisible();
+    await credentialDialog.getByRole('button', { name: 'Remove worker' }).click();
+
+    await expect(credentialDialog).toBeVisible();
+    expect(authorizations).toEqual(['Bearer e2e-full-scope-token']);
+    expect(attempts).toBe(1);
+    await credentialDialog.getByLabel('Worker-management credential').fill('worker-management-token');
+    await credentialDialog.getByRole('button', { name: 'Remove worker' }).click();
+
+    await expect(page.getByText(name)).not.toBeVisible();
+    expect(authorizations).toEqual(['Bearer e2e-full-scope-token', 'Bearer worker-management-token']);
     expect(attempts).toBe(2);
   });
 });
