@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFile as execFileCallback } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -658,7 +659,25 @@ async function main(): Promise<void> {
   await dispatchCommand(command, parseArgs(rest));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+// npm (and therefore npx) installs `bin` entries as a symlink — e.g.
+// node_modules/.bin/agentboard-worker -> ../@ai-agent-board/worker/dist/cli.js.
+// Node's ESM loader resolves `import.meta.url` to the symlink's REAL path,
+// but `process.argv[1]` stays the symlink path the user/npx actually invoked.
+// Comparing them directly therefore never matches for an installed package,
+// so the CLI would run, hit this guard, find it false, and exit 0 having done
+// nothing — no error, just silence. Resolving argv[1] to its real path first
+// makes the comparison symlink-aware.
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return import.meta.url === pathToFileURL(entry).href;
+  }
+}
+
+if (isMainModule()) {
   void main().catch((error: unknown) => {
     console.error(`[worker] ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

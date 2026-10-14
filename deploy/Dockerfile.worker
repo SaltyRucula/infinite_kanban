@@ -25,13 +25,18 @@ COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
 COPY packages/e2e/package.json ./packages/e2e/
 COPY packages/worker/package.json ./packages/worker/
+COPY packages/a2a/package.json ./packages/a2a/
+COPY packages/opencode-compat/package.json ./packages/opencode-compat/
 
 RUN npm ci --include=dev --no-audit --no-fund
 
 COPY . .
 
-# Build shared types then the worker (tsc -> dist/).
-RUN npm run build:shared && npm run worker:build
+# worker:build (tsc -b, then esbuild — see packages/worker/scripts/bundle.mjs)
+# inlines @ai-agent-board/shared, @ai-agent-board/a2a and
+# @ai-agent-board/opencode-compat into packages/worker/dist/*.js, so the
+# runtime stage below needs none of those three source/build directories.
+RUN npm run worker:build
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim
@@ -49,7 +54,6 @@ WORKDIR /app
 
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/shared ./shared
 COPY --from=build /app/packages/worker ./packages/worker
 
 COPY deploy/docker-entrypoint.worker.sh /usr/local/bin/docker-entrypoint.sh

@@ -13,27 +13,21 @@
   },
   "scripts": {
     "dev": "tsx watch src/cli.ts run",
-    "build": "tsc -b tsconfig.build.json",
+    "build": "tsc -b tsconfig.build.json && node scripts/bundle.mjs",
+    "prepack": "npm run build",
     "test": "node --import tsx/esm --test tests/*.test.ts",
-    "test:package": "node --import tsx/esm --test tests/package-contract.pack.ts",
-    "prepack": "npm run build && npm run build -w @ai-agent-board/shared && npm run build -w @ai-agent-board/opencode-compat && node scripts/stage-internal-dependencies.cjs",
-    "postpack": "node scripts/cleanup-staged-dependencies.cjs"
+    "test:package": "node --import tsx/esm --test tests/package-contract.pack.ts"
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.3.0",
-    "@ai-agent-board/a2a": "*",
-    "@ai-agent-board/shared": "*",
-    "@ai-agent-board/opencode-compat": "*",
     "@codewithdan/agent-sdk-core": "^0.7.0",
+    "@openai/codex-sdk": "^0.139.0",
     "@opencode-ai/sdk": "^1.17.7",
     "express": "^4.22.2",
     "uuid": "^11.0.0"
   },
-  "bundleDependencies": [
-    "@ai-agent-board/opencode-compat",
-    "@ai-agent-board/shared"
-  ],
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "tsx": "^4.22.4",
     "typescript": "~5.7.0"
   }

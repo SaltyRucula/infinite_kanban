@@ -1,6 +1,18 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": false, "allowImportingTsExtensions": false, "outDir": "dist", "rootDir": "src", "declaration": true },
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "allowImportingTsExtensions": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true
+  },
   "include": ["src"],
-  "references": [{ "path": "../../shared" }, { "path": "../opencode-compat/tsconfig.build.json" }]
+  "references": [
+    { "path": "../../shared" },
+    { "path": "../a2a" },
+    { "path": "../opencode-compat/tsconfig.build.json" }
+  ]
 }
