@@ -113,7 +113,10 @@ test.describe('Single-call task creation + autoRun', () => {
     const run = await request.post(`${API}/api/tasks/${task.id}/run`);
     expect(run.status()).toBe(200);
     const running = await run.json();
-    expect(running.agentStatus).toBe('planning');
+    // Run-requested but not yet claimed by the worker: 'queued', not
+    // 'planning' (see #127 — 'planning' on the worker path now means
+    // "claimed, not yet executing", promoted at claim time).
+    expect(running.agentStatus).toBe('queued');
     expect(running.runRequestedAt).toBeDefined();
 
     const assignments = await request.get(`${API}/api/workers/me/assignments`, {

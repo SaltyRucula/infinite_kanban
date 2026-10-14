@@ -159,7 +159,7 @@ test('a worker question moves the task to pending and the answer resumes the sam
     const requeued = await h.task();
     assert.equal(requeued.id, 'task-1');
     assert.equal(requeued.columnId, 'in-progress');
-    assert.equal(requeued.agentStatus, 'planning');
+    assert.equal(requeued.agentStatus, 'queued');
 
     const [assignment] = await h.assignments();
     assert.deepEqual(assignment?.resume, { sessionId: 'ses_1', question: QUESTION, answer: 'Use v2' });

@@ -67,7 +67,15 @@ test.describe('Worker console shell', () => {
     const dialog = page.getByRole('dialog', { name: 'Add worker' });
     await expect(dialog.getByText('Enrollment code')).toBeVisible();
     const command = dialog.getByLabel('Worker start command');
-    await expect(command).toHaveValue(/^npx @ai-agent-board\/worker start --code [A-Za-z0-9_-]+$/);
+    // The CLI takes a full enrollment URL, never a bare code: `parseEnrollmentCode`
+    // (packages/worker/src/cli.ts) requires an absolute http(s) URL whose pathname is
+    // exactly `/api/workers/enroll`, with no query string and a non-empty fragment
+    // carrying the one-time code. The fragment keeps the code out of the board's
+    // request logs. Single quotes stop the shell reading `#` as a comment.
+    // This assertion pins that contract — a bare code is rejected by the worker.
+    await expect(command).toHaveValue(
+      /^npx @ai-agent-board\/worker start --code 'https?:\/\/[^'/]+\/api\/workers\/enroll#[A-Za-z0-9_%-]+'$/,
+    );
     await expect(dialog.getByRole('button', { name: 'Copy command' })).toBeVisible();
     await expect(dialog.getByText(/expires in \d{1,2}:\d{2}/i)).toBeVisible();
   });
@@ -402,7 +410,9 @@ test.describe('Retry Failed Tasks', () => {
 
     const run = await request.post(`${API}/api/tasks/${task.id}/run`);
     expect(run.status()).toBe(200);
-    expect((await run.json()).agentStatus).toBe('planning');
+    // Worker-routed: run-requested but not yet claimed is 'queued', not
+    // 'planning' (see #127).
+    expect((await run.json()).agentStatus).toBe('queued');
   });
 });
 

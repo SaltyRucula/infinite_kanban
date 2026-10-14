@@ -8,6 +8,7 @@ import { useProjects } from '@/hooks/useProjects';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useTaskGroups } from '@/hooks/useTaskGroups';
+import { useWorkers } from '@/hooks/useWorkers';
 import { PRIORITY_WEIGHT } from '@/lib/priority-config';
 import { slugify } from '@/lib/utils';
 import { SK_SORT_BY, SK_SORT_DIR, SK_FILTER_AGENTS, SK_FILTER_STATUSES } from '@/lib/storage-keys';
@@ -28,7 +29,7 @@ import { A2AConsole } from '@/components/A2AConsole';
 
 const A2A_FIRST_UI_ENABLED = import.meta.env.VITE_A2A_FIRST_UI === 'true';
 
-const STATUS_WEIGHT: Record<string, number> = { executing: 0, awaiting_clarification: 1, planning: 2, failed: 3, idle: 4, complete: 5 };
+const STATUS_WEIGHT: Record<string, number> = { executing: 0, awaiting_clarification: 1, queued: 2, planning: 3, failed: 4, idle: 5, complete: 6 };
 
 type TaskSubmitData = {
   title: string;
@@ -69,6 +70,7 @@ export function BoardPage({
   };
   const { tasks, error, clearError, showArchived, setShowArchived, addTask, updateTask, moveTask, runTask, stopTask, resumeClarification, deleteTask, archiveTask, unarchiveTask, openOpenCodeSession, configureAndRunTask, createPR, mergeLocal, cleanupWorktree } = useTasks(project.id);
   const { groups, createGroup, runGroup, stopGroup, deleteGroup, updateGroup, refreshGroup } = useTaskGroups(project.id);
+  const { workers } = useWorkers();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<TaskGroupWithChildren | null>(null);
@@ -445,6 +447,7 @@ export function BoardPage({
           onStopGroup={stopGroup}
           onDeleteGroup={handleDeleteGroup}
           onEditGroup={handleEditGroup}
+          workers={workers}
         />
       </main>
 

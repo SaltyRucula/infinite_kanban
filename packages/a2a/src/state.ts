@@ -32,6 +32,13 @@ export function toTaskState(lifecycle: BoardLifecycle, overrides: TaskStateOverr
       // was dragged back to backlog is still, from a peer's point of view, a
       // submitted task.
       return TaskState.TASK_STATE_SUBMITTED;
+    case 'queued':
+      // Worker-routed run-request with no claim yet (see #127). Not
+      // reachable via the A2A workflow path today — board-workflow.ts
+      // rejects admission for any task carrying assignedWorkerId/
+      // runRequestedAt — but mapped here so this switch stays exhaustive.
+      // Nearest A2A equivalent is "submitted, not yet picked up".
+      return TaskState.TASK_STATE_SUBMITTED;
     case 'planning':
     case 'executing':
       return TaskState.TASK_STATE_WORKING;

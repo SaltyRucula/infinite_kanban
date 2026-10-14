@@ -2,17 +2,23 @@ import type { ColumnId, Priority, AgentStatus, AgentType, WorkerStatus } from '.
 
 export const VALID_PRIORITIES: readonly Priority[] = ['low', 'medium', 'high', 'critical'] as const;
 export const VALID_COLUMNS: readonly ColumnId[] = ['backlog', 'in-progress', 'pending', 'review', 'done'] as const;
-export const VALID_AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'planning', 'executing', 'awaiting_clarification', 'complete', 'failed'] as const;
+export const VALID_AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'queued', 'planning', 'executing', 'awaiting_clarification', 'complete', 'failed'] as const;
 export const VALID_AGENT_TYPES: readonly AgentType[] = ['opencode', 'codex'] as const;
 export const VALID_WORKER_STATUSES: readonly WorkerStatus[] = ['online', 'offline', 'disabled'] as const;
 
 export const VALID_AGENT_STATUS_TRANSITIONS: Record<AgentStatus, readonly AgentStatus[]> = {
-  idle: ['planning'],
+  idle: ['planning', 'queued'],
+  // Promoted to 'planning' at claim time (claimWorkerTask); can also be
+  // failed directly by the offline sweep, lease expiry, or an explicit
+  // worker revoke/disable.
+  queued: ['planning', 'failed'],
   planning: ['executing', 'failed'],
   executing: ['awaiting_clarification', 'complete', 'failed'],
-  awaiting_clarification: ['executing', 'failed'],
-  complete: ['idle'],
-  failed: ['idle'],
+  // 'queued' here covers the clarification-resume requeue back to the
+  // assigned worker (not yet re-claimed).
+  awaiting_clarification: ['executing', 'failed', 'queued'],
+  complete: ['idle', 'queued'],
+  failed: ['idle', 'queued'],
 };
 
 /** Allowed column transitions. Key = current column, value = columns you can move to. */

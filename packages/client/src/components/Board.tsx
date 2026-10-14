@@ -12,7 +12,7 @@ import {
   CollisionDetection,
 } from '@dnd-kit/core';
 import { motion } from 'framer-motion';
-import type { Task, ColumnId, Column as ColumnType } from '@/types';
+import type { Task, ColumnId, Column as ColumnType, Worker } from '@/types';
 import { VALID_TRANSITIONS } from '@/types';
 import { columns as baseColumns } from '@/lib/columns';
 import { Column } from './Column';
@@ -41,6 +41,7 @@ interface BoardProps {
   onStopGroup?: (id: string) => void;
   onDeleteGroup?: (id: string) => void;
   onEditGroup?: (group: TaskGroupWithChildren) => void;
+  workers?: Worker[];
 }
 
 // Use pointerWithin first (ideal for dropping into columns),
@@ -71,6 +72,7 @@ export function Board({
   onStopGroup,
   onDeleteGroup,
   onEditGroup,
+  workers,
 }: BoardProps) {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -190,6 +192,7 @@ export function Board({
               onOpenOpenCodeSession={onOpenOpenCodeSession}
               onRetryTask={onRetryTask}
               onAddTask={column.id === 'backlog' ? onAddTask : undefined}
+              workers={workers}
               extraContent={
                 getGroupsForColumn(column.id).map((g) => (
                   <TaskGroupCard
@@ -212,7 +215,7 @@ export function Board({
       <DragOverlay>
         {activeTask && (
           <div className="w-full max-w-80 rotate-3 opacity-90">
-            <TaskCard task={activeTask} onClick={() => {}} />
+            <TaskCard task={activeTask} onClick={() => {}} workers={workers} />
           </div>
         )}
       </DragOverlay>

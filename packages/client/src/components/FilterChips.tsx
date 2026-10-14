@@ -17,7 +17,7 @@ const AGENT_CHIPS: { value: AgentType; label: string; emoji: string }[] = (
 /** Map StatusFilter to actual AgentStatus values */
 export function statusFilterToStatuses(filter: StatusFilter): AgentStatus[] {
   switch (filter) {
-    case 'running': return ['planning', 'executing', 'awaiting_clarification'];
+    case 'running': return ['queued', 'planning', 'executing', 'awaiting_clarification'];
     case 'failed': return ['failed'];
     case 'complete': return ['complete'];
   }

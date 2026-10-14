@@ -247,7 +247,7 @@ export class SqliteTaskRepository implements TaskRepository {
     return (this.db.prepare(`SELECT tasks.* FROM tasks
       JOIN projects ON projects.id = tasks.project_id
       WHERE tasks.run_requested_at IS NOT NULL
-        AND tasks.agent_status IN ('idle','planning')
+        AND tasks.agent_status IN ('idle','planning','queued')
         AND (tasks.worker_claim_token_hash IS NULL OR tasks.worker_lease_expires_at < ?)
         AND (
           tasks.assigned_worker_id = ?
@@ -279,7 +279,7 @@ export class SqliteTaskRepository implements TaskRepository {
       worker_attempt = worker_attempt + 1, agent_status = 'planning', started_at = COALESCE(started_at, ?)
       WHERE id = ? AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL
         AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < ?)
-        AND agent_status IN ('idle','planning')
+        AND agent_status IN ('idle','planning','queued')
         AND (
           assigned_worker_id = ?
           OR (
@@ -391,20 +391,35 @@ export class SqliteTaskRepository implements TaskRepository {
   async getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]> {
     if (workerIds.length === 0) return [];
     const placeholders = workerIds.map(() => '?').join(',');
+    // Lease-gated like getExpiredWorkerTasks: a task that was run-requested
+    // but never claimed (worker_claim_token_hash IS NULL — includes the new
+    // 'queued' status) must survive a worker going offline. Only a
+    // genuinely claimed task can have been abandoned mid-run (see #127).
+    // The gate applies only to the planning/executing branch — the
+    // awaiting_clarification defense-in-depth branch below recovers a
+    // partially-failed park write whose claim was already released
+    // (worker_claim_token_hash NULL by design), so it must stay ungated.
     return (this.db.prepare(`SELECT * FROM tasks WHERE assigned_worker_id IN (${placeholders}) AND (
-        agent_status IN ('planning','executing')
+        (worker_claim_token_hash IS NOT NULL AND agent_status IN ('planning','executing'))
         OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
       )`).all(...workerIds) as TaskRow[]).map(rowToTask);
   }
 
   async revokeWorkerAssignments(workerId: string, at: number): Promise<Task[]> {
     return this.db.transaction((id: string, revokedAt: number): Task[] => {
+      // Unlike the automatic offline/lease sweeps, this always runs from an
+      // explicit human action (disabling or deleting a worker) — so unlike
+      // those sweeps, a 'queued' (run-requested, unclaimed) task assigned to
+      // that worker IS failed here, not left to wait indefinitely. This also
+      // clears assigned_worker_id/run_requested_at unconditionally below;
+      // without failing 'queued' too, such a row would become a permanent
+      // orphan no query can ever pick up again (see #127 follow-up notes).
       const rows = this.db.prepare(`UPDATE tasks SET
       assigned_worker_id=NULL, run_requested_at=NULL, run_claimed_at=NULL,
       worker_claim_token_hash=NULL, worker_claimed_at=NULL, worker_lease_expires_at=NULL,
-      agent_status=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'failed' ELSE agent_status END,
-      completed_at=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN ? ELSE completed_at END,
-      summary=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'worker_revoked' ELSE summary END,
+      agent_status=CASE WHEN agent_status IN ('queued','planning','executing','awaiting_clarification') THEN 'failed' ELSE agent_status END,
+      completed_at=CASE WHEN agent_status IN ('queued','planning','executing','awaiting_clarification') THEN ? ELSE completed_at END,
+      summary=CASE WHEN agent_status IN ('queued','planning','executing','awaiting_clarification') THEN 'worker_revoked' ELSE summary END,
       clarification_request=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_request END,
       clarification_answer=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_answer END,
       column_id=CASE WHEN agent_status = 'awaiting_clarification' AND column_id = 'pending' THEN 'in-progress' ELSE column_id END

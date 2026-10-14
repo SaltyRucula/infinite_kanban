@@ -204,9 +204,23 @@ export function createAgentRouter(
     agentManager.resetEvents(task.id);
     await repo.requestRun(task.id, Date.now());
 
+    // This route always requires an assigned worker (see the 409 check
+    // above), so it is exclusively the worker-routed path: the remote
+    // worker claims the task itself via GET /me/assignments + POST
+    // /me/tasks/:id/claim. Until that claim lands, the task sits in
+    // 'queued' — not 'planning' — so the offline/lease sweeps
+    // (getAssignedWorkerTasks) can't mistake an unclaimed request for an
+    // abandoned run and fail it out from under a worker that simply
+    // hasn't polled yet (see #127). claimWorkerTask promotes queued ->
+    // planning, and sets startedAt itself — don't stamp it here, or the
+    // card's elapsed-time display would include queue wait time.
     const updates: Partial<Task> = {
-      agentStatus: 'planning',
-      startedAt: Date.now(),
+      agentStatus: 'queued',
+      // Clear any stale startedAt from a previous run; claimWorkerTask's
+      // COALESCE(started_at, now) sets a fresh timestamp when the worker
+      // actually claims the task, so the card's elapsed-time display
+      // reflects execution time, not queue wait time.
+      startedAt: undefined,
       completedAt: undefined,
     };
     if (task.columnId === 'backlog' || task.columnId === 'pending') {
@@ -352,11 +366,14 @@ export function createAgentRouter(
       const updatedDescription = `${task.description}\n\n---\nHuman follow-up:\n${trimmed}`;
       agentManager.resetEvents(task.id);
       await repo.requestRun(task.id, Date.now());
+      // Worker-routed (assignedWorkerId is required above): the task waits
+      // in 'queued' until the worker claims it, same as a fresh /run — see
+      // the comment on the /run handler for why this must not be 'planning'.
       const updated = await repo.update(task.id, {
         description: updatedDescription,
-        agentStatus: 'planning',
+        agentStatus: 'queued',
         columnId: 'in-progress',
-        startedAt: Date.now(),
+        startedAt: undefined,
         completedAt: undefined,
         summary: undefined,
         // This starts a brand-new run from a human follow-up message, not a
@@ -438,13 +455,15 @@ export function createAgentRouter(
       }
       // Re-queue the same task for its worker; the assignment carries the
       // question, answer, and session so the agent continues where it stopped.
+      // Worker-routed (isParkedWorkerQuestion requires assignedWorkerId): the
+      // task waits in 'queued' until (re-)claimed, same as a fresh /run.
       const now = Date.now();
       const clarificationAnswer = { requestId: request.requestId, answer: answerText, timestamp: now, sessionId: request.sessionId };
       await repo.requestRun(task.id, now);
       const updated = await repo.update(task.id, {
-        agentStatus: 'planning',
+        agentStatus: 'queued',
         columnId: 'in-progress',
-        startedAt: now,
+        startedAt: undefined,
         completedAt: undefined,
         clarificationAnswer,
       });

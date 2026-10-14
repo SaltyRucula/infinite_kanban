@@ -226,7 +226,7 @@ export class PostgresTaskRepository implements TaskRepository {
     const { rows } = await this.pool.query<TaskRow>(`SELECT tasks.* FROM tasks
       JOIN projects ON projects.id = tasks.project_id
       JOIN workers ON workers.id = $1
-      WHERE tasks.run_requested_at IS NOT NULL AND tasks.agent_status IN ('idle','planning')
+      WHERE tasks.run_requested_at IS NOT NULL AND tasks.agent_status IN ('idle','planning','queued')
         AND (tasks.worker_claim_token_hash IS NULL OR tasks.worker_lease_expires_at < $2)
         AND (tasks.assigned_worker_id = $1 OR (
           tasks.assigned_worker_id IS NULL AND projects.worker_pool_enabled = TRUE
@@ -246,7 +246,7 @@ export class PostgresTaskRepository implements TaskRepository {
       agent_status = 'planning', started_at = COALESCE(started_at, $3)
       WHERE id = $5 AND run_requested_at IS NOT NULL AND worker_claim_token_hash IS NULL
         AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < $3)
-        AND agent_status IN ('idle','planning')
+        AND agent_status IN ('idle','planning','queued')
         AND (assigned_worker_id = $1 OR (assigned_worker_id IS NULL AND EXISTS (
           SELECT 1 FROM projects JOIN workers ON workers.id = $1
           WHERE projects.id = tasks.project_id AND projects.worker_pool_enabled = TRUE
@@ -329,21 +329,28 @@ export class PostgresTaskRepository implements TaskRepository {
 
   async getAssignedWorkerTasks(workerIds: readonly string[]): Promise<Task[]> {
     if (workerIds.length === 0) return [];
+    // Lease-gated like getExpiredWorkerTasks — see the SQLite implementation
+    // for the rationale (#127) and for why the gate applies only to the
+    // planning/executing branch, not the awaiting_clarification
+    // defense-in-depth branch.
     const { rows } = await this.pool.query<TaskRow>(`SELECT * FROM tasks WHERE assigned_worker_id = ANY($1) AND (
-        agent_status IN ('planning','executing')
+        (worker_claim_token_hash IS NOT NULL AND agent_status IN ('planning','executing'))
         OR (agent_status = 'awaiting_clarification' AND clarification_request IS NULL)
       )`, [workerIds]);
     return rows.map(rowToTask);
   }
 
   async revokeWorkerAssignments(workerId: string, at: number): Promise<Task[]> {
+    // 'queued' is included here (unlike the automatic sweeps above) because
+    // this only runs from an explicit human action (disable/delete worker);
+    // see the SQLite implementation for the full rationale.
     const { rows } = await this.pool.query<TaskRow>(`WITH released AS (
       UPDATE tasks SET
       assigned_worker_id=NULL, run_requested_at=NULL, run_claimed_at=NULL,
       worker_claim_token_hash=NULL, worker_claimed_at=NULL, worker_lease_expires_at=NULL,
-      agent_status=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'failed' ELSE agent_status END,
-      completed_at=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN $1 ELSE completed_at END,
-      summary=CASE WHEN agent_status IN ('planning','executing','awaiting_clarification') THEN 'worker_revoked' ELSE summary END,
+      agent_status=CASE WHEN agent_status IN ('queued','planning','executing','awaiting_clarification') THEN 'failed' ELSE agent_status END,
+      completed_at=CASE WHEN agent_status IN ('queued','planning','executing','awaiting_clarification') THEN $1 ELSE completed_at END,
+      summary=CASE WHEN agent_status IN ('queued','planning','executing','awaiting_clarification') THEN 'worker_revoked' ELSE summary END,
       clarification_request=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_request END,
       clarification_answer=CASE WHEN agent_status = 'awaiting_clarification' THEN NULL ELSE clarification_answer END,
       column_id=CASE WHEN agent_status = 'awaiting_clarification' AND column_id = 'pending' THEN 'in-progress' ELSE column_id END

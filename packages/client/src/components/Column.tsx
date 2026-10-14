@@ -10,7 +10,7 @@ import {
   Plus,
   Archive,
 } from 'lucide-react';
-import type { Column as ColumnType, Task } from '@/types';
+import type { Column as ColumnType, Task, Worker } from '@/types';
 import { TaskCard } from './TaskCard';
 import { cn } from '@/lib/utils';
 
@@ -35,9 +35,10 @@ interface ColumnProps {
   onRetryTask?: (task: Task) => void;
   onAddTask?: () => void;
   extraContent?: React.ReactNode;
+  workers?: Worker[];
 }
 
-export function Column({ column, tasks, onTaskClick, onEditTask, onDeleteTask, onArchiveTask, onUnarchiveTask, onOpenOpenCodeSession, onRetryTask, onAddTask, extraContent }: ColumnProps) {
+export function Column({ column, tasks, onTaskClick, onEditTask, onDeleteTask, onArchiveTask, onUnarchiveTask, onOpenOpenCodeSession, onRetryTask, onAddTask, extraContent, workers }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const Icon = iconMap[column.icon] || Inbox;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -115,6 +116,7 @@ export function Column({ column, tasks, onTaskClick, onEditTask, onDeleteTask, o
               onUnarchive={onUnarchiveTask}
               onOpenOpenCodeSession={onOpenOpenCodeSession}
               onRetry={onRetryTask}
+              workers={workers}
             />
           ))}
 

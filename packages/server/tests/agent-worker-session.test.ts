@@ -107,6 +107,8 @@ class FakeWorkerRepo implements WorkerRepository {
       registeredAt: 1,
       lastHeartbeatAt: 1,
       updatedAt: 1,
+      acceptedProjectIds: ['default'],
+      acceptedLabels: [],
     };
   }
 }
@@ -143,6 +145,31 @@ async function withAgentApp(
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
+
+test('POST /api/tasks/:id/run sets agentStatus to queued (not planning) for a worker-assigned task, and never starts AgentManager in-process', async () => {
+  const { repo, current } = createRepo(makeTask({ id: 'task-run-queued-1', agentStatus: 'idle', runRequestedAt: undefined, labels: [] }));
+  const workerRepo = new FakeWorkerRepo();
+  let startAgentCalls = 0;
+  const manager = {
+    isRunning: () => false,
+    stopAgent: async () => false,
+    startAgent: () => { startAgentCalls += 1; },
+    resetEvents: () => {},
+    sendMessage: async () => true,
+    resumeClarification: async () => ({ ok: true, code: 'resumed', message: 'ok' }),
+    getSessionIdentity: () => null,
+  } as unknown as AgentManager;
+
+  await withAgentApp(repo, manager, workerRepo, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/tasks/task-run-queued-1/run`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.agentStatus, 'queued');
+  });
+
+  assert.equal(current().agentStatus, 'queued');
+  assert.equal(startAgentCalls, 0, 'a worker-assigned task must never start the in-process AgentManager');
+});
 
 test('POST /api/tasks/:id/message queues a worker follow-up command for the same task session', async () => {
   const { repo } = createRepo(makeTask({ agentStatus: 'executing' }));
@@ -187,7 +214,7 @@ test('POST /api/tasks/:id/message clears a stale clarificationRequest/Answer whe
   });
 
   const updated = current();
-  assert.equal(updated.agentStatus, 'planning');
+  assert.equal(updated.agentStatus, 'queued');
   assert.equal(updated.clarificationRequest ?? null, null);
   assert.equal(updated.clarificationAnswer ?? null, null);
 });
@@ -268,7 +295,7 @@ test('POST /api/tasks/:id/message requeues a fresh run (rather than queuing an u
   });
 
   assert.equal(workerRepo.queued.length, 0, 'no follow-up command should be queued for a lapsed lease');
-  assert.equal(current().agentStatus, 'planning');
+  assert.equal(current().agentStatus, 'queued');
 });
 
 test('GET /api/tasks/:id/opencode-session returns session link without leaking workspace paths', async () => {

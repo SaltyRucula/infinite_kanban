@@ -14,7 +14,7 @@ import {
   RotateCw,
   ExternalLink,
 } from 'lucide-react';
-import type { Task, AgentStatus } from '@/types';
+import type { Task, AgentStatus, Worker } from '@/types';
 import { getAgentDisplay } from '@/lib/agent-config';
 import { getPriorityDisplay } from '@/lib/priority-config';
 import { cn, formatDuration } from '@/lib/utils';
@@ -26,8 +26,17 @@ const agentStatusConfig: Record<
   { icon: React.ElementType; label: string; className: string }
 > = {
   idle: { icon: Circle, label: 'Idle', className: 'text-muted-foreground' },
+  // Run-requested but not yet claimed by the assigned worker (worker-routed
+  // path only — see routes/agent.ts). Reuses the idle/muted styling since no
+  // agent work has started yet; distinguished from Idle by label text only.
+  queued: { icon: Clock, label: 'Queued', className: 'text-muted-foreground' },
+  // On the worker path, 'planning' is only reached after claimWorkerTask —
+  // i.e. "claimed, not yet executing". The in-process path (no assigned
+  // worker) still uses 'planning' for the agent's brief thinking phase
+  // before executing. Both read as "Planning" here; the claimed-worker case
+  // is relabeled to "Claimed" below where task.assignedWorkerId is known.
   planning: { icon: Brain, label: 'Planning', className: 'text-purple-400' },
-  executing: { icon: Cog, label: 'Executing', className: 'text-blue-400' },
+  executing: { icon: Cog, label: 'Running', className: 'text-blue-400' },
   awaiting_clarification: { icon: AlertCircle, label: 'Awaiting clarification', className: 'text-amber-400' },
   complete: { icon: CheckCircle2, label: 'Complete', className: 'text-emerald-400' },
   failed: { icon: AlertCircle, label: 'Failed', className: 'text-red-400' },
@@ -52,9 +61,11 @@ interface TaskCardProps {
   onUnarchive?: (task: Task) => void;
   onOpenOpenCodeSession?: (task: Task) => void;
   onRetry?: (task: Task) => void;
+  /** Used to resolve the owning worker/owner label for a Queued task. */
+  workers?: Worker[];
 }
 
-function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarchive, onOpenOpenCodeSession, onRetry }: TaskCardProps) {
+function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarchive, onOpenOpenCodeSession, onRetry, workers }: TaskCardProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: task.id,
@@ -111,6 +122,22 @@ function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarc
   const StatusIcon = agentStatus.icon;
   const isActive = task.agentStatus === 'executing' || task.agentStatus === 'planning';
   const priorityDisplay = getPriorityDisplay(task.priority);
+
+  // Board legibility for the worker-routed states (#127): Queued (run
+  // requested, no claim yet), Claimed (claimed, not yet executing), and
+  // Running (executing) must read as distinct at a glance, with Queued
+  // naming the owning worker/owner. 'planning' on the worker path is only
+  // reached after claimWorkerTask, i.e. "claimed" — the in-process path
+  // (no assigned worker) keeps the plain "Planning" label.
+  const assignedWorker = task.assignedWorkerId
+    ? workers?.find((w) => w.id === task.assignedWorkerId)
+    : undefined;
+  const ownerLabel = assignedWorker?.ownerId || assignedWorker?.name;
+  const statusLabel = task.agentStatus === 'queued'
+    ? (ownerLabel ? `Queued · ${ownerLabel}` : 'Queued')
+    : task.agentStatus === 'planning' && task.assignedWorkerId
+      ? 'Claimed'
+      : agentStatus.label;
 
   const [elapsed, setElapsed] = useState('');
   useEffect(() => {
@@ -284,11 +311,12 @@ function TaskCardComponent({ task, onClick, onEdit, onDelete, onArchive, onUnarc
             <div className={cn('flex items-center gap-1', agentStatus.className)}>
               <StatusIcon
                 className={cn(
-                  'h-3.5 w-3.5',
+                  'h-3.5 w-3.5 shrink-0',
                   task.agentStatus === 'executing' && 'animate-spin',
                   task.agentStatus === 'planning' && 'animate-pulse'
                 )}
               />
+              <span className="max-w-[7rem] truncate text-[10px] font-medium">{statusLabel}</span>
             </div>
           </div>
         </div>

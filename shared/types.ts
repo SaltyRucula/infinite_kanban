@@ -1,6 +1,15 @@
 export type Priority = 'low' | 'medium' | 'high' | 'critical';
 export type ColumnId = 'backlog' | 'in-progress' | 'pending' | 'review' | 'done';
-export type AgentStatus = 'idle' | 'planning' | 'executing' | 'awaiting_clarification' | 'complete' | 'failed';
+/**
+ * `queued` is the worker-routed run-request state: `requestRun()` was called
+ * and the task is assigned to a worker, but no worker has claimed it yet
+ * (`worker_claim_token_hash` is still NULL). It is distinct from `planning`,
+ * which (on the worker path) now only means "claimed, not yet executing" —
+ * `claimWorkerTask` promotes `queued` -> `planning` atomically with the claim
+ * write. The in-process (no assigned worker) path never sets `queued`; it
+ * goes straight from `idle` to `planning` as before.
+ */
+export type AgentStatus = 'idle' | 'queued' | 'planning' | 'executing' | 'awaiting_clarification' | 'complete' | 'failed';
 export type AgentType = 'opencode' | 'codex';
 export type WorkerStatus = 'online' | 'offline' | 'disabled';
 
