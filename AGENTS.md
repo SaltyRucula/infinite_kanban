@@ -18,21 +18,25 @@ ai-agent-board/
 │   ├── server/          # Express + @codewithdan/agent-sdk-core + better-sqlite3/pg + ws
 │   │   └── src/
 │   │       ├── middleware/  # auth.ts (Bearer token auth)
-│   │       ├── routes/      # tasks.ts, agent.ts, git.ts, templates.ts, groups.ts, helpers.ts
-│   │       ├── services/    # agent-manager.ts (session orchestration, event caching)
+│   │       ├── routes/      # tasks.ts, agent.ts, git.ts, templates.ts, groups.ts, projects.ts, helpers.ts, workers.ts (worker path), board-workflow.ts + a2a-agents.ts (A2A path), github.ts, attachments.ts
+│   │       ├── services/    # agent-manager.ts (in-process session orchestration), board-workflow.ts, a2a-workflow-client.ts, agent-detection.ts, agent-liveness.ts
 │   │       ├── repositories/# sqlite.ts, postgres.ts, sqlite-templates.ts, postgres-templates.ts, sqlite-groups.ts, postgres-groups.ts, types.ts, template-types.ts, group-types.ts
 │   │       ├── db.ts        # SQLite + PostgreSQL init + migrations
 │   │       ├── websocket.ts # WebSocket broadcast
 │   │       └── index.ts     # Express app setup + graceful shutdown
+│   ├── worker/          # agentboard-worker CLI — runs on a developer's machine, claims tasks, executes the agent locally
+│   ├── a2a/             # Shared A2A protocol mapping (agent cards, assignment encoding)
+│   ├── opencode-compat/ # OpenCode SDK compatibility shims
 │   └── e2e/             # Playwright tests
 ├── shared/              # Shared types (Task, TaskGroup, TaskTemplate, AgentEvent, ColumnId, AgentType, etc.) + validation constants
 ├── scripts/             # required gate, hook install, and E2E process helpers
-└── k8s/                 # Kubernetes manifests (namespace, deployments, services, ingress)
+├── docs/                # Operator and worker documentation
+└── deploy/              # Dockerfile.{server,web,worker}, docker-compose.yml, nginx.conf
 ```
 
 ## Key Technical Decisions
 
-- **Multi-agent support** — pluggable `AgentProvider`/`AgentSession` interfaces from `@codewithdan/agent-sdk-core`. Six providers: `copilot` (`@github/copilot-sdk`), `claude` (`@anthropic-ai/claude-agent-sdk`), `codex` (`@openai/codex-sdk`), `opencode` (`@opencode-ai/sdk`), `hermes`, and `openclaw`. Auto-detected at startup via `detectAgents()`.
+- **Agent provider support** — pluggable `AgentProvider`/`AgentSession` interfaces from `@codewithdan/agent-sdk-core`. **Only `opencode` is registered today**: `services/agent-detection.ts` calls `detectAvailableAgents()` and then filters the result down to `opencode` (`agent-detection.ts:12`). The `copilot` / `claude` / `codex` / `hermes` / `openclaw` providers exist in the SDK and have env vars reserved below, but are not wired up. Widening this is tracked separately — do not assume multi-provider behaviour from this file.
 - **Agent SDK abstraction** — all provider implementations live in the external `@codewithdan/agent-sdk-core` package. The server imports providers and the detection function from this package.
 - **Dual database backends** — SQLite via `better-sqlite3` (default, zero config) or PostgreSQL via `pg` (set `DATABASE_URL`). Both implement the `TaskRepository` and `TemplateRepository` interfaces.
 - **Route splitting** — REST API is split across `tasks.ts` (CRUD), `agent.ts` (start/stop/events/follow-up), `git.ts` (merge-local, create-pr, worktree cleanup, git-info), `templates.ts` (task template CRUD), and `groups.ts` (group CRUD + run/stop/archive).
@@ -44,6 +48,27 @@ ai-agent-board/
 - **Smart PR/merge buttons** — `GET /api/tasks/:id/git-info` checks for remote; UI shows "Create PR" only when remote exists, "Merge to main" always available.
 - **Vite proxy** — client proxies `/api` and `/ws` to the server.
 - **Shared validation** — `shared/constants.ts` exports validators (`isValidPriority`, `isValidColumnId`, etc.) and limits (`MAX_TITLE_LENGTH`, `MAX_DESCRIPTION_LENGTH`) used by both client and server.
+
+## Execution Models
+
+There are **two** execution paths, and both are supported on purpose. They differ in transport direction, which is what decides where each one can be used.
+
+| | Direction | Transport | Use for |
+|---|---|---|---|
+| **Worker path** (primary for people) | worker → board | outbound HTTP polling: `GET /api/workers/me/assignments`, `POST /me/tasks/:id/claim`, heartbeat, `POST .../events` | **Developer machines.** Laptops that sleep, roam, sit behind NAT or a VPN. Needs no inbound port, no stable hostname. |
+| **A2A workflow path** | board → endpoint | board dials an absolute endpoint URL; HTTPS or loopback HTTP enforced (`a2a/executor.ts:206-229`), endpoints persisted in `a2a_agents.endpoint` (`db.ts:83`). Feature-gated by `A2A_WORKFLOW_ENABLED=true` (`services/a2a-workflow-feature.ts:2`) | **Always-on agent services** with a stable, reachable endpoint. |
+
+The target deployment is a team where each developer runs `agentboard-worker` on their own machine, with their own repos and their own git credentials, against one shared board. Only the worker path satisfies that: the board cannot dial a closed laptop. The worker does have an `a2a-serve` mode (`packages/worker/src/a2a-server.ts`), but that makes it a listener and reintroduces the inbound-reachability requirement — use it for hosted agents, not laptops.
+
+**Do not describe the worker path as "legacy."** It is the primary path for human-owned machines. Decision recorded in issue #126.
+
+Known gaps on the worker path, tracked as issues — check before assuming behaviour:
+- **#127** — queued-but-unclaimed tasks are failed when the assigned worker goes offline.
+- **#128** — the orchestrator still shells `git push` / `gh pr create` / `git checkout && git merge` with its own host credentials (`agent-manager.ts:764-832`, `routes/git.ts`). Write authority has not moved to the worker yet, even though execution has.
+- **#129** — worker ownership is a free-text `workers.owner_id` label, deliberately **not** a human identity system. Do not add a `users` table or an auth provider without reading that issue first.
+- **#130** — `PATCH/DELETE /api/workers/:id` declare a `workers:manage` scope that both auth paths bypass.
+
+Note there are also two group executors: `GroupQueue` in `agent-manager.ts:1319-1495` (in-process, live) and the worker path, which bypasses it via `taskRepo.requestRun` (`routes/groups.ts:484`). `GroupQueue` should be removed with the in-process executor, not before it.
 
 ## Running Locally
 
@@ -146,7 +171,7 @@ The committed `.githooks/pre-push` hook runs `npm run gate:required` and must no
 
 - **Task lifecycle**: backlog → in-progress → review → done (validated transitions in `VALID_TRANSITIONS` from `shared/constants.ts`)
 - **Agent lifecycle**: idle → planning → executing → complete/failed (set via `agentStatus`)
-- **Agent types**: `copilot | claude | codex | opencode | hermes | openclaw` — each task can specify which agent to use via `agentType`
+- **Agent types**: `opencode` is the only registered provider (see Key Technical Decisions). `AgentType` still declares `copilot | claude | codex | opencode | hermes | openclaw` and each task carries an `agentType`, but only `opencode` resolves to a live provider today.
 - **Provider pattern**: `AgentProvider` creates `AgentSession`s (from `@codewithdan/agent-sdk-core`). `AgentManager` orchestrates sessions with timeouts, event caching, and graceful cleanup.
 - **Repository pattern**: `TaskRepository`, `TemplateRepository`, and `TaskGroupRepository` interfaces with SQLite and PostgreSQL implementations.
 - **Event coalescing**: AgentPanel merges consecutive thinking/output events for readability
