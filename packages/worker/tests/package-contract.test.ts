@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function readWorkerPackage(): Promise<Record<string, unknown>> {
   const packageUrl = new URL('../package.json', import.meta.url);
@@ -29,6 +34,41 @@ test('worker package does not declare the inlined workspace packages as runtime 
     assert.ok(
       !dependencies.includes(workspacePackage),
       `${workspacePackage} is bundled into dist, not an installable dependency`,
+    );
+  }
+});
+
+// Regression guard for the stale-dist hazard. tsc -b is emitDeclarationOnly
+// here, so it never overwrites .js files left behind by an earlier build that
+// did emit per-file runtime output, and esbuild only writes its own entry
+// points and chunks. Without an explicit clean, such a file survives in dist
+// still carrying a raw @ai-agent-board/* specifier — and files:["dist"]
+// publishes it, which is exactly the broken-on-install package the bundler
+// exists to prevent.
+//
+// The packed-tarball test cannot catch this: prepack runs the build, so on a
+// clean checkout the tarball is clean whether or not the bundler cleans, and
+// the failure would only ever reproduce on a developer or CI tree that
+// happened to already be dirty.
+test('the bundler removes stale runtime JS left in dist by an earlier build', async () => {
+  const distDir = path.join(packageDir, 'dist');
+  await fs.mkdir(distDir, { recursive: true });
+
+  const stalePath = path.join(distDir, 'stale-from-an-older-build.js');
+  await fs.writeFile(stalePath, "export * from '@ai-agent-board/shared/types.js';\n");
+
+  execFileSync(process.execPath, ['scripts/bundle.mjs'], { cwd: packageDir, stdio: 'pipe' });
+
+  await assert.rejects(
+    fs.access(stalePath),
+    'stale runtime JS from an earlier build must not survive a rebuild',
+  );
+
+  for (const name of (await fs.readdir(distDir)).filter((entry) => entry.endsWith('.js'))) {
+    const contents = await fs.readFile(path.join(distDir, name), 'utf8');
+    assert.ok(
+      !contents.includes('@ai-agent-board/'),
+      `dist/${name} must not ship a raw workspace import specifier`,
     );
   }
 });

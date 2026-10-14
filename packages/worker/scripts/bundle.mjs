@@ -16,11 +16,47 @@
  * retain a raw `@ai-agent-board/*` import specifier.
  */
 import { build } from 'esbuild';
-import { chmod } from 'node:fs/promises';
+import { chmod, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Delete every runtime .js (and sourcemap) already in dist before emitting.
+ *
+ * This is what makes the "no raw @ai-agent-board/* specifier survives in
+ * dist" guarantee above hold unconditionally rather than only on a clean
+ * checkout. tsc -b is emitDeclarationOnly here, so it no longer overwrites
+ * .js files left behind by an earlier build that did emit per-file runtime
+ * output — and esbuild only writes its own entry points and chunks. Any
+ * other stale .js therefore survives indefinitely, still carrying the raw
+ * workspace import specifiers, and package.json's files:["dist"] would
+ * publish it: precisely the broken-on-install package this bundler exists
+ * to prevent.
+ *
+ * Declarations are preserved: tsc -b runs first in `npm run build`, and
+ * deleting its fresh .d.ts output here would ship a package with no types.
+ */
+async function cleanRuntimeJs(dir) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return; // first build, nothing to clean
+    throw error;
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await cleanRuntimeJs(entryPath);
+    } else if (/\.(?:js|mjs|cjs)(?:\.map)?$/.test(entry.name)) {
+      await rm(entryPath);
+    }
+  }
+}
+
+await cleanRuntimeJs(path.join(packageDir, 'dist'));
 
 // Real npm dependencies: keep external and declared in package.json
 // "dependencies" so they resolve normally from the installer's node_modules.
