@@ -30,6 +30,26 @@ function formatRelativeTime(timestamp: number): string {
   return `${diffDays}d ago`;
 }
 
+/**
+ * The worker CLI takes a full enrollment URL, never a bare code: it recovers the
+ * board origin from the URL and the one-time credential from the fragment. The
+ * fragment is deliberate — browsers do not send it to the server, so the code
+ * stays out of the board's request logs. The contract is enforced by
+ * `parseEnrollmentCode` in `packages/worker/src/cli.ts`, which requires an
+ * absolute http(s) URL whose pathname is exactly `/api/workers/enroll`, with no
+ * query string and a non-empty fragment.
+ *
+ * `/api/workers/enroll` is a marker path, not a served route. The origin is what
+ * matters: the worker posts to `<origin>/api/workers/register`, which resolves
+ * correctly both in dev (Vite proxies `/api`) and in production (the board and
+ * the API share an origin behind the reverse proxy).
+ *
+ * The URL is single-quoted so the `#` cannot be read as a shell comment.
+ */
+export function workerStartCommand(code: string, origin: string): string {
+  return `npx @ai-agent-board/worker start --code '${origin}/api/workers/enroll#${encodeURIComponent(code)}'`;
+}
+
 export function WorkerPresencePanel({
   agents: propAgents,
   isModal = false,
@@ -110,7 +130,7 @@ export function WorkerPresencePanel({
 
   const copyCommand = async () => {
     if (!enrollment) return;
-    await navigator.clipboard.writeText(`npx @ai-agent-board/worker start --code ${enrollment.code}`);
+    await navigator.clipboard.writeText(workerStartCommand(enrollment.code, window.location.origin));
     setCopiedCommand(true);
   };
 
@@ -393,7 +413,7 @@ export function WorkerPresencePanel({
                 <input
                   aria-label="Worker start command"
                   readOnly
-                  value={`npx @ai-agent-board/worker start --code ${enrollment.code}`}
+                  value={workerStartCommand(enrollment.code, window.location.origin)}
                   className="mt-1 w-full rounded border border-[#202532] bg-[#14171e] px-3 py-2 font-mono text-xs text-white"
                 />
               </label>
