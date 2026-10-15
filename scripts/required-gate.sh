@@ -12,5 +12,6 @@ run_step() {
 
 run_step "Build client" npm run build:client
 run_step "Build server" npm run build:server
+run_step "Run LLM demo handoff tests" npm run test:llm-demo
 run_step "Run server unit tests" npm run test -w @ai-agent-board/server
 run_step "Run required E2E tests" npm run test:e2e:required

@@ -72,6 +72,21 @@ node packages/worker/dist/cli.js run
 
 With no `API_KEY` configured the registration token isn't checked, so enter any value when prompted. Full details: [Workers](docs/workers.md).
 
+### LLM-led local A2A demo
+
+To hand the local setup and a short implementation → independent review →
+human-approval demo to a locally configured Hermes agent:
+
+```bash
+npm run demo:llm
+```
+
+It performs preflight and gives the agent a restricted mission: use existing
+local authentication only, install development dependencies, build the demo,
+and report the evidence artifact. It never reads secrets, uses `sudo`, or
+changes source or Git remotes. Use `npm run demo:llm -- --print-prompt` to hand
+the same mission to another coding LLM. Details: [board-owned workflow demo](docs/board-owned-workflow.md).
+
 ## Basic configuration
 
 The server reads `packages/server/.env`; copy [`packages/server/.env.example`](packages/server/.env.example) to start. The settings most people touch:

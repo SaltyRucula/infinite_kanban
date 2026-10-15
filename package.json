@@ -25,6 +25,8 @@
     "worker:build": "npm run build -w @ai-agent-board/worker",
     "worker:dev": "npm run dev -w @ai-agent-board/worker",
     "worker:test": "npm run test -w @ai-agent-board/worker",
+    "demo:llm": "node scripts/llm-local-demo.mjs",
+    "test:llm-demo": "node --test scripts/llm-local-demo.test.mjs",
     "test": "npm run test:e2e:required",
     "test:e2e": "npm run test:e2e:required",
     "test:e2e:required": "npm run test:required -w @ai-agent-board/e2e",

@@ -4,6 +4,40 @@ This is additive. Legacy worker poll/claim and local agent execution remain sepa
 The new path is `POST /api/tasks/:id/workflow/run`, not the legacy `/run` route.
 OpenCode and Codex are endpoint configuration choices, never task requirements.
 
+## Let a local LLM set up and run the demo
+
+For a hands-off local setup, start a bounded Hermes handoff instead of manually
+copying the build and demo commands:
+
+```sh
+# Requires a healthy Node 22+ runtime, Hermes configured locally, and an already
+# authenticated OpenCode endpoint harness.
+npm run demo:llm
+
+# Use Codex endpoints, or drive a board that is already open in the browser:
+npm run demo:llm -- --harness codex --board http://127.0.0.1:8080
+```
+
+The handoff performs deterministic preflight, then gives the local LLM a
+restricted mission: install development dependencies, build the demo
+prerequisites, verify the selected harness without exposing its credentials,
+and run `demo-board-a2a.mjs`. It must stop and report the blocker if Node,
+dependencies, harness availability, or authentication is missing; it never
+reads secrets, uses `sudo`, changes global tooling, edits tracked source, or
+pushes Git changes.
+
+To use another local coding LLM, print the same safe mission and paste it into
+that LLM instead:
+
+```sh
+npm run demo:llm -- --print-prompt --harness codex
+# Preview the Hermes invocation without starting it:
+npm run demo:llm -- --dry-run
+```
+
+`--runner` is for an alternate executable compatible with the Hermes
+`chat -q` command shape; use `--print-prompt` for a different LLM CLI.
+
 ## Build and repeat the real demo
 
 Use Node 22 (native SQLite in this checkout is built for it):
