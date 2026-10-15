@@ -80,9 +80,14 @@ export function TaskDetailPanel({
   const [openCodeSessionUrl, setOpenCodeSessionUrl] = useState<string | null>(null);
   const [workRequestStates, setWorkRequestStates] = useState<Record<string, WorkRequestState>>({});
   const [workRequestGroupIds, setWorkRequestGroupIds] = useState<Record<string, string>>({});
+  const [workflowOwned, setWorkflowOwned] = useState(false);
 
   useEffect(() => {
-    if (!task?.id || !isOpen || task.agentType !== 'opencode') {
+    setWorkflowOwned(false);
+  }, [task?.id, isOpen]);
+
+  useEffect(() => {
+    if (!task?.id || !isOpen || task.agentType !== 'opencode' || workflowOwned) {
       setOpenCodeSessionUrl(null);
       return;
     }
@@ -106,7 +111,7 @@ export function TaskDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [task?.id, task?.agentType, task?.agentStatus, isOpen]);
+  }, [task?.id, task?.agentType, task?.agentStatus, isOpen, workflowOwned]);
 
   useEffect(() => {
     if (!task || !isOpen) {
@@ -266,8 +271,9 @@ export function TaskDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        <WorkflowPanel key={task.id} taskId={task.id} />
-        <div className="flex flex-wrap gap-2">
+        <WorkflowPanel key={task.id} taskId={task.id} onOwnershipChange={setWorkflowOwned} />
+        {!workflowOwned && (
+          <div className="flex flex-wrap gap-2">
           {isRunning ? (
             <button
               onClick={() => onStopTask(task.id)}
@@ -317,7 +323,8 @@ export function TaskDetailPanel({
               OpenCode
             </button>
           )}
-        </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#14171e] p-3 rounded-lg border border-[#202532]">
           <div>

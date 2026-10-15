@@ -9,6 +9,11 @@ test('board workflow hands off pinned review, shows evidence and requires human 
  const response=await request.post(API+'/api/tasks',{data:{title:'Board workflow approval fixture'}});const task=await response.json();
  await page.goto('/');await page.getByText(task.title,{exact:true}).click();await page.getByText('Board-owned workflow',{exact:true}).click();await page.getByLabel('Workflow repository').fill('https://github.com/o/r');await page.getByLabel('Base revision').fill(revision);await page.getByRole('button',{name:'Start implementation → review'}).click();
  await expect(page.getByText('awaiting_approval',{exact:true})).toBeVisible({timeout:15000});await expect(page.getByText(output,{exact:true}).first()).toBeVisible();
+ // A board-owned workflow must not offer legacy worker controls: they target a
+ // different execution model and the server correctly rejects them.
+ await expect(page.locator('button:visible').filter({hasText:'Run Agent'})).toHaveCount(0);
+ await expect(page.locator('button:visible').filter({hasText:/Worker:/})).toHaveCount(0);
+ await expect(page.locator('button:visible').filter({hasText:'OpenCode'})).toHaveCount(0);
  const run=await(await request.get(API+`/api/tasks/${task.id}/workflow`)).json();expect(run.assignments[1].assignment.targetRevision).toBe(output);expect(run.assignments[1].assignment.endpointId).not.toBe(run.assignments[0].assignment.endpointId);
  expect((await request.post(API+`/api/tasks/${task.id}/workflow/approve`,{data:{revision}})).status()).toBe(409);
  await page.getByRole('button',{name:'Approve reviewed revision'}).click();await expect(page.getByText('done',{exact:true})).toBeVisible();expect((await(await request.get(API+'/api/tasks')).json()).find((t:any)=>t.id===task.id).columnId).toBe('done');

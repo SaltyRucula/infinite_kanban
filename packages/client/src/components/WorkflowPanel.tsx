@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react';
 import { workflowApi, type WorkflowView } from '@/lib/api';
+
+interface WorkflowPanelProps {
+ taskId: string;
+ /** Lets surrounding task controls hide the incompatible legacy execution path. */
+ onOwnershipChange?: (owned: boolean) => void;
+}
+
 /** Board-owned controls deliberately have no harness/model selector. */
-export function WorkflowPanel({taskId}:{taskId:string}) {
+export function WorkflowPanel({taskId,onOwnershipChange}:WorkflowPanelProps) {
  const [run,setRun]=useState<WorkflowView|null>(null),[repository,setRepository]=useState(''),[revision,setRevision]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
- useEffect(()=>{let mounted=true;const load=async()=>{try{const result=await workflowApi.get(taskId);if(mounted)setRun(result);}catch(e){if(mounted && !(e instanceof Error&&e.message==='workflow not found'))setError(String(e));}};void load();const timer=setInterval(()=>void load(),1000);return()=>{mounted=false;clearInterval(timer);};},[taskId]);
- const action=async(operation:()=>Promise<WorkflowView>)=>{setBusy(true);setError('');try{setRun(await operation());}catch(e){setError(e instanceof Error?e.message:'Workflow request failed');}finally{setBusy(false);}};
+ useEffect(()=>{let mounted=true;const load=async()=>{try{const result=await workflowApi.get(taskId);if(mounted){setRun(result);onOwnershipChange?.(true);}}catch(e){if(!mounted)return;if(e instanceof Error&&e.message==='workflow not found'){setRun(null);onOwnershipChange?.(false);return;}setError(String(e));}};void load();const timer=setInterval(()=>void load(),1000);return()=>{mounted=false;clearInterval(timer);};},[taskId,onOwnershipChange]);
+ const action=async(operation:()=>Promise<WorkflowView>)=>{setBusy(true);setError('');try{const result=await operation();setRun(result);onOwnershipChange?.(true);}catch(e){setError(e instanceof Error?e.message:'Workflow request failed');}finally{setBusy(false);}};
  return <details className="shrink-0 border-b border-border p-3 text-xs" open={run!==null}>
   <summary className="cursor-pointer font-semibold">Board-owned workflow</summary>
   {error&&<p role="alert" className="text-red-500">{error}</p>}
