@@ -16,7 +16,7 @@ This is the authoritative reference for Infinite Kanban's environment variables.
 | `HOST` | `127.0.0.1` | Bind address. Keep loopback when the app sits behind a local reverse proxy or Cloudflare Tunnel; a non-loopback bind needs its own security boundary. |
 | `ALLOWED_ORIGINS` | `http://localhost:8081,http://localhost:4175,http://localhost:4176` | Comma-separated CORS and WebSocket `Origin` allowlist. |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated `Host` allowlist for WebSocket upgrades. Add the trusted reverse-proxy hostname in production. |
-| `API_KEY` | _(unset)_ | Full-access Bearer token for every API route and the WebSocket. Unset = open access. Must match the client's `VITE_API_KEY`. |
+| `API_KEY` | _(unset)_ | Bearer token for the browser/API and WebSocket. It cannot disable or delete workers; those destructive operations require a separate `SERVICE_TOKENS` credential with `workers:manage`. Unset = open access except destructive worker operations. Must match the client's `VITE_API_KEY`. |
 | `SERVICE_TOKENS` | _(unset)_ | JSON array of scoped integration credentials. See [Service tokens](#service-tokens). |
 | `AGENT_BOARD_PUBLIC_URL` | _(request origin)_ | Public base URL used to build task deep links returned by the orchestration API, e.g. `https://kanban.example.com`. |
 
@@ -55,8 +55,9 @@ SERVICE_TOKENS='[{"sha256":"<sha256-of-token>","scopes":["projects:read","agents
 | `orchestrations:read` | `GET /api/orchestrations/:id` |
 | `orchestrations:message` | `POST /api/orchestrations/:id/message` |
 | `workers:register` | `POST /api/workers/register` (worker bootstrap) |
+| `workers:manage` | Create worker enrollment codes and disable or delete workers. Disable/delete always require this scoped service credential, even when `API_KEY` is configured. |
 
-Service tokens cannot merge, create PRs, delete resources, or mutate projects. When `API_KEY` is set, every route requires either the API key or a service token with the matching scope. When only `SERVICE_TOKENS` is set, the browser/API surface stays open (behind your outer access boundary) and only the scoped routes above require a token. Worker endpoints under `/api/workers/me/*` always authenticate with the worker's own token instead.
+Service tokens cannot merge, create PRs, or mutate projects. `workers:manage` is intentionally the narrow exception for worker enrollment and lifecycle operations. When `API_KEY` is set, browser/API requests normally accept that key, but worker disable/delete always require a separate scoped `workers:manage` service credential. When only `SERVICE_TOKENS` is set, the browser/API surface stays open (behind your outer access boundary) and the scoped routes above require their matching token. Worker endpoints under `/api/workers/me/*` always authenticate with the worker's own token instead.
 
 ## Client (Vite)
 

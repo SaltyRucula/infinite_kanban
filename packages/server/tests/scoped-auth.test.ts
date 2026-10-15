@@ -33,12 +33,15 @@ test('worker registration rejects an unauthenticated request when no credentials
   }
 });
 
-test('worker lifecycle mutations require workers:manage for service credentials', async () => {
-  delete process.env.API_KEY;
-  process.env.SERVICE_TOKENS = JSON.stringify([{ token: 'read-only', scopes: ['projects:read'] }, { token: 'worker-manager', scopes: ['workers:manage'] }]);
+test('destructive worker lifecycle mutations require a scoped service credential', async () => {
+  const originalApiKey = process.env.API_KEY;
+  const originalServiceTokens = process.env.SERVICE_TOKENS;
+  process.env.API_KEY = 'legacy-board-key';
+  delete process.env.SERVICE_TOKENS;
   const { authMiddleware } = await load();
   const app = express();
   app.use(authMiddleware);
+  app.get('/tasks', (_req, res) => res.sendStatus(204));
   app.patch('/workers/:id/status', (_req, res) => res.sendStatus(204));
   app.delete('/workers/:id', (_req, res) => res.sendStatus(204));
   const server = http.createServer(app);
@@ -47,11 +50,31 @@ test('worker lifecycle mutations require workers:manage for service credentials'
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     const baseUrl = `http://127.0.0.1:${address.port}`;
-    assert.equal((await fetch(`${baseUrl}/workers/worker-1/status`, { method: 'PATCH' })).status, 401);
-    assert.equal((await fetch(`${baseUrl}/workers/worker-1`, { method: 'DELETE', headers: { authorization: 'Bearer read-only' } })).status, 403);
+
+    assert.equal((await fetch(`${baseUrl}/tasks`, { headers: { authorization: 'Bearer legacy-board-key' } })).status, 204);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/status`, { method: 'PATCH', headers: { authorization: 'Bearer legacy-board-key' } })).status, 403);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1`, { method: 'DELETE', headers: { authorization: 'Bearer legacy-board-key' } })).status, 403);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/status/`, { method: 'PATCH', headers: { authorization: 'Bearer legacy-board-key' } })).status, 403);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/`, { method: 'DELETE', headers: { authorization: 'Bearer legacy-board-key' } })).status, 403);
+
+    process.env.SERVICE_TOKENS = JSON.stringify([{ token: 'read-only', scopes: ['projects:read'] }, { token: 'worker-manager', scopes: ['workers:manage'] }]);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/status`, { method: 'PATCH', headers: { authorization: 'Bearer read-only' } })).status, 403);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/status/`, { method: 'PATCH', headers: { authorization: 'Bearer read-only' } })).status, 403);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/`, { method: 'DELETE', headers: { authorization: 'Bearer read-only' } })).status, 403);
     assert.equal((await fetch(`${baseUrl}/workers/worker-1/status`, { method: 'PATCH', headers: { authorization: 'Bearer worker-manager' } })).status, 204);
+
+    delete process.env.API_KEY;
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1`, { method: 'DELETE' })).status, 401);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1`, { method: 'DELETE', headers: { authorization: 'Bearer worker-manager' } })).status, 204);
+
+    delete process.env.SERVICE_TOKENS;
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/status/`, { method: 'PATCH' })).status, 401);
+    assert.equal((await fetch(`${baseUrl}/workers/worker-1/`, { method: 'DELETE' })).status, 401);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    delete process.env.SERVICE_TOKENS;
+    if (originalApiKey === undefined) delete process.env.API_KEY;
+    else process.env.API_KEY = originalApiKey;
+    if (originalServiceTokens === undefined) delete process.env.SERVICE_TOKENS;
+    else process.env.SERVICE_TOKENS = originalServiceTokens;
   }
 });

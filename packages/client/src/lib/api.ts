@@ -162,8 +162,11 @@ export const api = {
 
   getWorkers: () => request<Worker[]>('/workers'),
 
-  removeWorker: (id: string) =>
-    request<void>(`/workers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  removeWorker: (id: string, credential?: string) =>
+    request<void>(`/workers/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      ...(credential ? { headers: { ...authHeaders(), Authorization: `Bearer ${credential}` } } : {}),
+    }),
 
   getWorkerUsage: () => request<WorkerUsageReport>('/workers/usage'),
 

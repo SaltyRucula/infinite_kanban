@@ -66,6 +66,8 @@ export function WorkerPresencePanel({
   const [enrollmentCredential, setEnrollmentCredential] = useState('');
   const [creatingEnrollment, setCreatingEnrollment] = useState(false);
   const [removingWorkerId, setRemovingWorkerId] = useState<string | null>(null);
+  const [workerPendingRemoval, setWorkerPendingRemoval] = useState<{ id: string; name: string } | null>(null);
+  const [removalCredential, setRemovalCredential] = useState('');
   const [copiedCommand, setCopiedCommand] = useState(false);
   const [usage, setUsage] = useState<WorkerUsageReport | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -139,16 +141,28 @@ export function WorkerPresencePanel({
     void refetchWorkers();
   };
 
-  const removeWorker = async (id: string) => {
-    setRemovingWorkerId(id);
+  const removeWorker = async (worker: { id: string; name: string }, credential?: string): Promise<boolean> => {
+    setRemovingWorkerId(worker.id);
     setEnrollmentError(null);
     try {
-      await api.removeWorker(id);
+      await api.removeWorker(worker.id, credential);
       await refetchWorkers();
+      return true;
     } catch (err) {
-      setEnrollmentError(err instanceof Error ? err.message : 'Failed to remove worker');
+      const message = err instanceof Error ? err.message : 'Failed to remove worker';
+      setEnrollmentError(message);
+      return false;
     } finally {
       setRemovingWorkerId(null);
+    }
+  };
+
+  const confirmWorkerRemoval = async (): Promise<void> => {
+    if (!workerPendingRemoval) return;
+    const removed = await removeWorker(workerPendingRemoval, removalCredential || undefined);
+    if (removed) {
+      setWorkerPendingRemoval(null);
+      setRemovalCredential('');
     }
   };
 
@@ -289,7 +303,7 @@ export function WorkerPresencePanel({
                         <button
                           type="button"
                           aria-label={`Remove worker ${worker.name}`}
-                          onClick={() => void removeWorker(worker.id)}
+                          onClick={() => { setWorkerPendingRemoval(worker); setRemovalCredential(''); }}
                           disabled={removingWorkerId === worker.id}
                           className="rounded px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-500/10 disabled:opacity-50"
                         >
@@ -383,6 +397,52 @@ export function WorkerPresencePanel({
           )}
         </div>
       </div>
+      {workerPendingRemoval && (
+        <div
+          role="dialog"
+          aria-label="Remove worker confirmation"
+          aria-modal="true"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+        >
+          <form
+            className="w-full max-w-md rounded-lg border border-red-500/30 bg-[#0e1015] p-5 shadow-2xl"
+            onSubmit={(event) => { event.preventDefault(); void confirmWorkerRemoval(); }}
+          >
+            <h3 className="text-sm font-semibold text-white">Remove worker</h3>
+            <p className="mt-1 text-xs text-[#94a3b8]">
+              Removing <strong className="text-white">{workerPendingRemoval.name}</strong> revokes its credentials and fails any active assignments. This cannot be undone.
+            </p>
+            <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[#94a3b8]">
+              Worker-management credential <span className="normal-case font-normal">(required when the board uses a shared API key)</span>
+              <input
+                aria-label="Worker-management credential"
+                type="password"
+                autoComplete="off"
+                value={removalCredential}
+                onChange={(event) => setRemovalCredential(event.target.value)}
+                className="mt-1 w-full rounded border border-[#202532] bg-[#14171e] px-3 py-2 text-sm text-white"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setWorkerPendingRemoval(null); setRemovalCredential(''); }}
+                disabled={removingWorkerId === workerPendingRemoval.id}
+                className="rounded px-3 py-1.5 text-xs text-[#94a3b8] hover:bg-[#1b1f2b] hover:text-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={removingWorkerId === workerPendingRemoval.id}
+                className="rounded bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-400 disabled:opacity-50"
+              >
+                {removingWorkerId === workerPendingRemoval.id ? 'Removing...' : 'Remove worker'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {enrollment && (
         <div
           role="dialog"

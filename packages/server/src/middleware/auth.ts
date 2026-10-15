@@ -28,13 +28,19 @@ export function authenticateToken(token: string | undefined): { authenticated: b
   return match ? { authenticated:true,legacy:false,scopes:match.scopes, ...(match.id ? { id: match.id } : {}) } : { authenticated:false,legacy:false,scopes:[] };
 }
 
+function isDestructiveWorkerMutation(req: Request): boolean {
+  const path = req.path.replace(/\/+$/, '');
+  return /^\/workers\/[^/]+(?:\/status)?$/.test(path)
+    && (req.method === 'PATCH' || req.method === 'DELETE');
+}
+
 function requiredScope(req: Request): ServiceScope | undefined {
   const p=req.path, method=req.method;
   if (p === '/health') return undefined;
   if (p.startsWith('/workers/me')) return undefined;
   if (p === '/workers/register' && method === 'POST') return 'workers:register';
   if (p === '/workers/enrollment-codes' && method === 'POST') return 'workers:manage';
-  if (/^\/workers\/[^/]+(?:\/status)?$/.test(p) && (method === 'PATCH' || method === 'DELETE')) return 'workers:manage';
+  if (isDestructiveWorkerMutation(req)) return 'workers:manage';
   if (p === '/workers') return undefined;
   if (p === '/agents') return undefined;
   if (p === '/agents/refresh') return 'agents:read';
@@ -85,6 +91,20 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // An enrollment code is the credential for a newly bootstrapped worker.
   // The route validates and atomically consumes it before registering.
   if (enrollmentRegistration) { next(); return; }
+
+  // Disabling or deleting a worker revokes active assignments. A shared API_KEY
+  // authenticates every browser user, so it must not grant this capability.
+  // An explicit scoped service credential keeps the operator boundary server-side
+  // without turning the routing label in workers.owner_id into an identity system.
+  if (isDestructiveWorkerMutation(req)) {
+    if (!auth.authenticated) { res.status(401).json({ error: 'unauthorized' }); return; }
+    if (auth.legacy || !auth.scopes.includes('workers:manage')) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    next();
+    return;
+  }
 
   // API_KEY retains the legacy "protect every API route" behavior.
   if (hasLegacyKey) {
